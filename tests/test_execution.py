@@ -18,17 +18,17 @@ class ToolCapableFakeModel(FakeMessagesListChatModel):
         return self
 
 
+class FailingFakeModel(ToolCapableFakeModel):
+    def _generate(self, *args: Any, **kwargs: Any):
+        raise RuntimeError("model unavailable")
+
+
 class FakeProviders:
     def __init__(self, model: ToolCapableFakeModel) -> None:
         self.model = model
 
     def create_model(self, config: ModelConfig) -> ToolCapableFakeModel:
         return self.model
-
-
-class FailingProviders:
-    def create_model(self, config: ModelConfig) -> ToolCapableFakeModel:
-        raise RuntimeError("provider unavailable")
 
 
 class AcceptingValidator:
@@ -39,7 +39,9 @@ class AcceptingValidator:
         return None
 
 
-async def test_executor_completes_a_claimed_run() -> None:
+async def execute_model(
+    model: ToolCapableFakeModel, *, tools: list[str] | None = None, trace_id: str = "trace-1"
+) -> tuple[Database, str]:
     settings = Settings(database_url="sqlite+aiosqlite:///:memory:")
     database = Database(settings.database_url)
     await database.create_schema()
@@ -47,73 +49,149 @@ async def test_executor_completes_a_claimed_run() -> None:
     spec = AgentSpec(
         name="TestAgent",
         goal="Return a test response",
-        tools=[],
+        tools=tools or [],
         instructions="Answer directly.",
         model={"provider": "test", "model_id": "fake"},
+    )
+    async with database.session() as session:
+        repository = Repository(session)
+        agent = await repository.create_agent(spec, "1", "System prompt")
+        queued = await repository.queue_run(agent, trace_id, "Test input")
+        claimed = await repository.claim_next_run("worker-1", 60)
+    assert claimed == queued.run_id
+
+    executor = AgentExecutor(
+        settings,
+        database,
+        FakeProviders(model),
+        AcceptingValidator(),
+        AgentFactory(registry),
+        Telemetry(settings),
+    )
+    await executor.execute(queued.run_id, "worker-1")
+    return database, queued.run_id
+
+
+async def test_direct_model_response_trajectory() -> None:
+    database, run_id = await execute_model(
+        ToolCapableFakeModel(
+            responses=[
+                AIMessage(
+                    content="Done",
+                    response_metadata={"model_name": "fake-v1", "finish_reason": "stop"},
+                )
+            ]
+        )
+    )
+    try:
+        async with database.session() as session:
+            trajectory = await Repository(session).list_trajectory_steps(run_id)
+        assert [step.event_type for step in trajectory] == ["model.started", "model.completed"]
+        assert trajectory[0].payload["messages"][0][-1]["content"] == "Test input"
+        message = trajectory[1].payload["generations"][0][0]["message"]
+        assert message["type"] == "ai"
+        assert message["content"] == "Done"
+        assert message["response_metadata"] == {
+            "model_name": "fake-v1",
+            "finish_reason": "stop",
+        }
+    finally:
+        await database.close()
+
+
+async def test_executor_completes_a_claimed_run() -> None:
+    database, run_id = await execute_model(
+        ToolCapableFakeModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "calculator",
+                            "args": {"expression": "1 + 1"},
+                            "id": "calculator-1",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(content="Done"),
+            ]
+        ),
+        tools=["calculator"],
     )
     try:
         async with database.session() as session:
             repository = Repository(session)
-            agent = await repository.create_agent(spec, "1", "System prompt")
-            queued = await repository.queue_run(agent, "trace-1", "Test input")
-            claimed = await repository.claim_next_run("worker-1", 60)
-        assert claimed == queued.run_id
-
-        executor = AgentExecutor(
-            settings,
-            database,
-            FakeProviders(ToolCapableFakeModel(responses=[AIMessage(content="Done")])),
-            AcceptingValidator(),
-            AgentFactory(registry),
-            Telemetry(settings),
-        )
-        await executor.execute(queued.run_id, "worker-1")
-
-        async with database.session() as session:
-            completed = await Repository(session).get_run(queued.run_id)
+            completed = await repository.get_run(run_id)
+            trajectory = await repository.list_trajectory_steps(run_id)
         assert completed is not None
         assert completed.status == "completed"
         assert completed.output == "Done"
+        assert [step.event_type for step in trajectory] == [
+            "model.started",
+            "model.completed",
+            "tool.started",
+            "tool.completed",
+            "model.started",
+            "model.completed",
+        ]
+        assert trajectory[0].payload["messages"][0][-1]["content"] == "Test input"
+        assert trajectory[1].payload["generations"][0][0]["message"]["tool_calls"][0]["args"] == {
+            "expression": "1 + 1"
+        }
+        assert trajectory[2].component == "calculator"
+        assert trajectory[2].payload["input"] == {"expression": "1 + 1"}
+        assert trajectory[3].payload["output"]["content"] == "2"
+        assert trajectory[5].payload["generations"][0][0]["message"]["content"] == "Done"
     finally:
         await database.close()
 
 
 async def test_executor_failure_is_persisted_with_an_event() -> None:
-    settings = Settings(database_url="sqlite+aiosqlite:///:memory:")
-    database = Database(settings.database_url)
-    await database.create_schema()
-    registry = create_default_registry()
-    spec = AgentSpec(
-        name="FailingAgent",
-        goal="Exercise failure handling",
-        tools=[],
-        instructions="Answer directly.",
-        model={"provider": "test", "model_id": "fake"},
+    database, run_id = await execute_model(
+        FailingFakeModel(responses=[AIMessage(content="unused")]), trace_id="trace-failure"
     )
     try:
         async with database.session() as session:
             repository = Repository(session)
-            agent = await repository.create_agent(spec, "1", "System prompt")
-            queued = await repository.queue_run(agent, "trace-failure", "Test input")
-            await repository.claim_next_run("worker-1", 60)
-
-        executor = AgentExecutor(
-            settings,
-            database,
-            FailingProviders(),
-            AcceptingValidator(),
-            AgentFactory(registry),
-            Telemetry(settings),
-        )
-        await executor.execute(queued.run_id, "worker-1")
-
-        async with database.session() as session:
-            repository = Repository(session)
-            failed = await repository.get_run(queued.run_id)
-            events = await repository.list_run_events(queued.run_id)
+            failed = await repository.get_run(run_id)
+            events = await repository.list_run_events(run_id)
+            trajectory = await repository.list_trajectory_steps(run_id)
         assert failed is not None
         assert failed.status == "failed"
-        assert "provider unavailable" in (failed.error or "")
+        assert "model unavailable" in (failed.error or "")
         assert events[-1].event_type == "failed"
+        assert [step.event_type for step in trajectory] == ["model.started", "model.failed"]
+        assert trajectory[-1].payload["error_message"] == "model unavailable"
+    finally:
+        await database.close()
+
+
+async def test_failed_tool_call_is_captured() -> None:
+    database, run_id = await execute_model(
+        ToolCapableFakeModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "calculator",
+                            "args": {"expression": "not arithmetic"},
+                            "id": "calculator-1",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(content="Recovered"),
+            ]
+        ),
+        tools=["calculator"],
+    )
+    try:
+        async with database.session() as session:
+            trajectory = await Repository(session).list_trajectory_steps(run_id)
+        failed = next(step for step in trajectory if step.event_type == "tool.failed")
+        assert failed.component == "calculator"
+        assert failed.payload["error_type"] == "ValueError"
     finally:
         await database.close()

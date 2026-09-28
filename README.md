@@ -61,6 +61,7 @@ POST /api/v1/agents/{id}/runs
 GET  /api/v1/agents/{id}/runs
 GET  /api/v1/runs/{id}
 GET  /api/v1/runs/{id}/events
+GET  /api/v1/runs/{id}/trajectory
 POST /api/v1/runs/{id}/cancel
 GET  /api/v1/usage/summary
 ```
@@ -93,6 +94,11 @@ future external queue can replace this repository boundary without changing the 
 Agent versions store the rendered system prompt and its template version. Design sessions store
 the original task, rendered builder prompt, builder model, generated specification, status, and
 trace ID. Runs always reference the exact agent version they execute.
+
+Each run also stores an ordered observable trajectory for every execution attempt. It includes
+model requests and responses, tool inputs and outputs, errors, latency, and LangChain parent-child
+run IDs. This captures the reproducible execution path, not private model reasoning. Trajectory
+payloads can contain prompts, user data, and retrieved documents and must be protected accordingly.
 
 ## Model usage
 

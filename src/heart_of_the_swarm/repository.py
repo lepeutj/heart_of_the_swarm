@@ -13,8 +13,9 @@ from heart_of_the_swarm.models import (
     ModelUsageRecord,
     RunEventRecord,
     RunRecord,
+    TrajectoryStepRecord,
 )
-from heart_of_the_swarm.observability import ModelUsageEvent
+from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
 from heart_of_the_swarm.spec import (
     AgentDetail,
     AgentRunAccepted,
@@ -24,6 +25,7 @@ from heart_of_the_swarm.spec import (
     ModelConfig,
     RunEvent,
     RunStatus,
+    TrajectoryStep,
     UsageSummary,
 )
 
@@ -31,6 +33,7 @@ from heart_of_the_swarm.spec import (
 @dataclass(frozen=True)
 class ExecutionContext:
     run_id: str
+    attempt: int
     trace_id: str
     input: str
     agent: AgentDetail
@@ -195,7 +198,13 @@ class Repository:
         agent = await self.get_agent(run.agent_id, run.agent_version)
         if agent is None:
             return None
-        return ExecutionContext(run_id=run.id, trace_id=run.trace_id, input=run.input, agent=agent)
+        return ExecutionContext(
+            run_id=run.id,
+            attempt=run.attempt,
+            trace_id=run.trace_id,
+            input=run.input,
+            agent=agent,
+        )
 
     async def get_run(self, run_id: str) -> AgentRunDetail | None:
         run = await self.session.get(RunRecord, run_id)
@@ -227,6 +236,35 @@ class Repository:
                 created_at=event.created_at,
             )
             for event in events
+        ]
+
+    async def add_trajectory_steps(
+        self, run_id: str, attempt: int, events: list[TrajectoryEvent]
+    ) -> None:
+        self.session.add_all(self._trajectory_records(run_id, attempt, events))
+        await self.session.commit()
+
+    async def list_trajectory_steps(self, run_id: str) -> list[TrajectoryStep]:
+        statement = (
+            select(TrajectoryStepRecord)
+            .where(TrajectoryStepRecord.run_id == run_id)
+            .order_by(TrajectoryStepRecord.attempt, TrajectoryStepRecord.sequence)
+        )
+        steps = (await self.session.execute(statement)).scalars()
+        return [
+            TrajectoryStep(
+                id=step.id,
+                run_id=step.run_id,
+                attempt=step.attempt,
+                sequence=step.sequence,
+                event_type=step.event_type,
+                component=step.component,
+                langchain_run_id=step.langchain_run_id,
+                parent_run_id=step.parent_run_id,
+                payload=step.payload,
+                created_at=step.created_at,
+            )
+            for step in steps
         ]
 
     async def heartbeat(self, run_id: str, worker_id: str, lease_seconds: int) -> bool:
@@ -329,30 +367,19 @@ class Repository:
         trace_id: str,
         run_id: str | None = None,
     ) -> None:
-        now = datetime.now(UTC)
-        self.session.add_all(
-            [
-                ModelUsageRecord(
-                    id=str(uuid4()),
-                    run_id=run_id,
-                    trace_id=trace_id,
-                    stage=event.stage,
-                    provider=event.provider,
-                    model_id=event.model_id,
-                    resolved_provider=event.resolved_provider,
-                    resolved_model_id=event.resolved_model_id,
-                    input_tokens=event.input_tokens,
-                    output_tokens=event.output_tokens,
-                    total_tokens=event.total_tokens,
-                    cost=event.cost,
-                    latency_ms=event.latency_ms,
-                    success=event.success,
-                    error_type=event.error_type,
-                    created_at=now,
-                )
-                for event in events
-            ]
-        )
+        self.session.add_all(self._usage_records(events, trace_id, run_id))
+        await self.session.commit()
+
+    async def add_run_observability(
+        self,
+        run_id: str,
+        attempt: int,
+        trace_id: str,
+        usage: list[ModelUsageEvent],
+        trajectory: list[TrajectoryEvent],
+    ) -> None:
+        self.session.add_all(self._usage_records(usage, trace_id, run_id))
+        self.session.add_all(self._trajectory_records(run_id, attempt, trajectory))
         await self.session.commit()
 
     async def usage_summary(self) -> list[UsageSummary]:
@@ -405,6 +432,53 @@ class Repository:
                 created_at=datetime.now(UTC),
             )
         )
+
+    @staticmethod
+    def _usage_records(
+        events: list[ModelUsageEvent], trace_id: str, run_id: str | None
+    ) -> list[ModelUsageRecord]:
+        now = datetime.now(UTC)
+        return [
+            ModelUsageRecord(
+                id=str(uuid4()),
+                run_id=run_id,
+                trace_id=trace_id,
+                stage=event.stage,
+                provider=event.provider,
+                model_id=event.model_id,
+                resolved_provider=event.resolved_provider,
+                resolved_model_id=event.resolved_model_id,
+                input_tokens=event.input_tokens,
+                output_tokens=event.output_tokens,
+                total_tokens=event.total_tokens,
+                cost=event.cost,
+                latency_ms=event.latency_ms,
+                success=event.success,
+                error_type=event.error_type,
+                created_at=now,
+            )
+            for event in events
+        ]
+
+    @staticmethod
+    def _trajectory_records(
+        run_id: str, attempt: int, events: list[TrajectoryEvent]
+    ) -> list[TrajectoryStepRecord]:
+        return [
+            TrajectoryStepRecord(
+                id=str(uuid4()),
+                run_id=run_id,
+                attempt=attempt,
+                sequence=event.sequence,
+                event_type=event.event_type,
+                component=event.component,
+                langchain_run_id=event.langchain_run_id,
+                parent_run_id=event.parent_run_id,
+                payload=event.payload,
+                created_at=event.created_at,
+            )
+            for event in events
+        ]
 
     @staticmethod
     def _agent_detail(agent: AgentRecord, version: AgentVersionRecord) -> AgentDetail:

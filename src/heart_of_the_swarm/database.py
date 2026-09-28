@@ -5,13 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from heart_of_the_swarm.models import Base
 
-SCHEMA_REVISION = "0003_run_events"
+SCHEMA_REVISION = "0004_trajectory_steps"
 REQUIRED_TABLES = {
     "agents",
     "agent_versions",
     "design_sessions",
     "runs",
     "run_events",
+    "trajectory_steps",
     "model_usage",
 }
 

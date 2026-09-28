@@ -13,8 +13,8 @@ from heart_of_the_swarm.observability import (
     trace_context,
 )
 from heart_of_the_swarm.providers import ProviderRegistry
-from heart_of_the_swarm.repository import Repository
-from heart_of_the_swarm.spec import AgentRunAccepted, AgentRunDetail, RunEvent
+from heart_of_the_swarm.repository import ExecutionContext, Repository
+from heart_of_the_swarm.spec import AgentRunAccepted, AgentRunDetail, RunEvent, TrajectoryStep
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.validator import AgentSpecValidator
 
@@ -47,6 +47,13 @@ class RunService:
             if await repository.get_run(run_id) is None:
                 return None
             return await repository.list_run_events(run_id)
+
+    async def trajectory(self, run_id: str) -> list[TrajectoryStep] | None:
+        async with self.database.session() as session:
+            repository = Repository(session)
+            if await repository.get_run(run_id) is None:
+                return None
+            return await repository.list_trajectory_steps(run_id)
 
     async def cancel(self, run_id: str) -> AgentRunDetail | None:
         async with self.database.session() as session:
@@ -81,6 +88,7 @@ class AgentExecutor:
         stop_heartbeat = asyncio.Event()
         heartbeat = asyncio.create_task(self._heartbeat(run_id, worker_id, stop_heartbeat))
         started = time.perf_counter()
+        observability_persisted = False
 
         with (
             trace_context(context.trace_id),
@@ -106,6 +114,8 @@ class AgentExecutor:
             try:
                 self.validator.validate_execution(context.agent.spec)
                 if await self._cancelled(run_id):
+                    await self._persist_observability(context, usage)
+                    observability_persisted = True
                     await self._mark_cancelled(run_id)
                     return
                 model = self.providers.create_model(config)
@@ -130,8 +140,12 @@ class AgentExecutor:
                     raise RuntimeError("agent returned no final answer")
                 output = final.content if isinstance(final.content, str) else str(final.content)
                 if await self._cancelled(run_id):
+                    await self._persist_observability(context, usage)
+                    observability_persisted = True
                     await self._mark_cancelled(run_id)
                     return
+                await self._persist_observability(context, usage)
+                observability_persisted = True
                 async with self.database.session() as session:
                     await Repository(session).finish_run(run_id, output)
                 self.telemetry.set_outputs(span, {"output": output})
@@ -143,13 +157,25 @@ class AgentExecutor:
                 )
             except Exception as exc:
                 audit_exception("agent.execution.failed", run_id=run_id)
+                if not observability_persisted:
+                    await self._persist_observability(context, usage)
                 async with self.database.session() as session:
                     await Repository(session).fail_run(run_id, exc)
             finally:
                 stop_heartbeat.set()
                 await heartbeat
-                async with self.database.session() as session:
-                    await Repository(session).add_usage(usage.events, context.trace_id, run_id)
+
+    async def _persist_observability(
+        self, context: ExecutionContext, callback: RuntimeCallbackHandler
+    ) -> None:
+        async with self.database.session() as session:
+            await Repository(session).add_run_observability(
+                context.run_id,
+                context.attempt,
+                context.trace_id,
+                callback.events,
+                callback.trajectory,
+            )
 
     async def _heartbeat(self, run_id: str, worker_id: str, stop: asyncio.Event) -> None:
         while True:

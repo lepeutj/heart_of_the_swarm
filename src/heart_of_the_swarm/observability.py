@@ -127,15 +127,62 @@ class ModelUsageEvent:
     error_type: str | None = None
 
 
+@dataclass(frozen=True)
+class TrajectoryEvent:
+    sequence: int
+    event_type: str
+    component: str | None
+    langchain_run_id: str | None
+    parent_run_id: str | None
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+def _json_value(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_value(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return _json_value(value.model_dump(mode="json", serialize_as_any=True))
+    return str(value)
+
+
 class RuntimeCallbackHandler(BaseCallbackHandler):
-    """Record model and tool lifecycle events without recording their payload contents."""
+    """Collect model usage and the observable model/tool execution trajectory."""
 
     def __init__(self, stage: str, provider: str, model_id: str) -> None:
         self.stage = stage
         self.provider = provider
         self.model_id = model_id
         self.events: list[ModelUsageEvent] = []
+        self.trajectory: list[TrajectoryEvent] = []
         self._started: dict[UUID, float] = {}
+        self._components: dict[UUID, str] = {}
+        self._tool_started: dict[UUID, float] = {}
+
+    def record(
+        self,
+        event_type: str,
+        *,
+        component: str | None = None,
+        run_id: UUID | None = None,
+        parent_run_id: UUID | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.trajectory.append(
+            TrajectoryEvent(
+                sequence=len(self.trajectory) + 1,
+                event_type=event_type,
+                component=component,
+                langchain_run_id=str(run_id) if run_id else None,
+                parent_run_id=str(parent_run_id) if parent_run_id else None,
+                payload=_json_value(payload or {}),
+                created_at=datetime.now(UTC),
+            )
+        )
 
     def on_chat_model_start(
         self,
@@ -147,7 +194,15 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         self._started[run_id] = perf_counter()
-        identifier = serialized.get("name") or serialized.get("id", ["unknown"])[-1]
+        identifier = str(serialized.get("name") or serialized.get("id", ["unknown"])[-1])
+        self._components[run_id] = identifier
+        self.record(
+            "model.started",
+            component=identifier,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            payload={"messages": messages},
+        )
         audit_event(
             "llm.started",
             component=identifier,
@@ -182,6 +237,18 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         output_tokens = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
         total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or 0)
         latency_ms = round((perf_counter() - self._started.pop(run_id, perf_counter())) * 1000, 2)
+        component = self._components.pop(run_id, None)
+        self.record(
+            "model.completed",
+            component=component,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            payload={
+                "generations": response.generations,
+                "metadata": output,
+                "latency_ms": latency_ms,
+            },
+        )
         self.events.append(
             ModelUsageEvent(
                 stage=self.stage,
@@ -220,6 +287,18 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         latency_ms = round((perf_counter() - self._started.pop(run_id, perf_counter())) * 1000, 2)
+        component = self._components.pop(run_id, None)
+        self.record(
+            "model.failed",
+            component=component,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            payload={
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+                "latency_ms": latency_ms,
+            },
+        )
         self.events.append(
             ModelUsageEvent(
                 stage=self.stage,
@@ -248,9 +327,19 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
+        component = serialized.get("name", "unknown")
+        self._components[run_id] = component
+        self._tool_started[run_id] = perf_counter()
+        self.record(
+            "tool.started",
+            component=component,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            payload={"input": kwargs.get("inputs", input_str)},
+        )
         audit_event(
             "tool.started",
-            tool=serialized.get("name", "unknown"),
+            tool=component,
             input_characters=len(input_str),
             langchain_run_id=str(run_id),
             parent_run_id=str(parent_run_id) if parent_run_id else None,
@@ -264,6 +353,16 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
+        latency_ms = round(
+            (perf_counter() - self._tool_started.pop(run_id, perf_counter())) * 1000, 2
+        )
+        self.record(
+            "tool.completed",
+            component=self._components.pop(run_id, None),
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            payload={"output": output, "latency_ms": latency_ms},
+        )
         audit_event(
             "tool.completed",
             output_characters=_size(output),
@@ -279,6 +378,20 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
+        latency_ms = round(
+            (perf_counter() - self._tool_started.pop(run_id, perf_counter())) * 1000, 2
+        )
+        self.record(
+            "tool.failed",
+            component=self._components.pop(run_id, None),
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            payload={
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+                "latency_ms": latency_ms,
+            },
+        )
         audit_event(
             "tool.failed",
             level=logging.ERROR,

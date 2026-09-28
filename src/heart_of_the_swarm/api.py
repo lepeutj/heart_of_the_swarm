@@ -29,6 +29,7 @@ from heart_of_the_swarm.spec import (
     DesignResponse,
     ModelDescriptor,
     RunEvent,
+    TrajectoryStep,
     UsageSummary,
     ValidationResponse,
 )
@@ -228,6 +229,14 @@ async def list_run_events(run_id: str, runtime: Runtime) -> list[RunEvent]:
     if events is None:
         raise HTTPException(status_code=404, detail="run not found")
     return events
+
+
+@app.get("/api/v1/runs/{run_id}/trajectory", response_model=list[TrajectoryStep])
+async def get_run_trajectory(run_id: str, runtime: Runtime) -> list[TrajectoryStep]:
+    trajectory = await runtime.runs.trajectory(run_id)
+    if trajectory is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return trajectory
 
 
 @app.post("/api/v1/runs/{run_id}/cancel", response_model=AgentRunDetail)

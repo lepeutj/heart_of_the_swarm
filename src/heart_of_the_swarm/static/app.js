@@ -151,6 +151,7 @@ async function run() {
     });
     currentRunId = result.run_id;
     $("cancel-run").disabled = false;
+    $("trajectory").textContent = "Capturing trajectory…";
     await waitForRun(result.run_id);
     await loadUsage();
   } catch (error) {
@@ -169,15 +170,24 @@ async function waitForRun(runId) {
     const result = await api(`/api/v1/runs/${runId}`);
     setStatus(`Run ${result.status} · attempt ${result.attempt}`);
     if (result.status === "completed") {
+      await loadTrajectory(runId);
       $("output").textContent = `${result.output}\n\nTrace: ${result.trace_id}`;
       setStatus("Run complete");
       return;
     }
     if (["failed", "cancelled", "timed_out"].includes(result.status)) {
+      await loadTrajectory(runId);
       throw new Error(result.error || `Run ${result.status}`);
     }
     await sleep(1000);
   }
+}
+
+async function loadTrajectory(runId) {
+  const steps = await api(`/api/v1/runs/${runId}/trajectory`);
+  $("trajectory").textContent = steps.length
+    ? JSON.stringify(steps, null, 2)
+    : "No observable model or tool steps were captured.";
 }
 
 async function cancelRun() {

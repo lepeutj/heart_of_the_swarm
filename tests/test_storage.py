@@ -1,5 +1,7 @@
+from datetime import UTC, datetime
+
 from heart_of_the_swarm.database import Database
-from heart_of_the_swarm.observability import ModelUsageEvent
+from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
 from heart_of_the_swarm.repository import Repository
 from heart_of_the_swarm.spec import AgentSpec
 
@@ -99,5 +101,41 @@ async def test_expired_worker_lease_requeues_the_run() -> None:
         assert run is not None
         assert run.status == "queued"
         assert events[-1].event_type == "requeued"
+    finally:
+        await database.close()
+
+
+async def test_trajectory_steps_are_separated_by_attempt() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        async with database.session() as session:
+            repository = Repository(session)
+            agent = await repository.create_agent(make_spec(), "1", "System prompt")
+            queued = await repository.queue_run(agent, "trace-4", "Research this")
+            first = TrajectoryEvent(
+                sequence=1,
+                event_type="model.failed",
+                component="test-model",
+                langchain_run_id="model-run-1",
+                parent_run_id=None,
+                payload={"error_type": "TimeoutError"},
+                created_at=datetime.now(UTC),
+            )
+            second = TrajectoryEvent(
+                sequence=1,
+                event_type="model.completed",
+                component="test-model",
+                langchain_run_id="model-run-2",
+                parent_run_id=None,
+                payload={"generations": []},
+                created_at=datetime.now(UTC),
+            )
+            await repository.add_trajectory_steps(queued.run_id, 1, [first])
+            await repository.add_trajectory_steps(queued.run_id, 2, [second])
+            trajectory = await repository.list_trajectory_steps(queued.run_id)
+
+        assert [(step.attempt, step.sequence) for step in trajectory] == [(1, 1), (2, 1)]
+        assert [step.event_type for step in trajectory] == ["model.failed", "model.completed"]
     finally:
         await database.close()

@@ -66,3 +66,20 @@ def test_start_run_returns_an_accepted_queue_record() -> None:
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
     assert response.json()["trace_id"] == response.headers["X-Trace-ID"]
+
+
+def test_unknown_run_trajectory_returns_not_found() -> None:
+    class FakeRuns:
+        async def trajectory(self, run_id: str):
+            assert run_id == "missing-run"
+            return None
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(runs=FakeRuns())
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/runs/missing-run/trajectory")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "run not found"

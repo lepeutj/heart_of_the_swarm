@@ -104,6 +104,19 @@ class RunEvent(BaseModel):
     created_at: datetime
 
 
+class TrajectoryStep(BaseModel):
+    id: str
+    run_id: str
+    attempt: int
+    sequence: int
+    event_type: str
+    component: str | None = None
+    langchain_run_id: str | None = None
+    parent_run_id: str | None = None
+    payload: dict[str, object]
+    created_at: datetime
+
+
 class ModelDescriptor(BaseModel):
     provider: str
     model_id: str
