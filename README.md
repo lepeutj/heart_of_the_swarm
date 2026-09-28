@@ -100,6 +100,12 @@ model requests and responses, tool inputs and outputs, errors, latency, and Lang
 run IDs. This captures the reproducible execution path, not private model reasoning. Trajectory
 payloads can contain prompts, user data, and retrieved documents and must be protected accordingly.
 
+## Workflow foundation
+
+The framework-independent [WorkflowSpec v1](docs/workflow-spec-v1.md) contract defines typed nodes,
+restricted state paths, declarative conditions, and deterministic DAG validation. Compilation,
+workflow persistence, execution APIs, and the visual editor are intentionally separate milestones.
+
 ## Model usage
 
 Every model call records:
