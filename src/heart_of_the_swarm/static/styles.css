@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #18201c;
+  background: #eef1ed;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 2rem;
+  background: #17251e;
+  color: white;
+}
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: 1.45rem; }
+h2 { font-size: 1rem; margin-top: 1rem; }
+.eyebrow { margin-bottom: .2rem; color: #a9c8b5; font-size: .75rem; text-transform: uppercase; }
+#status { font-size: .85rem; color: #b8d4c2; }
+main { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 1rem; padding: 1rem; }
+.panel { min-width: 0; padding: 1.1rem; border: 1px solid #d7ddd8; border-radius: 10px; background: white; }
+label, legend { display: block; margin: .8rem 0 .3rem; font-size: .82rem; font-weight: 650; }
+input, select, textarea, button {
+  width: 100%;
+  border: 1px solid #c7d0c9;
+  border-radius: 6px;
+  padding: .65rem;
+  font: inherit;
+}
+textarea { resize: vertical; }
+button { cursor: pointer; background: #f5f7f5; font-weight: 650; }
+button.primary { background: #247a4b; border-color: #247a4b; color: white; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.grid { display: grid; gap: .8rem; }
+.grid.two { grid-template-columns: 1fr 1fr; }
+.actions { display: flex; gap: .6rem; margin-top: 1rem; }
+fieldset { margin-top: .8rem; border: 1px solid #d7ddd8; border-radius: 6px; }
+.checks { display: flex; flex-wrap: wrap; gap: .8rem; }
+.checks label { display: flex; align-items: center; gap: .35rem; margin: 0; }
+.checks input { width: auto; }
+.list { display: grid; gap: .5rem; }
+.list button { text-align: left; }
+.empty, .message { color: #68736c; font-size: .85rem; }
+.message.error { color: #a62e2e; }
+.message.success { color: #247a4b; }
+pre { min-height: 10rem; padding: .8rem; overflow: auto; white-space: pre-wrap; background: #f4f6f4; border-radius: 6px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+th, td { padding: .45rem; border-bottom: 1px solid #e2e6e2; text-align: left; }
+
+@media (max-width: 1050px) {
+  main { grid-template-columns: 1fr; }
+}
