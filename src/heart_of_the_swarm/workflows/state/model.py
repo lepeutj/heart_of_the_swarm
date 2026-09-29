@@ -1,5 +1,3 @@
-from typing import Any, TypedDict
+from typing import Any, TypeAlias
 
-
-class WorkflowState(TypedDict):
-    data: dict[str, Any]
+WorkflowState: TypeAlias = dict[str, Any]

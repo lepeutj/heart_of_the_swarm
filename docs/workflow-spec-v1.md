@@ -121,3 +121,18 @@ dependencies, ordered condition routes, fallback targets, and a stable topologic
 The current compiler supports `input`, `transform`, `condition`, and `output`. It explicitly rejects
 validated workflows containing `agent`, `llm`, or `tool` nodes until those runtime contracts are
 implemented. Compilation does not execute nodes or repeat workflow validation.
+
+## Deterministic execution
+
+`WorkflowExecutor` accepts an `ExecutionPlan` and an object input. It copies that input into isolated
+workflow state, follows control flow from the entrypoint, and executes only the selected path.
+
+- `input` validates the initial state against `input_schema`.
+- `transform` resolves every assignment value from the same pre-transform state snapshot, then
+  applies the resolved values to a copied state.
+- `condition` evaluates routes in declared order and selects the first match or the fallback.
+- `output` resolves its configured state path and validates the value against `output_schema`.
+
+Successful execution returns `ExecutionResult` with the workflow ID, output, final state, and ordered
+executed-node IDs. Failures raise a structured issue containing a stable code plus workflow, node,
+and node-type context. Execution does not invoke providers, tools, databases, HTTP, or LangGraph.

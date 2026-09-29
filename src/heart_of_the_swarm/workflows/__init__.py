@@ -12,6 +12,12 @@ from heart_of_the_swarm.workflows.compilation import (
 )
 from heart_of_the_swarm.workflows.conditions import ConditionSpec, evaluate_condition
 from heart_of_the_swarm.workflows.enums import ConditionOperator, NodeType
+from heart_of_the_swarm.workflows.execution import (
+    ExecutionResult,
+    WorkflowExecutionError,
+    WorkflowExecutionIssue,
+    WorkflowExecutor,
+)
 from heart_of_the_swarm.workflows.spec import (
     ValidatedWorkflowSpec,
     WorkflowEdge,
@@ -34,12 +40,16 @@ __all__ = [
     "ConditionOperator",
     "ConditionSpec",
     "ExecutionPlan",
+    "ExecutionResult",
     "NodeType",
     "ValidatedWorkflowSpec",
     "WorkflowCompilationError",
     "WorkflowCompilationIssue",
     "WorkflowCompiler",
     "WorkflowEdge",
+    "WorkflowExecutionError",
+    "WorkflowExecutionIssue",
+    "WorkflowExecutor",
     "WorkflowNode",
     "WorkflowSpec",
     "WorkflowValidationError",
