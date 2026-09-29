@@ -9,6 +9,7 @@ from heart_of_the_swarm.workflows.compilation.models import (
     CompiledNode,
     CompiledOutputNode,
     CompiledRoute,
+    CompiledToolNode,
     CompiledTransformNode,
     ExecutionPlan,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "CompiledNode",
     "CompiledOutputNode",
     "CompiledRoute",
+    "CompiledToolNode",
     "CompiledTransformNode",
     "ExecutionPlan",
     "WorkflowCompilationError",

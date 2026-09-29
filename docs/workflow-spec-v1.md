@@ -118,9 +118,10 @@ will exist at runtime.
 independent `ExecutionPlan`. The plan preserves workflow metadata, schemas, typed node configuration,
 dependencies, ordered condition routes, fallback targets, and a stable topological execution order.
 
-The current compiler supports `input`, `transform`, `condition`, and `output`. It explicitly rejects
-validated workflows containing `agent`, `llm`, or `tool` nodes until those runtime contracts are
-implemented. Compilation does not execute nodes or repeat workflow validation.
+The current compiler supports `input`, `tool`, `transform`, `condition`, and `output`. It explicitly
+rejects validated workflows containing `agent` or `llm` nodes until those runtime contracts are
+implemented. Compilation stores only the registered tool identifier and typed configuration; it does
+not store executable tool implementations, execute nodes, or repeat workflow validation.
 
 ## Deterministic execution
 
@@ -128,6 +129,8 @@ implemented. Compilation does not execute nodes or repeat workflow validation.
 workflow state, follows control flow from the entrypoint, and executes only the selected path.
 
 - `input` validates the initial state against `input_schema`.
+- `tool` resolves literal and state-derived arguments, invokes one registered tool exactly once,
+  and writes its result to the configured output path.
 - `transform` resolves every assignment value from the same pre-transform state snapshot, then
   applies the resolved values to a copied state.
 - `condition` evaluates routes in declared order and selects the first match or the fallback.
@@ -135,4 +138,15 @@ workflow state, follows control flow from the entrypoint, and executes only the 
 
 Successful execution returns `ExecutionResult` with the workflow ID, output, final state, and ordered
 executed-node IDs. Failures raise a structured issue containing a stable code plus workflow, node,
-and node-type context. Execution does not invoke providers, tools, databases, HTTP, or LangGraph.
+node-type, and optional tool context. Tool argument schemas are enforced by the registered tool.
+Registered tools that convert validation or execution exceptions into normal return values are
+rejected because workflow failures must remain distinguishable from successful tool output. There
+are no automatic tool retries or model decisions.
+
+The async `aexecute` method supports synchronous and asynchronous tools. The synchronous `execute`
+adapter is available when no event loop is running.
+
+When the existing runtime callback is supplied, every node emits `node.started` and either
+`node.completed` or `node.failed`. Registered tool invocation continues to emit the existing
+`tool.started`, `tool.completed`, and `tool.failed` events. Tool events inherit workflow ID, workflow
+run ID, node ID, and node type through callback metadata.

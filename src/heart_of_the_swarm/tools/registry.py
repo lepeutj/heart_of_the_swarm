@@ -23,3 +23,10 @@ class ToolRegistry:
         if unknown:
             raise ValueError(f"unknown tools: {', '.join(unknown)}")
         return [self._tools[name] for name in names]
+
+    def resolve_one(self, name: str) -> BaseTool:
+        """Resolve one allow-listed tool without exposing the registry mapping."""
+        try:
+            return self._tools[name]
+        except KeyError as exc:
+            raise ValueError(f"unknown tool: {name}") from exc

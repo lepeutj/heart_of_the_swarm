@@ -106,8 +106,9 @@ The framework-independent [WorkflowSpec v1](docs/workflow-spec-v1.md) contract d
 restricted state paths, declarative conditions, and deterministic DAG validation. Validated
 deterministic nodes compile into a serializable, framework-independent execution plan. The
 deterministic runtime executes selected `input`, `transform`, `condition`, and `output` paths with
-JSON Schema boundary checks. Workflow persistence, APIs, and the visual editor remain separate
-milestones.
+JSON Schema boundary checks. It also executes `tool` nodes exactly once through the shared
+allow-listed registry and records node/tool trajectory events. Model nodes, workflow persistence,
+APIs, and the visual editor remain separate milestones.
 
 ## Model usage
 

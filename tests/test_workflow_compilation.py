@@ -6,6 +6,7 @@ from heart_of_the_swarm.workflows import (
     CompiledConditionNode,
     CompiledInputNode,
     CompiledOutputNode,
+    CompiledToolNode,
     CompiledTransformNode,
     ExecutionPlan,
     WorkflowCompilationError,
@@ -16,7 +17,7 @@ from heart_of_the_swarm.workflows import (
 
 
 def validator() -> WorkflowValidator:
-    return WorkflowValidator(tool_names=["calculator"], provider_names=[])
+    return WorkflowValidator(tool_names=["calculator"], provider_names=["test"])
 
 
 def sequential_data() -> dict:
@@ -150,7 +151,7 @@ def test_compiler_rejects_raw_workflow_spec() -> None:
     assert [issue.code for issue in caught.value.issues] == ["workflow.compiler.unvalidated_input"]
 
 
-def test_compiler_rejects_unsupported_runtime_nodes_without_partial_plan() -> None:
+def test_compiler_compiles_registered_tool_node() -> None:
     data = sequential_data()
     data["nodes"][1] = {
         "id": "prepare",
@@ -164,13 +165,38 @@ def test_compiler_rejects_unsupported_runtime_nodes_without_partial_plan() -> No
     }
     workflow = validator().validate(WorkflowSpec.model_validate(data))
 
+    plan = WorkflowCompiler().compile(workflow)
+
+    tool = next(node for node in plan.nodes if node.id == "prepare")
+    assert isinstance(tool, CompiledToolNode)
+    assert tool.config.tool == "calculator"
+    assert tool.config.arguments == {"expression": "1 + 1"}
+    assert tool.config.output_path == "$.result"
+    assert tool.next_node == "output"
+
+
+def test_compiler_rejects_unsupported_runtime_nodes_without_partial_plan() -> None:
+    data = sequential_data()
+    data["nodes"][1] = {
+        "id": "prepare",
+        "type": "llm",
+        "name": "Summarize",
+        "config": {
+            "prompt": "Summarize the input.",
+            "model": {"provider": "test", "model_id": "test-model"},
+            "input_path": "$.request",
+            "output_path": "$.result",
+        },
+    }
+    workflow = validator().validate(WorkflowSpec.model_validate(data))
+
     with pytest.raises(WorkflowCompilationError) as caught:
         WorkflowCompiler().compile(workflow)
 
     assert [issue.model_dump() for issue in caught.value.issues] == [
         {
             "code": "workflow.compiler.unsupported_node",
-            "message": "Node type 'tool' is not supported by this compiler.",
+            "message": "Node type 'llm' is not supported by this compiler.",
             "node_id": "prepare",
         }
     ]

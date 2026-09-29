@@ -13,6 +13,7 @@ class WorkflowExecutionIssue(BaseModel):
     workflow_id: UUID
     node_id: str | None = None
     node_type: NodeType | None = None
+    tool_name: str | None = None
 
 
 class WorkflowExecutionError(ValueError):

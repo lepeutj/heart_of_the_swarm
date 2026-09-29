@@ -150,10 +150,17 @@ def _json_value(value: Any) -> Any:
     return str(value)
 
 
+def _workflow_context(metadata: Any) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    keys = ("workflow_id", "workflow_run_id", "node_id", "node_type")
+    return {key: metadata[key] for key in keys if key in metadata}
+
+
 class RuntimeCallbackHandler(BaseCallbackHandler):
     """Collect model usage and the observable model/tool execution trajectory."""
 
-    def __init__(self, stage: str, provider: str, model_id: str) -> None:
+    def __init__(self, stage: str, provider: str = "", model_id: str = "") -> None:
         self.stage = stage
         self.provider = provider
         self.model_id = model_id
@@ -162,6 +169,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         self._started: dict[UUID, float] = {}
         self._components: dict[UUID, str] = {}
         self._tool_started: dict[UUID, float] = {}
+        self._tool_context: dict[UUID, dict[str, Any]] = {}
 
     def record(
         self,
@@ -328,14 +336,16 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         component = serialized.get("name", "unknown")
+        context = _workflow_context(kwargs.get("metadata"))
         self._components[run_id] = component
         self._tool_started[run_id] = perf_counter()
+        self._tool_context[run_id] = context
         self.record(
             "tool.started",
             component=component,
             run_id=run_id,
             parent_run_id=parent_run_id,
-            payload={"input": kwargs.get("inputs", input_str)},
+            payload={**context, "input": kwargs.get("inputs", input_str)},
         )
         audit_event(
             "tool.started",
@@ -343,6 +353,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             input_characters=len(input_str),
             langchain_run_id=str(run_id),
             parent_run_id=str(parent_run_id) if parent_run_id else None,
+            **context,
         )
 
     def on_tool_end(
@@ -356,18 +367,20 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         latency_ms = round(
             (perf_counter() - self._tool_started.pop(run_id, perf_counter())) * 1000, 2
         )
+        context = self._tool_context.pop(run_id, {})
         self.record(
             "tool.completed",
             component=self._components.pop(run_id, None),
             run_id=run_id,
             parent_run_id=parent_run_id,
-            payload={"output": output, "latency_ms": latency_ms},
+            payload={**context, "output": output, "latency_ms": latency_ms},
         )
         audit_event(
             "tool.completed",
             output_characters=_size(output),
             langchain_run_id=str(run_id),
             parent_run_id=str(parent_run_id) if parent_run_id else None,
+            **context,
         )
 
     def on_tool_error(
@@ -381,12 +394,14 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         latency_ms = round(
             (perf_counter() - self._tool_started.pop(run_id, perf_counter())) * 1000, 2
         )
+        context = self._tool_context.pop(run_id, {})
         self.record(
             "tool.failed",
             component=self._components.pop(run_id, None),
             run_id=run_id,
             parent_run_id=parent_run_id,
             payload={
+                **context,
                 "error_type": type(error).__name__,
                 "error_message": str(error),
                 "latency_ms": latency_ms,
@@ -399,4 +414,5 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             error_message=str(error),
             langchain_run_id=str(run_id),
             parent_run_id=str(parent_run_id) if parent_run_id else None,
+            **context,
         )

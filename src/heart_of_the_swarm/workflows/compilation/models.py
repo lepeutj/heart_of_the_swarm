@@ -8,6 +8,7 @@ from heart_of_the_swarm.workflows.configs import (
     ConditionNodeConfig,
     InputNodeConfig,
     OutputNodeConfig,
+    ToolNodeConfig,
     TransformNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
@@ -41,6 +42,12 @@ class CompiledTransformNode(CompiledNodeBase):
     next_node: str
 
 
+class CompiledToolNode(CompiledNodeBase):
+    type: Literal[NodeType.TOOL] = NodeType.TOOL
+    config: ToolNodeConfig
+    next_node: str
+
+
 class CompiledConditionNode(CompiledNodeBase):
     type: Literal[NodeType.CONDITION] = NodeType.CONDITION
     config: ConditionNodeConfig
@@ -54,7 +61,11 @@ class CompiledOutputNode(CompiledNodeBase):
 
 
 CompiledNode = Annotated[
-    CompiledInputNode | CompiledTransformNode | CompiledConditionNode | CompiledOutputNode,
+    CompiledInputNode
+    | CompiledTransformNode
+    | CompiledToolNode
+    | CompiledConditionNode
+    | CompiledOutputNode,
     Field(discriminator="type"),
 ]
 

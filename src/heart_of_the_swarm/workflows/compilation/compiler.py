@@ -12,6 +12,7 @@ from heart_of_the_swarm.workflows.compilation.models import (
     CompiledNode,
     CompiledOutputNode,
     CompiledRoute,
+    CompiledToolNode,
     CompiledTransformNode,
     ExecutionPlan,
 )
@@ -19,6 +20,7 @@ from heart_of_the_swarm.workflows.configs import (
     ConditionNodeConfig,
     InputNodeConfig,
     OutputNodeConfig,
+    ToolNodeConfig,
     TransformNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
@@ -31,6 +33,7 @@ from heart_of_the_swarm.workflows.spec import (
 _SUPPORTED_NODE_TYPES = {
     NodeType.INPUT,
     NodeType.TRANSFORM,
+    NodeType.TOOL,
     NodeType.CONDITION,
     NodeType.OUTPUT,
 }
@@ -140,6 +143,15 @@ def _compile_node(
     if node.type == NodeType.TRANSFORM:
         assert isinstance(node.config, TransformNodeConfig)
         return CompiledTransformNode(
+            id=node.id,
+            name=node.name,
+            dependencies=dependencies,
+            config=node.config.model_copy(deep=True),
+            next_node=edges[0].target,
+        )
+    if node.type == NodeType.TOOL:
+        assert isinstance(node.config, ToolNodeConfig)
+        return CompiledToolNode(
             id=node.id,
             name=node.name,
             dependencies=dependencies,
