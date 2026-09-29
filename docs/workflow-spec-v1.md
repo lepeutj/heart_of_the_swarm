@@ -111,3 +111,13 @@ The validator rejects unknown tools and providers, invalid JSON Schemas, cycles,
 paths that cannot reach an output, invalid condition routing, invalid state-path syntax, and invalid
 node configuration. It deliberately does not try to prove that dynamically produced state values
 will exist at runtime.
+
+## Compilation
+
+`WorkflowCompiler` accepts only `ValidatedWorkflowSpec` and produces a serializable, framework-
+independent `ExecutionPlan`. The plan preserves workflow metadata, schemas, typed node configuration,
+dependencies, ordered condition routes, fallback targets, and a stable topological execution order.
+
+The current compiler supports `input`, `transform`, `condition`, and `output`. It explicitly rejects
+validated workflows containing `agent`, `llm`, or `tool` nodes until those runtime contracts are
+implemented. Compilation does not execute nodes or repeat workflow validation.

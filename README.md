@@ -103,8 +103,9 @@ payloads can contain prompts, user data, and retrieved documents and must be pro
 ## Workflow foundation
 
 The framework-independent [WorkflowSpec v1](docs/workflow-spec-v1.md) contract defines typed nodes,
-restricted state paths, declarative conditions, and deterministic DAG validation. Compilation,
-workflow persistence, execution APIs, and the visual editor are intentionally separate milestones.
+restricted state paths, declarative conditions, and deterministic DAG validation. Validated
+deterministic nodes compile into a serializable, framework-independent execution plan. Workflow
+execution, persistence, APIs, and the visual editor remain separate milestones.
 
 ## Model usage
 
