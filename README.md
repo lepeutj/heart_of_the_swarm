@@ -104,10 +104,9 @@ payloads can contain prompts, user data, and retrieved documents and must be pro
 ## Workflow foundation
 
 The framework-independent workflow contract defines typed nodes, restricted state paths,
-declarative conditions, and deterministic DAG validation. Validated nodes compile into a
-serializable execution plan. The existing deterministic executor is a transitional behavioral
-reference; future workflow orchestration will be delegated to LangGraph after the agent product is
-complete.
+declarative conditions, and deterministic graph validation. `WorkflowGraphFactory` translates the
+validated workflow directly into LangGraph nodes, sequential edges, and conditional routes.
+LangGraph is the only workflow orchestration engine.
 
 ## Model usage
 

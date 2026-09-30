@@ -9,9 +9,8 @@ from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.tools.builtin import calculator
 from heart_of_the_swarm.workflows import (
     NodeType,
-    WorkflowCompiler,
     WorkflowExecutionError,
-    WorkflowExecutor,
+    WorkflowGraphFactory,
     WorkflowSpec,
     WorkflowValidator,
 )
@@ -74,10 +73,9 @@ def workflow_data(
     }
 
 
-def compile_tool_workflow(data: dict[str, Any], tool_names: list[str]):
+def validate_tool_workflow(data: dict[str, Any], tool_names: list[str]):
     spec = WorkflowSpec.model_validate(data)
-    validated = WorkflowValidator(tool_names=tool_names, provider_names=[]).validate(spec)
-    return WorkflowCompiler().compile(validated)
+    return WorkflowValidator(tool_names=tool_names, provider_names=[]).validate(spec)
 
 
 @pytest.mark.parametrize(
@@ -117,8 +115,10 @@ async def test_tool_arguments_support_literals_state_references_and_mixed_values
         calls.append(value)
         return value
 
-    plan = compile_tool_workflow(workflow_data("combine", arguments), ["combine"])
-    result = await WorkflowExecutor(ToolRegistry([combine])).aexecute(plan, workflow_input)
+    workflow = validate_tool_workflow(workflow_data("combine", arguments), ["combine"])
+    result = (
+        await WorkflowGraphFactory(ToolRegistry([combine])).create(workflow).ainvoke(workflow_input)
+    )
 
     assert result.output == expected
     assert result.state["tool_result"] == expected
@@ -126,7 +126,7 @@ async def test_tool_arguments_support_literals_state_references_and_mixed_values
 
 
 async def test_calculator_tool_runs_once_then_transform_and_output() -> None:
-    plan = compile_tool_workflow(
+    workflow = validate_tool_workflow(
         workflow_data(
             "calculator",
             {"expression": {"from_state": "$.expression"}},
@@ -136,8 +136,10 @@ async def test_calculator_tool_runs_once_then_transform_and_output() -> None:
         ["calculator"],
     )
 
-    result = await WorkflowExecutor(ToolRegistry([calculator])).aexecute(
-        plan, {"expression": "(2 + 5) * 3"}
+    result = (
+        await WorkflowGraphFactory(ToolRegistry([calculator]))
+        .create(workflow)
+        .ainvoke({"expression": "(2 + 5) * 3"})
     )
 
     assert result.output == "21"
@@ -154,13 +156,15 @@ async def test_fake_web_search_tool_executes_without_network() -> None:
         calls.append(query)
         return f"result for {query}"
 
-    plan = compile_tool_workflow(
+    workflow = validate_tool_workflow(
         workflow_data("web_search", {"query": {"from_state": "$.request"}}),
         ["web_search"],
     )
 
-    result = await WorkflowExecutor(ToolRegistry([fake_web_search])).aexecute(
-        plan, {"request": "agent architectures"}
+    result = (
+        await WorkflowGraphFactory(ToolRegistry([fake_web_search]))
+        .create(workflow)
+        .ainvoke({"request": "agent architectures"})
     )
 
     assert result.output == "result for agent architectures"
@@ -168,10 +172,10 @@ async def test_fake_web_search_tool_executes_without_network() -> None:
 
 
 async def test_unknown_tool_is_rejected_before_execution() -> None:
-    plan = compile_tool_workflow(workflow_data("missing_tool", {}), ["missing_tool"])
+    workflow = validate_tool_workflow(workflow_data("missing_tool", {}), ["missing_tool"])
 
     with pytest.raises(WorkflowExecutionError) as caught:
-        await WorkflowExecutor(ToolRegistry([])).aexecute(plan, {})
+        WorkflowGraphFactory(ToolRegistry([])).create(workflow)
 
     assert caught.value.issue.code == "workflow.execution.tool_unknown"
     assert caught.value.issue.node_id == "call_tool"
@@ -189,13 +193,13 @@ async def test_missing_state_reference_does_not_invoke_tool() -> None:
         calls += 1
         return value
 
-    plan = compile_tool_workflow(
+    workflow = validate_tool_workflow(
         workflow_data("counter", {"value": {"from_state": "$.missing"}}),
         ["counter"],
     )
 
     with pytest.raises(WorkflowExecutionError) as caught:
-        await WorkflowExecutor(ToolRegistry([counter])).aexecute(plan, {})
+        await WorkflowGraphFactory(ToolRegistry([counter])).create(workflow).ainvoke({})
 
     assert caught.value.issue.code == "workflow.execution.tool_arguments_unresolved"
     assert caught.value.issue.tool_name == "counter"
@@ -212,13 +216,13 @@ async def test_invalid_tool_arguments_are_normalized_without_invocation() -> Non
         calls += 1
         return count
 
-    plan = compile_tool_workflow(
+    workflow = validate_tool_workflow(
         workflow_data("typed_tool", {"count": {"unexpected": "object"}}),
         ["typed_tool"],
     )
 
     with pytest.raises(WorkflowExecutionError) as caught:
-        await WorkflowExecutor(ToolRegistry([typed_tool])).aexecute(plan, {})
+        await WorkflowGraphFactory(ToolRegistry([typed_tool])).create(workflow).ainvoke({})
 
     assert caught.value.issue.code == "workflow.execution.tool_arguments_invalid"
     assert caught.value.issue.message == "Arguments for tool 'typed_tool' are invalid."
@@ -239,13 +243,13 @@ async def test_tool_error_swallowing_policies_are_rejected_before_execution(
         return count
 
     setattr(handled_tool, policy, True)
-    plan = compile_tool_workflow(
+    workflow = validate_tool_workflow(
         workflow_data("handled_tool", {"count": "invalid"}),
         ["handled_tool"],
     )
 
     with pytest.raises(WorkflowExecutionError) as caught:
-        await WorkflowExecutor(ToolRegistry([handled_tool])).aexecute(plan, {})
+        WorkflowGraphFactory(ToolRegistry([handled_tool])).create(workflow)
 
     assert caught.value.issue.code == "workflow.execution.tool_error_policy_unsupported"
     assert caught.value.issue.tool_name == "handled_tool"
@@ -263,15 +267,15 @@ async def test_tool_exception_is_safe_and_invoked_once() -> None:
         calls += 1
         raise RuntimeError("private upstream detail")
 
-    plan = compile_tool_workflow(workflow_data("failing_tool", {}), ["failing_tool"])
+    workflow = validate_tool_workflow(workflow_data("failing_tool", {}), ["failing_tool"])
 
     with pytest.raises(WorkflowExecutionError) as caught:
-        await WorkflowExecutor(ToolRegistry([failing_tool])).aexecute(
-            plan,
-            {},
+        graph = WorkflowGraphFactory(ToolRegistry([failing_tool])).create(
+            workflow,
             callback=callback,
             workflow_run_id="workflow-run-failed",
         )
+        await graph.ainvoke({})
 
     assert caught.value.issue.code == "workflow.execution.tool_failed"
     assert caught.value.issue.message == "Tool 'failing_tool' failed."
@@ -301,14 +305,11 @@ async def test_uncopyable_tool_output_is_normalized_after_successful_invocation(
         """Return a value that cannot be copied into workflow state."""
         return Uncopyable()
 
-    plan = compile_tool_workflow(workflow_data("uncopyable", {}), ["uncopyable"])
+    workflow = validate_tool_workflow(workflow_data("uncopyable", {}), ["uncopyable"])
 
     with pytest.raises(WorkflowExecutionError) as caught:
-        await WorkflowExecutor(ToolRegistry([uncopyable])).aexecute(
-            plan,
-            {},
-            callback=callback,
-        )
+        graph = WorkflowGraphFactory(ToolRegistry([uncopyable])).create(workflow, callback=callback)
+        await graph.ainvoke({})
 
     assert caught.value.issue.code == "workflow.execution.tool_output_failed"
     assert caught.value.issue.message == (
@@ -330,7 +331,7 @@ async def test_tool_output_creates_nested_path_without_mutating_input() -> None:
         """Return the supplied value."""
         return value
 
-    plan = compile_tool_workflow(
+    workflow = validate_tool_workflow(
         workflow_data(
             "echo",
             {"value": {"from_state": "$.request"}},
@@ -341,7 +342,9 @@ async def test_tool_output_creates_nested_path_without_mutating_input() -> None:
     workflow_input = {"request": "hello"}
     original = deepcopy(workflow_input)
 
-    result = await WorkflowExecutor(ToolRegistry([echo])).aexecute(plan, workflow_input)
+    result = (
+        await WorkflowGraphFactory(ToolRegistry([echo])).create(workflow).ainvoke(workflow_input)
+    )
 
     assert result.output == "hello"
     assert result.state["research"] == {"tool_result": "hello"}
@@ -354,18 +357,18 @@ async def test_tool_and_node_events_use_existing_trajectory_callback() -> None:
         """Return the supplied value."""
         return value
 
-    plan = compile_tool_workflow(
+    workflow = validate_tool_workflow(
         workflow_data("echo", {"value": {"from_state": "$.request"}}),
         ["echo"],
     )
     callback = RuntimeCallbackHandler("workflow")
 
-    result = await WorkflowExecutor(ToolRegistry([echo])).aexecute(
-        plan,
-        {"request": "hello"},
+    graph = WorkflowGraphFactory(ToolRegistry([echo])).create(
+        workflow,
         callback=callback,
         workflow_run_id="workflow-run-1",
     )
+    result = await graph.ainvoke({"request": "hello"})
 
     assert result.output == "hello"
     assert [event.event_type for event in callback.trajectory] == [
@@ -382,7 +385,7 @@ async def test_tool_and_node_events_use_existing_trajectory_callback() -> None:
         event for event in callback.trajectory if event.event_type == "tool.started"
     )
     assert tool_started.component == "echo"
-    assert tool_started.payload["workflow_id"] == str(plan.workflow_id)
+    assert tool_started.payload["workflow_id"] == str(workflow.id)
     assert tool_started.payload["workflow_run_id"] == "workflow-run-1"
     assert tool_started.payload["node_id"] == "call_tool"
     assert tool_started.payload["node_type"] == "tool"
