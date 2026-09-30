@@ -38,6 +38,7 @@ class AgentFactory:
             model=model,
             tools=tools,
             system_prompt=system_prompt or render_system_prompt(spec),
+            name=spec.name,
         )
         audit_event("factory.completed", agent_name=spec.name)
         return agent

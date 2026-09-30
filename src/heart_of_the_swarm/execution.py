@@ -1,18 +1,15 @@
 import asyncio
 import time
 
-from langchain_core.messages import AIMessage
-
+from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
-from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import (
     RuntimeCallbackHandler,
     audit_event,
     audit_exception,
     trace_context,
 )
-from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.repository import ExecutionContext, Repository
 from heart_of_the_swarm.spec import AgentRunAccepted, AgentRunDetail, RunEvent, TrajectoryStep
 from heart_of_the_swarm.telemetry import Telemetry
@@ -65,16 +62,12 @@ class AgentExecutor:
         self,
         settings: Settings,
         database: Database,
-        providers: ProviderRegistry,
-        validator: AgentSpecValidator,
-        factory: AgentFactory,
+        runner: AgentRunner,
         telemetry: Telemetry,
     ) -> None:
         self.settings = settings
         self.database = database
-        self.providers = providers
-        self.validator = validator
-        self.factory = factory
+        self.runner = runner
         self.telemetry = telemetry
 
     async def execute(self, run_id: str, worker_id: str) -> None:
@@ -112,33 +105,17 @@ class AgentExecutor:
             )
             audit_event("agent.execution.started", agent_name=context.agent.name, run_id=run_id)
             try:
-                self.validator.validate_execution(context.agent.spec)
                 if await self._cancelled(run_id):
                     await self._persist_observability(context, usage)
                     observability_persisted = True
                     await self._mark_cancelled(run_id)
                     return
-                model = self.providers.create_model(config)
-                graph = self.factory.create(
+                output = await self.runner.invoke(
                     context.agent.spec,
-                    model,
+                    context.input,
                     system_prompt=context.agent.system_prompt,
+                    callbacks=[usage],
                 )
-                result = await graph.ainvoke(
-                    {"messages": [{"role": "user", "content": context.input}]},
-                    config={"callbacks": [usage]},
-                )
-                final = next(
-                    (
-                        message
-                        for message in reversed(result.get("messages", []))
-                        if isinstance(message, AIMessage)
-                    ),
-                    None,
-                )
-                if final is None:
-                    raise RuntimeError("agent returned no final answer")
-                output = final.content if isinstance(final.content, str) else str(final.content)
                 if await self._cancelled(run_id):
                     await self._persist_observability(context, usage)
                     observability_persisted = True

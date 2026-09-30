@@ -14,6 +14,7 @@ from heart_of_the_swarm.workflows import (
     WorkflowSpec,
     WorkflowValidator,
 )
+from heart_of_the_swarm.workflows.configs import OutputNodeConfig
 
 
 def validator() -> WorkflowValidator:
@@ -149,6 +150,24 @@ def test_compiler_rejects_raw_workflow_spec() -> None:
         WorkflowCompiler().compile(raw)  # type: ignore[arg-type]
 
     assert [issue.code for issue in caught.value.issues] == ["workflow.compiler.unvalidated_input"]
+
+
+def test_compiler_rejects_mismatched_validated_node_config() -> None:
+    workflow = validator().validate(WorkflowSpec.model_validate(sequential_data()))
+    workflow.nodes[2] = workflow.nodes[2].model_copy(
+        update={"config": OutputNodeConfig(output_path="$.result")}
+    )
+
+    with pytest.raises(WorkflowCompilationError) as caught:
+        WorkflowCompiler().compile(workflow)
+
+    assert [issue.model_dump() for issue in caught.value.issues] == [
+        {
+            "code": "workflow.compiler.config_type_mismatch",
+            "message": "Node 'input' has configuration incompatible with type 'input'.",
+            "node_id": "input",
+        }
+    ]
 
 
 def test_compiler_compiles_registered_tool_node() -> None:

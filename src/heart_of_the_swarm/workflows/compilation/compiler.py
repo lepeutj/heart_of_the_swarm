@@ -1,6 +1,7 @@
 from collections import defaultdict
 from copy import deepcopy
 from heapq import heapify, heappop, heappush
+from typing import TypeVar
 
 from heart_of_the_swarm.workflows.compilation.errors import (
     WorkflowCompilationError,
@@ -37,6 +38,15 @@ _SUPPORTED_NODE_TYPES = {
     NodeType.CONDITION,
     NodeType.OUTPUT,
 }
+
+NodeConfigT = TypeVar(
+    "NodeConfigT",
+    InputNodeConfig,
+    TransformNodeConfig,
+    ToolNodeConfig,
+    ConditionNodeConfig,
+    OutputNodeConfig,
+)
 
 
 class WorkflowCompiler:
@@ -132,34 +142,34 @@ def _compile_node(
     edges: list[WorkflowEdge],
 ) -> CompiledNode:
     if node.type == NodeType.INPUT:
-        assert isinstance(node.config, InputNodeConfig)
+        config = _require_config(node, InputNodeConfig)
         return CompiledInputNode(
             id=node.id,
             name=node.name,
             dependencies=dependencies,
-            config=node.config.model_copy(deep=True),
+            config=config.model_copy(deep=True),
             next_node=edges[0].target,
         )
     if node.type == NodeType.TRANSFORM:
-        assert isinstance(node.config, TransformNodeConfig)
+        config = _require_config(node, TransformNodeConfig)
         return CompiledTransformNode(
             id=node.id,
             name=node.name,
             dependencies=dependencies,
-            config=node.config.model_copy(deep=True),
+            config=config.model_copy(deep=True),
             next_node=edges[0].target,
         )
     if node.type == NodeType.TOOL:
-        assert isinstance(node.config, ToolNodeConfig)
+        config = _require_config(node, ToolNodeConfig)
         return CompiledToolNode(
             id=node.id,
             name=node.name,
             dependencies=dependencies,
-            config=node.config.model_copy(deep=True),
+            config=config.model_copy(deep=True),
             next_node=edges[0].target,
         )
     if node.type == NodeType.CONDITION:
-        assert isinstance(node.config, ConditionNodeConfig)
+        config = _require_config(node, ConditionNodeConfig)
         routes = tuple(
             CompiledRoute(
                 target=edge.target,
@@ -174,15 +184,42 @@ def _compile_node(
             id=node.id,
             name=node.name,
             dependencies=dependencies,
-            config=node.config.model_copy(deep=True),
+            config=config.model_copy(deep=True),
             routes=routes,
             fallback=fallback,
         )
-    assert node.type == NodeType.OUTPUT
-    assert isinstance(node.config, OutputNodeConfig)
+    if node.type != NodeType.OUTPUT:
+        raise WorkflowCompilationError(
+            [
+                WorkflowCompilationIssue(
+                    code="workflow.compiler.unsupported_node",
+                    message=f"Node type '{node.type}' is not supported by this compiler.",
+                    node_id=node.id,
+                )
+            ]
+        )
+    config = _require_config(node, OutputNodeConfig)
     return CompiledOutputNode(
         id=node.id,
         name=node.name,
         dependencies=dependencies,
-        config=node.config.model_copy(deep=True),
+        config=config.model_copy(deep=True),
+    )
+
+
+def _require_config(
+    node: ValidatedWorkflowNode,
+    expected_type: type[NodeConfigT],
+) -> NodeConfigT:
+    """Return typed node configuration or reject an inconsistent validated workflow."""
+    if isinstance(node.config, expected_type):
+        return node.config
+    raise WorkflowCompilationError(
+        [
+            WorkflowCompilationIssue(
+                code="workflow.compiler.config_type_mismatch",
+                message=f"Node '{node.id}' has configuration incompatible with type '{node.type}'.",
+                node_id=node.id,
+            )
+        ]
     )

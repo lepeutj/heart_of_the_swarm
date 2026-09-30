@@ -83,9 +83,10 @@ agent version.
 ## Runtime architecture
 
 The API is the control plane: it designs and versions agents, validates requests, and queues runs.
-The worker is the execution plane: it claims queued runs, builds the saved agent version, calls
-models and tools, and persists the outcome. Both processes use the same application image and
-PostgreSQL database.
+The worker is the execution plane: it claims queued runs and persists their lifecycle. It delegates
+the framework invocation to a persistence-independent `AgentRunner`, which validates the saved
+specification, resolves the model, builds the LangChain agent, and returns its final response. Both
+processes use the same application image and PostgreSQL database.
 
 PostgreSQL is also the initial queue. Workers claim rows atomically, renew a lease while working,
 and recover expired leases after a crash. More workers can be added without changing the API. A
@@ -102,13 +103,11 @@ payloads can contain prompts, user data, and retrieved documents and must be pro
 
 ## Workflow foundation
 
-The framework-independent [WorkflowSpec v1](docs/workflow-spec-v1.md) contract defines typed nodes,
-restricted state paths, declarative conditions, and deterministic DAG validation. Validated
-deterministic nodes compile into a serializable, framework-independent execution plan. The
-deterministic runtime executes selected `input`, `transform`, `condition`, and `output` paths with
-JSON Schema boundary checks. It also executes `tool` nodes exactly once through the shared
-allow-listed registry and records node/tool trajectory events. Model nodes, workflow persistence,
-APIs, and the visual editor remain separate milestones.
+The framework-independent workflow contract defines typed nodes, restricted state paths,
+declarative conditions, and deterministic DAG validation. Validated nodes compile into a
+serializable execution plan. The existing deterministic executor is a transitional behavioral
+reference; future workflow orchestration will be delegated to LangGraph after the agent product is
+complete.
 
 ## Model usage
 
@@ -177,6 +176,7 @@ uv run --locked python -m heart_of_the_swarm.worker
 uv run --locked python -m pytest
 uv run --locked ruff check .
 uv run --locked ruff format --check .
+uv build
 ```
 
 ## Current boundaries

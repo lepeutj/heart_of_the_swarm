@@ -1,5 +1,6 @@
 from typing import Literal
 
+from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.config import Settings, get_settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.execution import AgentExecutor, RunService
@@ -30,6 +31,7 @@ class Application:
         self.database = Database(self.settings.database_url)
         self.telemetry = Telemetry(self.settings)
         self.factory = AgentFactory(self.tools)
+        self.agent_runner = AgentRunner(self.providers, self.validator, self.factory)
         self.agents = AgentService(
             self.settings,
             self.tools,
@@ -42,9 +44,7 @@ class Application:
         self.executor = AgentExecutor(
             self.settings,
             self.database,
-            self.providers,
-            self.validator,
-            self.factory,
+            self.agent_runner,
             self.telemetry,
         )
 

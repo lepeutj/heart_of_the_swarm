@@ -3,6 +3,7 @@ from typing import Any
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
+from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.execution import AgentExecutor
@@ -63,9 +64,7 @@ async def execute_model(
     executor = AgentExecutor(
         settings,
         database,
-        FakeProviders(model),
-        AcceptingValidator(),
-        AgentFactory(registry),
+        AgentRunner(FakeProviders(model), AcceptingValidator(), AgentFactory(registry)),
         Telemetry(settings),
     )
     await executor.execute(queued.run_id, "worker-1")
