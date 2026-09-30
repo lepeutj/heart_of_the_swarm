@@ -7,15 +7,11 @@ from jsonschema.validators import validator_for
 from pydantic import BaseModel, ValidationError
 
 from heart_of_the_swarm.workflows.configs import (
+    NODE_CONFIG_TYPES,
     AgentNodeConfig,
-    ConditionNodeConfig,
     InlineAgentSource,
-    InputNodeConfig,
     LLMNodeConfig,
-    NodeConfig,
-    OutputNodeConfig,
     ToolNodeConfig,
-    TransformNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
@@ -36,16 +32,6 @@ from heart_of_the_swarm.workflows.validation.graph import (
     nodes_reaching_outputs,
     reachable_nodes,
 )
-
-_CONFIG_TYPES: dict[NodeType, type[NodeConfig]] = {
-    NodeType.INPUT: InputNodeConfig,
-    NodeType.AGENT: AgentNodeConfig,
-    NodeType.LLM: LLMNodeConfig,
-    NodeType.TOOL: ToolNodeConfig,
-    NodeType.CONDITION: ConditionNodeConfig,
-    NodeType.TRANSFORM: TransformNodeConfig,
-    NodeType.OUTPUT: OutputNodeConfig,
-}
 
 
 class WorkflowValidator:
@@ -122,7 +108,7 @@ class WorkflowValidator:
         typed: list[ValidatedWorkflowNode] = []
         issues: list[WorkflowValidationIssue] = []
         for node in nodes:
-            config_type = _CONFIG_TYPES[node.type]
+            config_type = NODE_CONFIG_TYPES[node.type]
             try:
                 config = config_type.model_validate(node.config)
             except ValidationError as exc:

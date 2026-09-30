@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from heart_of_the_swarm.spec import AgentSpec, ModelConfig
+from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.state import StatePath
 
 _STATE_PATH_ADAPTER = TypeAdapter(StatePath)
@@ -77,3 +78,13 @@ WorkflowNodeConfig = (
     | TransformNodeConfig
     | OutputNodeConfig
 )
+
+NODE_CONFIG_TYPES: dict[NodeType, type[NodeConfig]] = {
+    NodeType.INPUT: InputNodeConfig,
+    NodeType.AGENT: AgentNodeConfig,
+    NodeType.LLM: LLMNodeConfig,
+    NodeType.TOOL: ToolNodeConfig,
+    NodeType.CONDITION: ConditionNodeConfig,
+    NodeType.TRANSFORM: TransformNodeConfig,
+    NodeType.OUTPUT: OutputNodeConfig,
+}

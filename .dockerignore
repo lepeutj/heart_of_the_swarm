@@ -7,3 +7,5 @@ __pycache__
 tests
 data
 logs
+frontend/node_modules
+src/heart_of_the_swarm/static/workflow-editor

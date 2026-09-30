@@ -14,6 +14,10 @@ class ProviderRegistry:
         providers: list[ModelProvider] = [OpenAIProvider(settings), OpenRouterProvider(settings)]
         self._providers = {provider.name: provider for provider in providers}
 
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(self._providers)
+
     def statuses(self) -> list[dict[str, str | bool]]:
         return [
             {"id": name, "configured": provider.configured}

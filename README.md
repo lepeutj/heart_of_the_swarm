@@ -18,6 +18,7 @@ On Windows PowerShell, use `Copy-Item .env.example .env`.
 | Service | URL | Purpose |
 | --- | --- | --- |
 | Application | <http://localhost:8000> | Configuration UI and API |
+| Workflow editor | <http://localhost:8000/workflow-editor/> | React Flow workflow configuration |
 | API documentation | <http://localhost:8000/docs> | OpenAPI interface |
 | MLflow | <http://localhost:5000> | Trace exploration |
 | PostgreSQL | Internal only | Agents, versions, runs, and model usage |
@@ -49,8 +50,10 @@ to the server-side registry:
 GET  /api/v1/providers
 GET  /api/v1/models?provider=openrouter
 GET  /api/v1/tools
+GET  /api/v1/workflows/capabilities
 GET  /health
 GET  /ready
+POST /api/v1/workflows/validate
 POST /api/v1/agents/design
 POST /api/v1/agents/validate
 POST /api/v1/agents
@@ -169,6 +172,20 @@ uv run --locked uvicorn heart_of_the_swarm.api:app --reload
 uv run --locked python -m heart_of_the_swarm.worker
 ```
 
+The workflow editor is a separate Vite application. Its production build is served by FastAPI and
+is generated rather than committed:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm test
+pnpm build
+```
+
+For frontend development, run `pnpm dev` in `frontend`; Vite proxies `/api` to the local FastAPI
+server. React Flow state is converted to the backend-owned `WorkflowSpec` before validation, and
+the backend capability catalogue controls which node types the editor exposes as available.
+
 ## Tests
 
 ```bash
@@ -177,6 +194,8 @@ uv run --locked ruff check .
 uv run --locked ruff format --check .
 uv build
 ```
+
+Frontend changes additionally require `pnpm test` and `pnpm build` from `frontend`.
 
 ## Current boundaries
 

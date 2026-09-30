@@ -36,6 +36,9 @@ mlflow-server = [
   "psycopg2-binary>=2.9,<3",
 ]
 
+[tool.hatch.build]
+artifacts = ["/src/heart_of_the_swarm/static/workflow-editor/**"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/heart_of_the_swarm"]
 

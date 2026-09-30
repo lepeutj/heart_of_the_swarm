@@ -2,13 +2,14 @@ import logging
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 
 from heart_of_the_swarm import __version__
 from heart_of_the_swarm.application import Application
@@ -34,6 +35,14 @@ from heart_of_the_swarm.spec import (
     ValidationResponse,
 )
 from heart_of_the_swarm.validator import SpecValidationError
+from heart_of_the_swarm.workflows import (
+    WorkflowCapabilities,
+    WorkflowSpec,
+    WorkflowValidationError,
+    WorkflowValidationResponse,
+    WorkflowValidator,
+    workflow_capabilities,
+)
 
 PACKAGE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -59,6 +68,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=PACKAGE_DIR / "static"), name="static")
+app.mount(
+    "/workflow-editor",
+    StaticFiles(directory=PACKAGE_DIR / "static" / "workflow-editor", html=True, check_dir=False),
+    name="workflow-editor",
+)
 
 
 @app.middleware("http")
@@ -144,6 +158,51 @@ async def models(runtime: Runtime, provider: str = Query(...)) -> list[ModelDesc
 @app.get("/api/v1/tools")
 async def tools(runtime: Runtime) -> dict[str, tuple[str, ...]]:
     return {"tools": runtime.tools.names}
+
+
+@app.get("/api/v1/workflows/capabilities", response_model=WorkflowCapabilities)
+async def workflow_capability_catalogue() -> WorkflowCapabilities:
+    return workflow_capabilities()
+
+
+@app.post("/api/v1/workflows/validate", response_model=WorkflowValidationResponse)
+async def validate_workflow(
+    payload: dict[str, Any], runtime: Runtime
+) -> WorkflowValidationResponse:
+    try:
+        spec = WorkflowSpec.model_validate(payload)
+    except ValidationError as exc:
+        issues = []
+        nodes = payload.get("nodes")
+        for error in exc.errors(include_url=False, include_context=False, include_input=False):
+            location = error["loc"]
+            node_id = None
+            if (
+                len(location) > 1
+                and location[0] == "nodes"
+                and isinstance(location[1], int)
+                and isinstance(nodes, list)
+                and location[1] < len(nodes)
+                and isinstance(nodes[location[1]], dict)
+            ):
+                candidate = nodes[location[1]].get("id")
+                node_id = candidate if isinstance(candidate, str) else None
+            issues.append(
+                {
+                    "code": "workflow.schema.invalid",
+                    "message": error["msg"],
+                    "node_id": node_id,
+                    "field": ".".join(str(part) for part in location),
+                }
+            )
+        return WorkflowValidationResponse(valid=False, issues=issues)
+
+    validator = WorkflowValidator(runtime.tools.names, runtime.providers.names)
+    try:
+        validator.validate(spec)
+    except WorkflowValidationError as exc:
+        return WorkflowValidationResponse(valid=False, issues=exc.issues)
+    return WorkflowValidationResponse(valid=True, issues=[])
 
 
 @app.post("/api/v1/agents/design", response_model=DesignResponse)

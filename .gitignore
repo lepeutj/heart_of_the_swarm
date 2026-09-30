@@ -18,6 +18,12 @@ pytest-cache-files-*/
 .ruff_cache/
 .venv/
 .env
+.pnpm-store/
+.uv-cache/
+/frontend/node_modules/
+/frontend/.vite/
+/frontend/*.tsbuildinfo
+/src/heart_of_the_swarm/static/workflow-editor/
 dist/
 build/
 *.egg-info/

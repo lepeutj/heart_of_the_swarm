@@ -20,6 +20,8 @@ h1 { margin-bottom: 0; font-size: 1.45rem; }
 h2 { font-size: 1rem; margin-top: 1rem; }
 .eyebrow { margin-bottom: .2rem; color: #a9c8b5; font-size: .75rem; text-transform: uppercase; }
 #status { font-size: .85rem; color: #b8d4c2; }
+.header-actions { display: flex; align-items: center; gap: 1rem; }
+.header-actions a { color: #d7eee0; font-size: .85rem; }
 main { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 1rem; padding: 1rem; }
 .panel { min-width: 0; padding: 1.1rem; border: 1px solid #d7ddd8; border-radius: 10px; background: white; }
 label, legend { display: block; margin: .8rem 0 .3rem; font-size: .82rem; font-weight: 650; }
