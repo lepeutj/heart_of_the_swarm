@@ -109,7 +109,8 @@ payloads can contain prompts, user data, and retrieved documents and must be pro
 The framework-independent workflow contract defines typed nodes, restricted state paths,
 declarative conditions, and deterministic graph validation. `WorkflowGraphFactory` translates the
 validated workflow directly into LangGraph nodes, sequential edges, and conditional routes.
-LangGraph is the only workflow orchestration engine.
+LangGraph is the only workflow orchestration engine. The runtime supports input, agent, one-shot
+LLM, deterministic tool, transform, condition, and output nodes.
 
 ## Model usage
 

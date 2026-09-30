@@ -4,12 +4,14 @@ from typing import Any, NoReturn
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 from pydantic.v1 import ValidationError as ValidationErrorV1
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
+from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.conditions import ConditionEvaluationError, evaluate_condition
 from heart_of_the_swarm.workflows.configs import (
@@ -17,6 +19,7 @@ from heart_of_the_swarm.workflows.configs import (
     ConditionNodeConfig,
     InlineAgentSource,
     InputNodeConfig,
+    LLMNodeConfig,
     OutputNodeConfig,
     SavedAgentSource,
     ToolNodeConfig,
@@ -64,6 +67,7 @@ class WorkflowNodeRunner:
         *,
         agent_runner: AgentRunner | None = None,
         agent_versions: AgentVersionResolver | None = None,
+        providers: ProviderRegistry | None = None,
         callback: RuntimeCallbackHandler | None = None,
         workflow_run_id: str | None = None,
     ) -> None:
@@ -72,6 +76,7 @@ class WorkflowNodeRunner:
         self.workflow_run_id = workflow_run_id
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
+        self.providers = providers
         self.resolved_tools = self._resolve_workflow_tools(tools)
 
     async def run(
@@ -105,6 +110,11 @@ class WorkflowNodeRunner:
             elif isinstance(node.config, AgentNodeConfig):
                 result = NodeExecution(
                     await self._invoke_agent(node, state),
+                    current_execution,
+                )
+            elif isinstance(node.config, LLMNodeConfig):
+                result = NodeExecution(
+                    await self._invoke_llm(node, state),
                     current_execution,
                 )
             elif isinstance(node.config, ConditionNodeConfig):
@@ -312,6 +322,80 @@ class WorkflowNodeRunner:
             self._raise(
                 code="workflow.execution.agent_output_failed",
                 message=f"Output from agent node '{node.id}' could not be written to state.",
+                node=node,
+                cause=exc,
+            )
+        return updated
+
+    async def _invoke_llm(
+        self,
+        node: ValidatedWorkflowNode,
+        state: WorkflowState,
+    ) -> WorkflowState:
+        """Invoke one configured chat model without tools and write its response to state."""
+        config = self._require_config(node, LLMNodeConfig)
+        if self.providers is None:
+            self._raise(
+                code="workflow.execution.llm_runtime_unavailable",
+                message="LLM execution is not configured for this workflow runtime.",
+                node=node,
+            )
+
+        errors = self.providers.validate_model_execution(config.model)
+        if errors:
+            self._raise(
+                code="workflow.execution.llm_model_invalid",
+                message="; ".join(errors),
+                node=node,
+            )
+
+        try:
+            model_input = get_path(state, config.input_path)
+        except StatePathError as exc:
+            self._raise(
+                code="workflow.execution.llm_input_missing",
+                message=f"Input for LLM node '{node.id}' could not be resolved.",
+                node=node,
+                cause=exc,
+            )
+        if not isinstance(model_input, str):
+            self._raise(
+                code="workflow.execution.llm_input_invalid",
+                message=f"Input for LLM node '{node.id}' must be a string.",
+                node=node,
+            )
+
+        try:
+            model = self.providers.create_model(config.model)
+            response = await model.ainvoke(
+                [SystemMessage(content=config.prompt), HumanMessage(content=model_input)],
+                config={
+                    "callbacks": [self.callback] if self.callback is not None else [],
+                    "metadata": self._node_context(node),
+                },
+            )
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.llm_failed",
+                message=f"LLM node '{node.id}' failed.",
+                node=node,
+                cause=exc,
+            )
+        if not isinstance(response, AIMessage):
+            self._raise(
+                code="workflow.execution.llm_response_invalid",
+                message=f"LLM node '{node.id}' returned an invalid response.",
+                node=node,
+            )
+
+        output = response.content if isinstance(response.content, str) else str(response.content)
+        try:
+            updated = deepcopy(state)
+            set_path(updated, config.output_path, output)
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.llm_output_failed",
+                message=f"Output from LLM node '{node.id}' could not be written to state.",
                 node=node,
                 cause=exc,
             )

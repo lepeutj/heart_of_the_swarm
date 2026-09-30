@@ -10,6 +10,7 @@ from heart_of_the_swarm.workflows.validation import WorkflowValidationIssue
 _SUPPORTED_NODE_TYPES = {
     NodeType.INPUT,
     NodeType.AGENT,
+    NodeType.LLM,
     NodeType.TOOL,
     NodeType.CONDITION,
     NodeType.TRANSFORM,

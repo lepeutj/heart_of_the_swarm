@@ -9,7 +9,22 @@ import {
   useNodesState,
   type Connection,
 } from "@xyflow/react";
-import { loadCapabilities, validateWorkflow, type ValidationIssue } from "./api";
+import {
+  loadCapabilities,
+  loadProviderNames,
+  loadToolNames,
+  validateWorkflow,
+  type ValidationIssue,
+} from "./api";
+import { EdgeInspector } from "./components/EdgeInspector";
+import { JsonEditor } from "./components/JsonEditor";
+import { NodeInspector } from "./components/NodeInspector";
+import {
+  detachNodeAndReconnect,
+  findInsertionEdge,
+  insertNodeOnEdge,
+  moveEdgeAmongSiblings,
+} from "./graph";
 import {
   defaultConfig,
   toWorkflowSpec,
@@ -40,54 +55,15 @@ const initialEdges: EditorEdge[] = [
   { id: "input-output", source: "input", target: "output", data: {} },
 ];
 
-interface JsonEditorProps {
-  label: string;
-  value: JsonObject | null;
-  allowNull?: boolean;
-  onApply: (value: JsonObject | null) => void;
-}
-
-function JsonEditor({ label, value, allowNull = false, onApply }: JsonEditorProps) {
-  const [text, setText] = useState(JSON.stringify(value, null, 2));
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setText(JSON.stringify(value, null, 2));
-    setError("");
-  }, [value]);
-
-  function apply() {
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (parsed === null && allowNull) {
-        onApply(null);
-      } else if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        onApply(parsed as JsonObject);
-      } else {
-        throw new Error(allowNull ? "Expected an object or null." : "Expected an object.");
-      }
-      setError("");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Invalid JSON.");
-    }
-  }
-
-  return (
-    <label className="json-editor">
-      <span>{label}</span>
-      <textarea value={text} onChange={(event) => setText(event.target.value)} spellCheck={false} />
-      <button type="button" onClick={apply}>Apply JSON</button>
-      {error && <small className="field-error">{error}</small>}
-    </label>
-  );
-}
-
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<EditorNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<EditorEdge>(initialEdges);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof loadCapabilities>> | null>(null);
+  const [toolNames, setToolNames] = useState<string[]>([]);
+  const [providerNames, setProviderNames] = useState<string[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [insertionEdgeId, setInsertionEdgeId] = useState<string | null>(null);
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [status, setStatus] = useState("Loading backend capabilities…");
   const [name, setName] = useState("New workflow");
@@ -103,9 +79,11 @@ export default function App() {
   const sequence = useRef(1);
 
   useEffect(() => {
-    loadCapabilities()
-      .then((catalogue) => {
+    Promise.all([loadCapabilities(), loadToolNames(), loadProviderNames()])
+      .then(([catalogue, tools, providers]) => {
         setCapabilities(catalogue);
+        setToolNames(tools);
+        setProviderNames(providers);
         setStatus("Editor ready");
       })
       .catch((error: Error) => setStatus(error.message));
@@ -123,6 +101,19 @@ export default function App() {
       className: issueNodeIds.has(node.id) ? "node-invalid" : undefined,
     })),
     [nodes, issueNodeIds],
+  );
+  const displayEdges = useMemo(
+    () => edges.map((edge) => ({
+      ...edge,
+      className: edge.id === insertionEdgeId ? "edge-insertion-target" : edge.className,
+    })),
+    [edges, insertionEdgeId],
+  );
+  const canDetachSelectedNode = useMemo(
+    () => selectedNode
+      ? detachNodeAndReconnect(nodes, edges, selectedNode.id, () => "preview") !== null
+      : false,
+    [edges, nodes, selectedNode],
   );
   const spec = useMemo(
     () => toWorkflowSpec(
@@ -186,6 +177,32 @@ export default function App() {
     setIssues([]);
   }
 
+  function detachSelectedNode() {
+    if (!selectedNodeId) return;
+    const result = detachNodeAndReconnect(nodes, edges, selectedNodeId);
+    if (!result) return;
+    setNodes(result.nodes);
+    setEdges(result.edges);
+    setSelectedNodeId(null);
+    setIssues([]);
+  }
+
+  function updateInsertionTarget(dragged: EditorNode) {
+    const currentNodes = nodes.map((node) => node.id === dragged.id ? dragged : node);
+    const candidate = findInsertionEdge(dragged, currentNodes, edges);
+    setInsertionEdgeId(candidate?.id ?? null);
+    return candidate;
+  }
+
+  function finishNodeDrag(dragged: EditorNode) {
+    const candidate = updateInsertionTarget(dragged);
+    if (candidate) {
+      setEdges((current) => insertNodeOnEdge(current, dragged.id, candidate.id));
+      setIssues([]);
+    }
+    setInsertionEdgeId(null);
+  }
+
   function updateSelectedEdge(update: Partial<EditorEdge>) {
     if (!selectedEdgeId) return;
     setEdges((current) => current.map((edge) => (
@@ -198,6 +215,16 @@ export default function App() {
     if (!selectedEdgeId) return;
     setEdges((current) => current.filter((edge) => edge.id !== selectedEdgeId));
     setSelectedEdgeId(null);
+    setIssues([]);
+  }
+
+  function moveSelectedEdge(offset: number) {
+    if (!selectedEdgeId) return;
+    setEdges((current) => moveEdgeAmongSiblings(
+      current,
+      selectedEdgeId,
+      offset < 0 ? -1 : 1,
+    ));
     setIssues([]);
   }
 
@@ -260,10 +287,12 @@ export default function App() {
         <section className="canvas" aria-label="Workflow graph editor">
           <ReactFlow
             nodes={displayNodes}
-            edges={edges}
+            edges={displayEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={connect}
+            onNodeDrag={(_, node) => updateInsertionTarget(node)}
+            onNodeDragStop={(_, node) => finishNodeDrag(node)}
             onNodeClick={(_, node) => {
               setSelectedNodeId(node.id);
               setSelectedEdgeId(null);
@@ -277,6 +306,7 @@ export default function App() {
               setSelectedEdgeId(null);
             }}
             fitView
+            defaultEdgeOptions={{ interactionWidth: 48 }}
           >
             <Background gap={24} size={1} />
             <MiniMap pannable zoomable />
@@ -287,46 +317,27 @@ export default function App() {
         <aside className="sidebar inspector">
           <h2>Inspector</h2>
           {selectedNode && (
-            <div>
-              <p className="selection-kind">Node · {selectedNode.data.nodeType}</p>
-              <label>ID<input value={selectedNode.id} readOnly /></label>
-              <label>
-                Name
-                <input
-                  value={selectedNode.data.label}
-                  onChange={(event) => updateSelectedNode({ label: event.target.value })}
-                />
-              </label>
-              <JsonEditor
-                key={selectedNode.id}
-                label="Configuration"
-                value={selectedNode.data.config}
-                onApply={(value) => value && updateSelectedNode({ config: value })}
-              />
-              <button type="button" className="danger" onClick={deleteSelectedNode}>Delete node</button>
-            </div>
+            <NodeInspector
+              node={selectedNode}
+              toolNames={toolNames}
+              providerNames={providerNames}
+              canDetach={canDetachSelectedNode}
+              onChange={updateSelectedNode}
+              onDetach={detachSelectedNode}
+              onDelete={deleteSelectedNode}
+            />
           )}
           {selectedEdge && (
-            <div>
-              <p className="selection-kind">Edge · {selectedEdge.source} → {selectedEdge.target}</p>
-              <label>
-                Label
-                <input
-                  value={String(selectedEdge.label ?? "")}
-                  onChange={(event) => updateSelectedEdge({ label: event.target.value || undefined })}
-                />
-              </label>
-              <JsonEditor
-                key={selectedEdge.id}
-                label="Condition"
-                value={selectedEdge.data?.condition ?? null}
-                allowNull
-                onApply={(condition) => updateSelectedEdge({
-                  data: { ...selectedEdge.data, condition },
-                })}
-              />
-              <button type="button" className="danger" onClick={deleteSelectedEdge}>Delete edge</button>
-            </div>
+            <EdgeInspector
+              edge={selectedEdge}
+              sourceType={nodes.find((node) => node.id === selectedEdge.source)?.data.nodeType}
+              routeIndex={edges.filter((edge) => edge.source === selectedEdge.source).findIndex((edge) => edge.id === selectedEdge.id)}
+              routeCount={edges.filter((edge) => edge.source === selectedEdge.source).length}
+              onChange={updateSelectedEdge}
+              onMoveEarlier={() => moveSelectedEdge(-1)}
+              onMoveLater={() => moveSelectedEdge(1)}
+              onDelete={deleteSelectedEdge}
+            />
           )}
           {!selectedNode && !selectedEdge && (
             <p className="muted">Select a node or edge to edit its declarative configuration.</p>

@@ -25,6 +25,11 @@ export interface ValidationResult {
   issues: ValidationIssue[];
 }
 
+interface ProviderStatus {
+  id: string;
+  configured: boolean;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -39,6 +44,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export function loadCapabilities(): Promise<WorkflowCapabilities> {
   return request("/api/v1/workflows/capabilities");
+}
+
+export async function loadToolNames(): Promise<string[]> {
+  const result = await request<{ tools: string[] }>("/api/v1/tools");
+  return result.tools;
+}
+
+export async function loadProviderNames(): Promise<string[]> {
+  const result = await request<ProviderStatus[]>("/api/v1/providers");
+  return result.map((provider) => provider.id);
 }
 
 export function validateWorkflow(spec: WorkflowSpec): Promise<ValidationResult> {

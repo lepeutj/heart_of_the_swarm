@@ -57,6 +57,18 @@ textarea { min-height: 76px; resize: vertical; font-family: ui-monospace, SFMono
 .json-editor textarea { min-height: 118px; }
 .json-editor button { justify-self: start; }
 .field-error, .status.error { color: #ff938c; }
+.field-help { color: #7f8e84; font-size: 11px; line-height: 1.45; }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.typed-editor fieldset { margin: 14px 0; border: 1px solid #35443b; border-radius: 7px; }
+.typed-editor legend { color: #a8b7ad; font-size: 12px; font-weight: 650; }
+.tool-checks { display: grid; gap: 6px; }
+.tool-checks label, .checkbox-field { display: flex; align-items: center; gap: 8px; }
+.tool-checks input, .checkbox-field input { width: auto; }
+.mapping-row { margin: 12px 0; padding: 10px; border: 1px solid #2b3831; border-radius: 7px; background: #0e1411; }
+.inline-value-editor { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+.node-actions { display: grid; gap: 8px; margin-top: 14px; }
+.node-actions .danger { margin-top: 0; }
+.route-order { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; color: #a8b7ad; font-size: 11px; }
 
 .node-palette { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .node-palette button { min-height: 58px; display: grid; align-content: center; text-align: left; text-transform: capitalize; }
@@ -76,6 +88,7 @@ textarea { min-height: 76px; resize: vertical; font-family: ui-monospace, SFMono
 .react-flow__handle { width: 8px; height: 8px; background: #71d29a; }
 .react-flow__edge-path { stroke: #668174; stroke-width: 2; }
 .react-flow__edge.selected .react-flow__edge-path { stroke: #71d29a; }
+.react-flow__edge.edge-insertion-target .react-flow__edge-path { stroke: #f4c66d; stroke-width: 4; }
 .react-flow__controls button { color: #18211c; background: white; }
 
 .selection-kind { margin: 0 0 12px; color: #71d29a; font-size: 12px; font-weight: 700; }
