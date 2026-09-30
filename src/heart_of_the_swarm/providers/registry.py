@@ -60,17 +60,14 @@ class ProviderRegistry:
         return []
 
     def validate_execution(self, spec: AgentSpec) -> list[str]:
-        return self.validate_model_execution(spec.model)
-
-    def validate_model_execution(self, config: ModelConfig) -> list[str]:
         try:
-            provider = self.get(config.provider)
+            provider = self.get(spec.model.provider)
         except ValueError as exc:
             return [str(exc)]
         if not provider.configured:
-            return [f"{config.provider} is not configured"]
+            return [f"{spec.model.provider} is not configured"]
         if self.settings.allowed_agent_models:
-            selected = f"{config.provider}:{config.model_id}"
+            selected = f"{spec.model.provider}:{spec.model.model_id}"
             if selected not in self.settings.allowed_agent_models:
                 return ["selected model is not allowed"]
         return []

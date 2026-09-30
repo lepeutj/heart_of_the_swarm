@@ -1,9 +1,9 @@
-from typing import Annotated, Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
-from heart_of_the_swarm.spec import AgentSpec, ModelConfig
+from heart_of_the_swarm.spec import AgentSpec
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.state import StatePath
 
@@ -18,35 +18,15 @@ class InputNodeConfig(NodeConfig):
     pass
 
 
-class InlineAgentSource(NodeConfig):
-    type: Literal["inline"]
-    spec: AgentSpec
-
-
-class SavedAgentSource(NodeConfig):
-    type: Literal["saved"]
-    agent_version_id: UUID
-
-
-AgentSource = Annotated[InlineAgentSource | SavedAgentSource, Field(discriminator="type")]
-
-
 class AgentNodeConfig(NodeConfig):
-    agent: AgentSource
+    agent_version_id: UUID
     input_path: StatePath
     output_path: StatePath
 
 
 class LLMNodeConfig(NodeConfig):
-    prompt: str = Field(min_length=1, max_length=10_000)
-    model: ModelConfig
+    agent: AgentSpec
     input_path: StatePath
-    output_path: StatePath
-
-
-class ToolNodeConfig(NodeConfig):
-    tool: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=100)
-    arguments: dict[str, Any] = Field(default_factory=dict)
     output_path: StatePath
 
 
@@ -73,7 +53,6 @@ WorkflowNodeConfig = (
     InputNodeConfig
     | AgentNodeConfig
     | LLMNodeConfig
-    | ToolNodeConfig
     | ConditionNodeConfig
     | TransformNodeConfig
     | OutputNodeConfig
@@ -83,7 +62,6 @@ NODE_CONFIG_TYPES: dict[NodeType, type[NodeConfig]] = {
     NodeType.INPUT: InputNodeConfig,
     NodeType.AGENT: AgentNodeConfig,
     NodeType.LLM: LLMNodeConfig,
-    NodeType.TOOL: ToolNodeConfig,
     NodeType.CONDITION: ConditionNodeConfig,
     NodeType.TRANSFORM: TransformNodeConfig,
     NodeType.OUTPUT: OutputNodeConfig,

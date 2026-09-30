@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
@@ -19,6 +19,7 @@ from heart_of_the_swarm.observability import (
     get_trace_id,
     trace_context,
 )
+from heart_of_the_swarm.repository import WorkflowRevisionConflict
 from heart_of_the_swarm.spec import (
     AgentDetail,
     AgentRunAccepted,
@@ -40,8 +41,13 @@ from heart_of_the_swarm.workflows import (
     WorkflowSpec,
     WorkflowValidationError,
     WorkflowValidationResponse,
-    WorkflowValidator,
     workflow_capabilities,
+)
+from heart_of_the_swarm.workflows.documents import (
+    WorkflowDraftDetail,
+    WorkflowDraftSave,
+    WorkflowSummary,
+    WorkflowVersionDetail,
 )
 
 PACKAGE_DIR = Path(__file__).parent
@@ -197,12 +203,58 @@ async def validate_workflow(
             )
         return WorkflowValidationResponse(valid=False, issues=issues)
 
-    validator = WorkflowValidator(runtime.tools.names, runtime.providers.names)
     try:
-        validator.validate(spec)
+        runtime.workflow_validator.validate(spec)
     except WorkflowValidationError as exc:
         return WorkflowValidationResponse(valid=False, issues=exc.issues)
     return WorkflowValidationResponse(valid=True, issues=[])
+
+
+@app.get("/api/v1/workflows", response_model=list[WorkflowSummary])
+async def list_workflows(runtime: Runtime) -> list[WorkflowSummary]:
+    return await runtime.workflows.list()
+
+
+@app.put("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
+async def save_workflow(
+    workflow_id: UUID,
+    draft: WorkflowDraftSave,
+    runtime: Runtime,
+) -> WorkflowDraftDetail:
+    try:
+        return await runtime.workflows.save(workflow_id, draft)
+    except WorkflowRevisionConflict as exc:
+        raise api_error(exc, 409) from exc
+    except ValueError as exc:
+        raise api_error(exc, 422) from exc
+
+
+@app.get("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
+async def get_workflow(workflow_id: UUID, runtime: Runtime) -> WorkflowDraftDetail:
+    workflow = await runtime.workflows.get(workflow_id)
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    return workflow
+
+
+@app.post(
+    "/api/v1/workflows/{workflow_id}/versions",
+    response_model=WorkflowVersionDetail,
+    status_code=201,
+)
+async def create_workflow_version(
+    workflow_id: UUID,
+    runtime: Runtime,
+) -> WorkflowVersionDetail:
+    try:
+        version = await runtime.workflows.create_version(workflow_id)
+    except WorkflowRevisionConflict as exc:
+        raise api_error(exc, 409) from exc
+    except (WorkflowValidationError, SpecValidationError, ValueError) as exc:
+        raise api_error(exc, 422) from exc
+    if version is None:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    return version
 
 
 @app.post("/api/v1/agents/design", response_model=DesignResponse)

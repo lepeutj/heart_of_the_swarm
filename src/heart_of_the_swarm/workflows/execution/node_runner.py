@@ -4,25 +4,16 @@ from typing import Any, NoReturn
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.tools import BaseTool
-from pydantic import ValidationError
-from pydantic.v1 import ValidationError as ValidationErrorV1
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
-from heart_of_the_swarm.providers import ProviderRegistry
-from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.conditions import ConditionEvaluationError, evaluate_condition
 from heart_of_the_swarm.workflows.configs import (
     AgentNodeConfig,
     ConditionNodeConfig,
-    InlineAgentSource,
     InputNodeConfig,
     LLMNodeConfig,
     OutputNodeConfig,
-    SavedAgentSource,
-    ToolNodeConfig,
     TransformNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
@@ -40,7 +31,6 @@ from heart_of_the_swarm.workflows.state import (
     StatePathError,
     WorkflowState,
     get_path,
-    resolve_arguments,
     resolve_value,
     set_path,
 )
@@ -63,11 +53,9 @@ class WorkflowNodeRunner:
     def __init__(
         self,
         workflow: ValidatedWorkflowSpec,
-        tools: ToolRegistry,
         *,
         agent_runner: AgentRunner | None = None,
         agent_versions: AgentVersionResolver | None = None,
-        providers: ProviderRegistry | None = None,
         callback: RuntimeCallbackHandler | None = None,
         workflow_run_id: str | None = None,
     ) -> None:
@@ -76,8 +64,6 @@ class WorkflowNodeRunner:
         self.workflow_run_id = workflow_run_id
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
-        self.providers = providers
-        self.resolved_tools = self._resolve_workflow_tools(tools)
 
     async def run(
         self,
@@ -102,19 +88,9 @@ class WorkflowNodeRunner:
                 result = NodeExecution(state, current_execution)
             elif isinstance(node.config, TransformNodeConfig):
                 result = NodeExecution(self._apply_transform(node, state), current_execution)
-            elif isinstance(node.config, ToolNodeConfig):
-                result = NodeExecution(
-                    await self._invoke_tool(node, state, self.resolved_tools[node.id]),
-                    current_execution,
-                )
-            elif isinstance(node.config, AgentNodeConfig):
+            elif isinstance(node.config, AgentNodeConfig | LLMNodeConfig):
                 result = NodeExecution(
                     await self._invoke_agent(node, state),
-                    current_execution,
-                )
-            elif isinstance(node.config, LLMNodeConfig):
-                result = NodeExecution(
-                    await self._invoke_llm(node, state),
                     current_execution,
                 )
             elif isinstance(node.config, ConditionNodeConfig):
@@ -145,7 +121,6 @@ class WorkflowNodeRunner:
                 {
                     "error_code": exc.issue.code,
                     "safe_message": exc.issue.message,
-                    "tool_name": exc.issue.tool_name,
                 },
             )
             raise
@@ -161,96 +136,15 @@ class WorkflowNodeRunner:
             node=node,
         )
 
-    def _resolve_workflow_tools(self, tools: ToolRegistry) -> dict[str, BaseTool]:
-        """Resolve every tool before LangGraph execution starts."""
-        resolved: dict[str, BaseTool] = {}
-        for node in self.workflow.nodes:
-            if not isinstance(node.config, ToolNodeConfig):
-                continue
-            try:
-                tool = tools.resolve_one(node.config.tool)
-            except ValueError as exc:
-                self._raise(
-                    code="workflow.execution.tool_unknown",
-                    message=f"Tool '{node.config.tool}' is not registered.",
-                    node=node,
-                    tool_name=node.config.tool,
-                    cause=exc,
-                )
-            if tool.handle_validation_error or tool.handle_tool_error:
-                self._raise(
-                    code="workflow.execution.tool_error_policy_unsupported",
-                    message=f"Tool '{node.config.tool}' uses an unsupported error-handling policy.",
-                    node=node,
-                    tool_name=node.config.tool,
-                )
-            resolved[node.id] = tool
-        return resolved
-
-    async def _invoke_tool(
-        self,
-        node: ValidatedWorkflowNode,
-        state: WorkflowState,
-        tool: BaseTool,
-    ) -> WorkflowState:
-        """Resolve arguments, invoke one LangChain tool, and update copied state."""
-        config = self._require_config(node, ToolNodeConfig)
-        try:
-            arguments = resolve_arguments(config.arguments, state)
-        except (StatePathError, ValueError) as exc:
-            self._raise(
-                code="workflow.execution.tool_arguments_unresolved",
-                message=f"Arguments for tool '{config.tool}' could not be resolved.",
-                node=node,
-                tool_name=config.tool,
-                cause=exc,
-            )
-
-        try:
-            result = await tool.ainvoke(
-                arguments,
-                config={
-                    "callbacks": [self.callback] if self.callback is not None else [],
-                    "metadata": self._node_context(node),
-                },
-            )
-        except (ValidationError, ValidationErrorV1) as exc:
-            self._raise(
-                code="workflow.execution.tool_arguments_invalid",
-                message=f"Arguments for tool '{config.tool}' are invalid.",
-                node=node,
-                tool_name=config.tool,
-                cause=exc,
-            )
-        except Exception as exc:
-            self._raise(
-                code="workflow.execution.tool_failed",
-                message=f"Tool '{config.tool}' failed.",
-                node=node,
-                tool_name=config.tool,
-                cause=exc,
-            )
-
-        try:
-            updated = deepcopy(state)
-            set_path(updated, config.output_path, deepcopy(result))
-        except Exception as exc:
-            self._raise(
-                code="workflow.execution.tool_output_failed",
-                message=f"Result from tool '{config.tool}' could not be written to state.",
-                node=node,
-                tool_name=config.tool,
-                cause=exc,
-            )
-        return updated
-
     async def _invoke_agent(
         self,
         node: ValidatedWorkflowNode,
         state: WorkflowState,
     ) -> WorkflowState:
         """Resolve one inline or saved agent and delegate its loop to AgentRunner."""
-        config = self._require_config(node, AgentNodeConfig)
+        config = node.config
+        if not isinstance(config, AgentNodeConfig | LLMNodeConfig):
+            raise TypeError(f"Node '{node.id}' has an inconsistent agent configuration.")
         if self.agent_runner is None:
             self._raise(
                 code="workflow.execution.agent_runtime_unavailable",
@@ -274,28 +168,25 @@ class WorkflowNodeRunner:
                 node=node,
             )
 
-        source = config.agent
-        if isinstance(source, InlineAgentSource):
-            spec = source.spec
+        if isinstance(config, LLMNodeConfig):
+            spec = config.agent
             system_prompt = None
-        elif isinstance(source, SavedAgentSource):
+        else:
             if self.agent_versions is None:
                 self._raise(
                     code="workflow.execution.agent_version_resolver_unavailable",
                     message="Saved agent versions cannot be resolved by this workflow runtime.",
                     node=node,
                 )
-            resolved = await self.agent_versions.resolve(source.agent_version_id)
+            resolved = await self.agent_versions.resolve(config.agent_version_id)
             if resolved is None:
                 self._raise(
                     code="workflow.execution.agent_version_not_found",
-                    message=f"Agent version '{source.agent_version_id}' was not found.",
+                    message=f"Agent version '{config.agent_version_id}' was not found.",
                     node=node,
                 )
             spec = resolved.spec
             system_prompt = resolved.system_prompt
-        else:
-            raise TypeError(f"Node '{node.id}' has an inconsistent agent source.")
 
         try:
             output = await self.agent_runner.invoke(
@@ -322,80 +213,6 @@ class WorkflowNodeRunner:
             self._raise(
                 code="workflow.execution.agent_output_failed",
                 message=f"Output from agent node '{node.id}' could not be written to state.",
-                node=node,
-                cause=exc,
-            )
-        return updated
-
-    async def _invoke_llm(
-        self,
-        node: ValidatedWorkflowNode,
-        state: WorkflowState,
-    ) -> WorkflowState:
-        """Invoke one configured chat model without tools and write its response to state."""
-        config = self._require_config(node, LLMNodeConfig)
-        if self.providers is None:
-            self._raise(
-                code="workflow.execution.llm_runtime_unavailable",
-                message="LLM execution is not configured for this workflow runtime.",
-                node=node,
-            )
-
-        errors = self.providers.validate_model_execution(config.model)
-        if errors:
-            self._raise(
-                code="workflow.execution.llm_model_invalid",
-                message="; ".join(errors),
-                node=node,
-            )
-
-        try:
-            model_input = get_path(state, config.input_path)
-        except StatePathError as exc:
-            self._raise(
-                code="workflow.execution.llm_input_missing",
-                message=f"Input for LLM node '{node.id}' could not be resolved.",
-                node=node,
-                cause=exc,
-            )
-        if not isinstance(model_input, str):
-            self._raise(
-                code="workflow.execution.llm_input_invalid",
-                message=f"Input for LLM node '{node.id}' must be a string.",
-                node=node,
-            )
-
-        try:
-            model = self.providers.create_model(config.model)
-            response = await model.ainvoke(
-                [SystemMessage(content=config.prompt), HumanMessage(content=model_input)],
-                config={
-                    "callbacks": [self.callback] if self.callback is not None else [],
-                    "metadata": self._node_context(node),
-                },
-            )
-        except Exception as exc:
-            self._raise(
-                code="workflow.execution.llm_failed",
-                message=f"LLM node '{node.id}' failed.",
-                node=node,
-                cause=exc,
-            )
-        if not isinstance(response, AIMessage):
-            self._raise(
-                code="workflow.execution.llm_response_invalid",
-                message=f"LLM node '{node.id}' returned an invalid response.",
-                node=node,
-            )
-
-        output = response.content if isinstance(response.content, str) else str(response.content)
-        try:
-            updated = deepcopy(state)
-            set_path(updated, config.output_path, output)
-        except Exception as exc:
-            self._raise(
-                code="workflow.execution.llm_output_failed",
-                message=f"Output from LLM node '{node.id}' could not be written to state.",
                 node=node,
                 cause=exc,
             )
@@ -475,7 +292,7 @@ class WorkflowNodeRunner:
             )
 
     def _node_context(self, node: ValidatedWorkflowNode) -> dict[str, Any]:
-        """Build metadata shared by node and tool trajectory events."""
+        """Build metadata shared by workflow-node and nested agent events."""
         return {
             "workflow_id": str(self.workflow.id),
             "workflow_run_id": self.workflow_run_id,
@@ -503,7 +320,6 @@ class WorkflowNodeRunner:
         code: str,
         message: str,
         node: ValidatedWorkflowNode,
-        tool_name: str | None = None,
         cause: Exception | None = None,
     ) -> NoReturn:
         """Raise one normalized error with workflow and node context."""
@@ -514,7 +330,6 @@ class WorkflowNodeRunner:
                 workflow_id=self.workflow.id,
                 node_id=node.id,
                 node_type=NodeType(node.type),
-                tool_name=tool_name,
             )
         )
         if cause is None:

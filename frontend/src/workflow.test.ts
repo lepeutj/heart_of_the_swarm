@@ -37,9 +37,17 @@ describe("toWorkflowSpec", () => {
     expect(spec.edges[0]).toEqual({ source: "input", target: "output", label: "done" });
   });
 
-  it("provides an inline AgentSpec without redefining its fields", () => {
+  it("configures a visual LLM with the shared AgentSpec", () => {
+    expect(defaultConfig("llm")).toMatchObject({
+      agent: { name: "NewAgent", tools: [] },
+      input_path: "$.request",
+      output_path: "$.answer",
+    });
+  });
+
+  it("configures a saved agent by immutable version ID", () => {
     expect(defaultConfig("agent")).toMatchObject({
-      agent: { type: "inline", spec: { name: "NewAgent", tools: [] } },
+      agent_version_id: "",
       input_path: "$.request",
       output_path: "$.answer",
     });

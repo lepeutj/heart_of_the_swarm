@@ -51,6 +51,10 @@ GET  /api/v1/providers
 GET  /api/v1/models?provider=openrouter
 GET  /api/v1/tools
 GET  /api/v1/workflows/capabilities
+GET  /api/v1/workflows
+GET  /api/v1/workflows/{id}
+PUT  /api/v1/workflows/{id}
+POST /api/v1/workflows/{id}/versions
 GET  /health
 GET  /ready
 POST /api/v1/workflows/validate
@@ -106,11 +110,14 @@ payloads can contain prompts, user data, and retrieved documents and must be pro
 
 ## Workflow foundation
 
-The framework-independent workflow contract defines typed nodes, restricted state paths,
-declarative conditions, and deterministic graph validation. `WorkflowGraphFactory` translates the
-validated workflow directly into LangGraph nodes, sequential edges, and conditional routes.
-LangGraph is the only workflow orchestration engine. The runtime supports input, agent, one-shot
-LLM, deterministic tool, transform, condition, and output nodes.
+The workflow contract defines input, inline tool-enabled LLM, saved agent, transform, condition,
+and output nodes. Inline LLM configuration is an `AgentSpec` executed through `create_agent`; saved
+agent nodes reference immutable versions. LangGraph remains the only orchestration engine.
+Workflow drafts store executable specifications separately from React Flow layout and publish into
+immutable validated versions.
+
+For the file-by-file path from a React node to LangGraph and LangChain, see
+[`docs/node-development.md`](docs/node-development.md).
 
 ## Model usage
 

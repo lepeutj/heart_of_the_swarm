@@ -14,6 +14,8 @@ from heart_of_the_swarm.models import (
     RunEventRecord,
     RunRecord,
     TrajectoryStepRecord,
+    WorkflowRecord,
+    WorkflowVersionRecord,
 )
 from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
 from heart_of_the_swarm.spec import (
@@ -28,6 +30,12 @@ from heart_of_the_swarm.spec import (
     TrajectoryStep,
     UsageSummary,
 )
+from heart_of_the_swarm.workflows.documents import (
+    WorkflowDraftDetail,
+    WorkflowDraftSave,
+    WorkflowSummary,
+    WorkflowVersionDetail,
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +45,10 @@ class ExecutionContext:
     trace_id: str
     input: str
     agent: AgentDetail
+
+
+class WorkflowRevisionConflict(ValueError):
+    pass
 
 
 class Repository:
@@ -64,18 +76,27 @@ class Repository:
         return self._agent_detail(agent, version)
 
     async def list_agents(self) -> list[AgentSummary]:
-        result = await self.session.execute(
-            select(AgentRecord).order_by(AgentRecord.created_at.desc())
-        )
+        rows = (
+            await self.session.execute(
+                select(AgentRecord, AgentVersionRecord)
+                .join(
+                    AgentVersionRecord,
+                    (AgentVersionRecord.agent_id == AgentRecord.id)
+                    & (AgentVersionRecord.version == AgentRecord.active_version),
+                )
+                .order_by(AgentRecord.created_at.desc())
+            )
+        ).all()
         return [
             AgentSummary(
                 id=agent.id,
+                version_id=version.id,
                 name=agent.name,
                 goal=agent.goal,
                 version=agent.active_version,
                 created_at=agent.created_at,
             )
-            for agent in result.scalars()
+            for agent, version in rows
         ]
 
     async def add_version(
@@ -121,6 +142,75 @@ class Repository:
         )
         row = (await self.session.execute(statement)).one_or_none()
         return self._agent_detail(*row) if row else None
+
+    async def save_workflow(self, draft: WorkflowDraftSave) -> WorkflowDraftDetail:
+        """Create or update one mutable workflow draft with optimistic concurrency."""
+        workflow_id = str(draft.spec["id"])
+        now = datetime.now(UTC)
+        workflow = await self.session.get(WorkflowRecord, workflow_id)
+        if workflow is None:
+            if draft.expected_revision is not None:
+                raise WorkflowRevisionConflict("workflow draft does not exist")
+            workflow = WorkflowRecord(
+                id=workflow_id,
+                name=str(draft.spec.get("name", "Untitled workflow")),
+                description=str(draft.spec.get("description", "")),
+                spec=draft.spec,
+                editor=draft.editor.model_dump(mode="json"),
+                revision=1,
+                latest_version=0,
+                created_at=now,
+                updated_at=now,
+            )
+            self.session.add(workflow)
+        else:
+            if draft.expected_revision != workflow.revision:
+                raise WorkflowRevisionConflict(
+                    f"workflow draft revision is {workflow.revision}, "
+                    f"not {draft.expected_revision or 'unspecified'}"
+                )
+            workflow.name = str(draft.spec.get("name", "Untitled workflow"))
+            workflow.description = str(draft.spec.get("description", ""))
+            workflow.spec = draft.spec
+            workflow.editor = draft.editor.model_dump(mode="json")
+            workflow.revision += 1
+            workflow.updated_at = now
+        await self.session.commit()
+        return self._workflow_detail(workflow)
+
+    async def list_workflows(self) -> list[WorkflowSummary]:
+        rows = (
+            await self.session.execute(
+                select(WorkflowRecord).order_by(WorkflowRecord.updated_at.desc())
+            )
+        ).scalars()
+        return [self._workflow_summary(workflow) for workflow in rows]
+
+    async def get_workflow(self, workflow_id: str) -> WorkflowDraftDetail | None:
+        workflow = await self.session.get(WorkflowRecord, workflow_id)
+        return self._workflow_detail(workflow) if workflow else None
+
+    async def create_workflow_version(
+        self, workflow_id: str, expected_revision: int | None = None
+    ) -> WorkflowVersionDetail | None:
+        statement = select(WorkflowRecord).where(WorkflowRecord.id == workflow_id).with_for_update()
+        workflow = (await self.session.execute(statement)).scalar_one_or_none()
+        if workflow is None:
+            return None
+        if expected_revision is not None and workflow.revision != expected_revision:
+            raise WorkflowRevisionConflict("workflow draft changed during version creation")
+        workflow.latest_version += 1
+        version = WorkflowVersionRecord(
+            id=str(uuid4()),
+            workflow_id=workflow.id,
+            version=workflow.latest_version,
+            spec=workflow.spec,
+            editor=workflow.editor,
+            created_at=datetime.now(UTC),
+        )
+        self.session.add(version)
+        await self.session.commit()
+        return self._workflow_version_detail(version)
 
     async def start_design(
         self,
@@ -501,6 +591,37 @@ class Repository:
             spec=AgentSpec.model_validate(version.spec),
             prompt_version=version.prompt_version,
             system_prompt=version.system_prompt,
+        )
+
+    @staticmethod
+    def _workflow_summary(workflow: WorkflowRecord) -> WorkflowSummary:
+        return WorkflowSummary(
+            id=workflow.id,
+            name=workflow.name,
+            description=workflow.description,
+            revision=workflow.revision,
+            latest_version=workflow.latest_version,
+            created_at=workflow.created_at,
+            updated_at=workflow.updated_at,
+        )
+
+    @classmethod
+    def _workflow_detail(cls, workflow: WorkflowRecord) -> WorkflowDraftDetail:
+        return WorkflowDraftDetail(
+            **cls._workflow_summary(workflow).model_dump(),
+            spec=workflow.spec,
+            editor=workflow.editor,
+        )
+
+    @staticmethod
+    def _workflow_version_detail(version: WorkflowVersionRecord) -> WorkflowVersionDetail:
+        return WorkflowVersionDetail(
+            id=version.id,
+            workflow_id=version.workflow_id,
+            version=version.version,
+            spec=version.spec,
+            editor=version.editor,
+            created_at=version.created_at,
         )
 
     @staticmethod

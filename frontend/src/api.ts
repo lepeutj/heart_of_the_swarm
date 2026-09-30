@@ -1,4 +1,4 @@
-import type { WorkflowSpec } from "./workflow";
+import type { WorkflowEditorDocument, WorkflowSpec } from "./workflow";
 
 export interface NodeCapability {
   type: string;
@@ -28,6 +28,34 @@ export interface ValidationResult {
 interface ProviderStatus {
   id: string;
   configured: boolean;
+}
+
+export interface AgentOption {
+  id: string;
+  version_id: string;
+  name: string;
+  version: number;
+}
+
+export type AgentSpec = {
+  name: string;
+  goal: string;
+  instructions: string;
+  model: Record<string, unknown>;
+  tools: string[];
+};
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  description: string;
+  revision: number;
+  latest_version: number;
+}
+
+export interface WorkflowDraft extends WorkflowSummary {
+  spec: WorkflowSpec;
+  editor: WorkflowEditorDocument;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -61,4 +89,42 @@ export function validateWorkflow(spec: WorkflowSpec): Promise<ValidationResult> 
     method: "POST",
     body: JSON.stringify(spec),
   });
+}
+
+export function loadAgents(): Promise<AgentOption[]> {
+  return request("/api/v1/agents");
+}
+
+export function createAgent(spec: AgentSpec): Promise<AgentOption> {
+  return request("/api/v1/agents", {
+    method: "POST",
+    body: JSON.stringify(spec),
+  });
+}
+
+export function loadWorkflows(): Promise<WorkflowSummary[]> {
+  return request("/api/v1/workflows");
+}
+
+export function loadWorkflow(id: string): Promise<WorkflowDraft> {
+  return request(`/api/v1/workflows/${id}`);
+}
+
+export function saveWorkflow(
+  spec: WorkflowSpec,
+  editor: WorkflowEditorDocument,
+  expectedRevision: number | null,
+): Promise<WorkflowDraft> {
+  return request(`/api/v1/workflows/${spec.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      spec,
+      editor,
+      expected_revision: expectedRevision,
+    }),
+  });
+}
+
+export function createWorkflowVersion(id: string): Promise<{ version: number }> {
+  return request(`/api/v1/workflows/${id}/versions`, { method: "POST" });
 }

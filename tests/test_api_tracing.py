@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from heart_of_the_swarm import __version__
 from heart_of_the_swarm.api import app, get_application
 from heart_of_the_swarm.spec import AgentRunAccepted
+from heart_of_the_swarm.workflows import WorkflowValidator
 
 
 def test_health_response_has_trace_id_header() -> None:
@@ -101,15 +102,14 @@ def test_workflow_capabilities_report_runtime_support() -> None:
     assert response.status_code == 200
     nodes = {node["type"]: node for node in response.json()["nodes"]}
     assert nodes["agent"]["available"] is True
-    assert nodes["tool"]["available"] is True
+    assert "tool" not in nodes
     assert nodes["llm"]["available"] is True
     assert "properties" in nodes["agent"]["config_schema"]
 
 
 def test_workflow_validation_returns_structured_semantic_issues() -> None:
     runtime = SimpleNamespace(
-        tools=SimpleNamespace(names=("calculator",)),
-        providers=SimpleNamespace(names=("test",)),
+        workflow_validator=WorkflowValidator(["calculator"], ["test"]),
     )
     workflow = {
         "schema_version": "1",
@@ -139,8 +139,7 @@ def test_workflow_validation_returns_structured_semantic_issues() -> None:
 
 def test_workflow_validation_accepts_editor_initial_workflow() -> None:
     runtime = SimpleNamespace(
-        tools=SimpleNamespace(names=("calculator",)),
-        providers=SimpleNamespace(names=("test",)),
+        workflow_validator=WorkflowValidator(["calculator"], ["test"]),
     )
     workflow = {
         "schema_version": "1",
@@ -178,26 +177,21 @@ def test_workflow_validation_accepts_editor_initial_workflow() -> None:
 
 def test_workflow_validation_returns_node_context_for_schema_issues() -> None:
     runtime = SimpleNamespace(
-        tools=SimpleNamespace(names=("calculator",)),
-        providers=SimpleNamespace(names=("test",)),
+        workflow_validator=WorkflowValidator(["calculator"], ["test"]),
     )
     workflow = {
         "schema_version": "1",
         "id": "47d174a8-b35e-4563-bd86-3bc6b5b5947f",
-        "name": "Invalid tool",
-        "description": "Tool name is missing.",
+        "name": "Invalid LLM",
+        "description": "Node name is missing.",
         "input_schema": {"type": "object"},
         "output_schema": {"type": "object"},
-        "entrypoint": "tool",
+        "entrypoint": "llm",
         "nodes": [
             {
-                "id": "tool",
-                "type": "tool",
-                "config": {
-                    "tool": "calculator",
-                    "arguments": {},
-                    "output_path": "$.result",
-                },
+                "id": "llm",
+                "type": "llm",
+                "config": {},
             }
         ],
         "edges": [],
@@ -212,5 +206,5 @@ def test_workflow_validation_returns_node_context_for_schema_issues() -> None:
     assert response.status_code == 200
     issue = response.json()["issues"][0]
     assert issue["code"] == "workflow.schema.invalid"
-    assert issue["node_id"] == "tool"
+    assert issue["node_id"] == "llm"
     assert issue["field"].startswith("nodes.0")

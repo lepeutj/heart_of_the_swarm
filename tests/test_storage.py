@@ -1,11 +1,15 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
+
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
-from heart_of_the_swarm.repository import Repository
+from heart_of_the_swarm.repository import Repository, WorkflowRevisionConflict
 from heart_of_the_swarm.spec import AgentSpec
 from heart_of_the_swarm.workflow_agent_versions import DatabaseAgentVersionResolver
+from heart_of_the_swarm.workflows import WorkflowSpec
+from heart_of_the_swarm.workflows.documents import WorkflowDraftSave
 
 
 def make_spec(name: str = "ResearchAgent") -> AgentSpec:
@@ -15,6 +19,41 @@ def make_spec(name: str = "ResearchAgent") -> AgentSpec:
         tools=["web_search"],
         instructions="Search and summarize reliable sources.",
         model={"provider": "test", "model_id": "test-model"},
+    )
+
+
+def make_workflow_draft(expected_revision: int | None = None) -> WorkflowDraftSave:
+    workflow = WorkflowSpec.model_validate(
+        {
+            "schema_version": "1",
+            "id": "47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+            "name": "Saved workflow",
+            "description": "Editable workflow",
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "string"},
+            "entrypoint": "input",
+            "nodes": [
+                {"id": "input", "type": "input", "name": "Input", "config": {}},
+                {
+                    "id": "output",
+                    "type": "output",
+                    "name": "Output",
+                    "config": {"output_path": "$.request"},
+                },
+            ],
+            "edges": [{"source": "input", "target": "output"}],
+        }
+    )
+    return WorkflowDraftSave(
+        spec=workflow.model_dump(mode="json"),
+        editor={
+            "positions": {
+                "input": {"x": 80, "y": 160},
+                "output": {"x": 520, "y": 160},
+            },
+            "viewport": {"x": 10, "y": 20, "zoom": 1.25},
+        },
+        expected_revision=expected_revision,
     )
 
 
@@ -145,5 +184,44 @@ async def test_trajectory_steps_are_separated_by_attempt() -> None:
 
         assert [(step.attempt, step.sequence) for step in trajectory] == [(1, 1), (2, 1)]
         assert [step.event_type for step in trajectory] == ["model.failed", "model.completed"]
+    finally:
+        await database.close()
+
+
+async def test_workflow_draft_reopens_with_layout_and_creates_immutable_version() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        async with database.session() as session:
+            repository = Repository(session)
+            created = await repository.save_workflow(make_workflow_draft())
+            version = await repository.create_workflow_version(str(created.id))
+        async with database.session() as session:
+            reopened = await Repository(session).get_workflow(str(created.id))
+
+        assert created.revision == 1
+        assert version is not None
+        assert version.version == 1
+        assert reopened is not None
+        assert reopened.editor.positions["input"].x == 80
+        assert reopened.editor.viewport.zoom == 1.25
+        assert reopened.latest_version == 1
+    finally:
+        await database.close()
+
+
+async def test_workflow_draft_update_requires_current_revision() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        async with database.session() as session:
+            await Repository(session).save_workflow(make_workflow_draft())
+        async with database.session() as session:
+            updated = await Repository(session).save_workflow(make_workflow_draft(1))
+        async with database.session() as session:
+            with pytest.raises(WorkflowRevisionConflict):
+                await Repository(session).save_workflow(make_workflow_draft(1))
+
+        assert updated.revision == 2
     finally:
         await database.close()

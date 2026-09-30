@@ -4,7 +4,6 @@ export type NodeType =
   | "input"
   | "agent"
   | "llm"
-  | "tool"
   | "condition"
   | "transform"
   | "output";
@@ -56,6 +55,11 @@ export interface WorkflowDocument {
   entrypoint: string;
 }
 
+export interface WorkflowEditorDocument {
+  positions: Record<string, { x: number; y: number }>;
+  viewport: { x: number; y: number; zoom: number };
+}
+
 export function toWorkflowSpec(
   document: WorkflowDocument,
   nodes: EditorNode[],
@@ -88,28 +92,22 @@ export function defaultConfig(nodeType: NodeType): JsonObject {
   switch (nodeType) {
     case "agent":
       return {
-        agent: {
-          type: "inline",
-          spec: {
-            name: "NewAgent",
-            goal: "Complete the assigned task",
-            instructions: "Return a clear and accurate answer.",
-            model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
-            tools: [],
-          },
-        },
+        agent_version_id: "",
         input_path: "$.request",
         output_path: "$.answer",
       };
     case "llm":
       return {
-        prompt: "Answer the request.",
-        model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
+        agent: {
+          name: "NewAgent",
+          goal: "Complete the assigned task",
+          instructions: "Return a clear and accurate answer.",
+          model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
+          tools: [],
+        },
         input_path: "$.request",
         output_path: "$.answer",
       };
-    case "tool":
-      return { tool: "", arguments: {}, output_path: "$.result" };
     case "transform":
       return { assign: { "$.result": { from_state: "$.request" } } };
     case "output":

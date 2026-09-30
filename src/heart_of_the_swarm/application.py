@@ -11,6 +11,8 @@ from heart_of_the_swarm.service import AgentService
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import create_default_registry
 from heart_of_the_swarm.validator import AgentSpecValidator
+from heart_of_the_swarm.workflow_service import WorkflowService
+from heart_of_the_swarm.workflows import WorkflowValidator
 
 
 class Application:
@@ -32,6 +34,8 @@ class Application:
         self.telemetry = Telemetry(self.settings)
         self.factory = AgentFactory(self.tools)
         self.agent_runner = AgentRunner(self.providers, self.validator, self.factory)
+        self.workflow_validator = WorkflowValidator(self.tools.names, self.providers.names)
+        self.workflows = WorkflowService(self.database, self.workflow_validator, self.validator)
         self.agents = AgentService(
             self.settings,
             self.tools,

@@ -9,9 +9,7 @@ from pydantic import BaseModel, ValidationError
 from heart_of_the_swarm.workflows.configs import (
     NODE_CONFIG_TYPES,
     AgentNodeConfig,
-    InlineAgentSource,
     LLMNodeConfig,
-    ToolNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
@@ -308,11 +306,9 @@ class WorkflowValidator:
         issues.extend(_schema_errors(spec.output_schema, "output_schema"))
         for node in nodes:
             config = node.config
-            if isinstance(config, AgentNodeConfig):
-                if not isinstance(config.agent, InlineAgentSource):
-                    continue
-                issues.extend(self._provider_errors(node.id, config.agent.spec.model.provider))
-                for tool in config.agent.spec.tools:
+            if isinstance(config, LLMNodeConfig):
+                issues.extend(self._provider_errors(node.id, config.agent.model.provider))
+                for tool in config.agent.tools:
                     if tool not in self.tool_names:
                         issues.append(
                             _issue(
@@ -322,17 +318,8 @@ class WorkflowValidator:
                                 "config.tools",
                             )
                         )
-            elif isinstance(config, LLMNodeConfig):
-                issues.extend(self._provider_errors(node.id, config.model.provider))
-            elif isinstance(config, ToolNodeConfig) and config.tool not in self.tool_names:
-                issues.append(
-                    _issue(
-                        "workflow.tool.unknown",
-                        f"Tool '{config.tool}' is not registered.",
-                        node.id,
-                        "config.tool",
-                    )
-                )
+            elif isinstance(config, AgentNodeConfig):
+                continue
         return issues
 
     def _provider_errors(self, node_id: str, provider: str) -> list[WorkflowValidationIssue]:
@@ -343,7 +330,7 @@ class WorkflowValidator:
                 "workflow.provider.unknown",
                 f"Provider '{provider}' is not registered.",
                 node_id,
-                "config.model.provider",
+                "config.agent.model.provider",
             )
         ]
 

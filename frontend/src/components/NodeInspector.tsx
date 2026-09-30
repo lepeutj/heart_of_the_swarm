@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { JsonEditor } from "./JsonEditor";
-import { defaultConfig, type EditorNode, type JsonObject } from "../workflow";
+import type { AgentOption } from "../api";
+import type { EditorNode, JsonObject } from "../workflow";
 
 interface NodeInspectorProps {
   node: EditorNode;
   toolNames: string[];
   providerNames: string[];
+  agentOptions: AgentOption[];
   canDetach: boolean;
   onChange: (update: Partial<EditorNode["data"]>) => void;
   onDetach: () => void;
   onDelete: () => void;
+  onSaveAsAgent: () => void;
 }
 
 function asObject(value: unknown): JsonObject {
@@ -95,142 +98,84 @@ function ModelEditor({
 
 function AgentEditor({
   config,
-  toolNames,
-  providerNames,
+  agentOptions,
   onChange,
 }: {
   config: JsonObject;
-  toolNames: string[];
-  providerNames: string[];
+  agentOptions: AgentOption[];
   onChange: (config: JsonObject) => void;
 }) {
-  const agent = asObject(config.agent);
-  const saved = agent.type === "saved";
-  const spec = asObject(agent.spec);
-  const model = asObject(spec.model);
-  const selectedTools = Array.isArray(spec.tools)
-    ? spec.tools.filter((tool): tool is string => typeof tool === "string")
-    : [];
-
-  function updateAgent(nextAgent: JsonObject) {
-    onChange({ ...config, agent: nextAgent });
-  }
-
-  function updateSpec(field: string, value: unknown) {
-    updateAgent({ ...agent, spec: { ...spec, [field]: value } });
-  }
-
-  function updateModel(field: string, value: unknown) {
-    updateSpec("model", { ...model, [field]: value });
-  }
-
   return (
     <div className="typed-editor">
+      <p className="field-help">Run an immutable agent version created in the agent workspace.</p>
       <label>
-        Agent source
+        Saved agent
         <select
-          value={saved ? "saved" : "inline"}
-          onChange={(event) => {
-            if (event.target.value === "saved") {
-              updateAgent({ type: "saved", agent_version_id: "" });
-            } else {
-              updateAgent(asObject(defaultConfig("agent").agent));
-            }
-          }}
+          value={asString(config.agent_version_id)}
+          onChange={(event) => onChange({ ...config, agent_version_id: event.target.value })}
         >
-          <option value="inline">Inline configuration</option>
-          <option value="saved">Saved immutable version</option>
+          <option value="">Select an agent version</option>
+          {agentOptions.map((agent) => (
+            <option key={agent.version_id} value={agent.version_id}>
+              {agent.name} · v{agent.version}
+            </option>
+          ))}
         </select>
       </label>
-
-      {saved ? (
-        <label>
-          Agent version ID
-          <input
-            value={asString(agent.agent_version_id)}
-            onChange={(event) => updateAgent({ ...agent, agent_version_id: event.target.value })}
-          />
-        </label>
-      ) : (
-        <>
-          <label>Name<input value={asString(spec.name)} onChange={(event) => updateSpec("name", event.target.value)} /></label>
-          <label>Goal<textarea value={asString(spec.goal)} onChange={(event) => updateSpec("goal", event.target.value)} /></label>
-          <label>Instructions<textarea value={asString(spec.instructions)} onChange={(event) => updateSpec("instructions", event.target.value)} /></label>
-          <ModelEditor model={model} providerNames={providerNames} onChange={updateModel} />
-          <fieldset>
-            <legend>Allowed tools</legend>
-            <p className="field-help">The agent may choose among these tools during its LangChain loop.</p>
-            <div className="tool-checks">
-              {toolNames.map((tool) => (
-                <label key={tool}>
-                  <input
-                    type="checkbox"
-                    checked={selectedTools.includes(tool)}
-                    onChange={(event) => updateSpec(
-                      "tools",
-                      event.target.checked
-                        ? [...selectedTools, tool]
-                        : selectedTools.filter((selected) => selected !== tool),
-                    )}
-                  />
-                  {tool}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        </>
-      )}
-
       <label>Input path<input value={asString(config.input_path)} onChange={(event) => onChange({ ...config, input_path: event.target.value })} /></label>
       <label>Output path<input value={asString(config.output_path)} onChange={(event) => onChange({ ...config, output_path: event.target.value })} /></label>
     </div>
   );
 }
 
-function ToolEditor({ config, toolNames, onChange }: {
+function LlmEditor({ config, toolNames, providerNames, onChange }: {
   config: JsonObject;
   toolNames: string[];
-  onChange: (config: JsonObject) => void;
-}) {
-  return (
-    <div className="typed-editor">
-      <p className="field-help">A tool call executes exactly once. It does not give a model permission to choose the tool.</p>
-      <label>
-        Registered tool
-        <select value={asString(config.tool)} onChange={(event) => onChange({ ...config, tool: event.target.value })}>
-          <option value="">Select a tool</option>
-          {toolNames.map((tool) => <option key={tool} value={tool}>{tool}</option>)}
-        </select>
-      </label>
-      <JsonEditor
-        label="Arguments"
-        value={asObject(config.arguments)}
-        onApply={(nextArguments) => nextArguments && onChange({
-          ...config,
-          arguments: nextArguments,
-        })}
-      />
-      <label>Output path<input value={asString(config.output_path)} onChange={(event) => onChange({ ...config, output_path: event.target.value })} /></label>
-    </div>
-  );
-}
-
-function LlmEditor({ config, providerNames, onChange }: {
-  config: JsonObject;
   providerNames: string[];
   onChange: (config: JsonObject) => void;
 }) {
-  const model = asObject(config.model);
+  const agent = asObject(config.agent);
+  const model = asObject(agent.model);
+  const selectedTools = Array.isArray(agent.tools)
+    ? agent.tools.filter((tool): tool is string => typeof tool === "string")
+    : [];
+
+  function updateAgent(field: string, value: unknown) {
+    onChange({ ...config, agent: { ...agent, [field]: value } });
+  }
 
   function updateModel(field: string, value: unknown) {
-    onChange({ ...config, model: { ...model, [field]: value } });
+    updateAgent("model", { ...model, [field]: value });
   }
 
   return (
     <div className="typed-editor">
-      <p className="field-help">One model call with no tools or autonomous loop.</p>
-      <label>Instruction<textarea value={asString(config.prompt)} onChange={(event) => onChange({ ...config, prompt: event.target.value })} /></label>
+      <p className="field-help">This visual LLM is compiled into a LangChain agent that may call its allowed tools.</p>
+      <label>Name<input value={asString(agent.name)} onChange={(event) => updateAgent("name", event.target.value)} /></label>
+      <label>Goal<textarea value={asString(agent.goal)} onChange={(event) => updateAgent("goal", event.target.value)} /></label>
+      <label>Instructions<textarea value={asString(agent.instructions)} onChange={(event) => updateAgent("instructions", event.target.value)} /></label>
       <ModelEditor model={model} providerNames={providerNames} onChange={updateModel} />
+      <fieldset>
+        <legend>Allowed tools</legend>
+        <p className="field-help">The model chooses among these tools during its agent loop.</p>
+        <div className="tool-checks">
+          {toolNames.map((tool) => (
+            <label key={tool}>
+              <input
+                type="checkbox"
+                checked={selectedTools.includes(tool)}
+                onChange={(event) => updateAgent(
+                  "tools",
+                  event.target.checked
+                    ? [...selectedTools, tool]
+                    : selectedTools.filter((selected) => selected !== tool),
+                )}
+              />
+              {tool}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <label>Input path<input value={asString(config.input_path)} onChange={(event) => onChange({ ...config, input_path: event.target.value })} /></label>
       <label>Output path<input value={asString(config.output_path)} onChange={(event) => onChange({ ...config, output_path: event.target.value })} /></label>
     </div>
@@ -345,10 +290,12 @@ export function NodeInspector({
   node,
   toolNames,
   providerNames,
+  agentOptions,
   canDetach,
   onChange,
   onDetach,
   onDelete,
+  onSaveAsAgent,
 }: NodeInspectorProps) {
   const config = node.data.config;
 
@@ -359,13 +306,10 @@ export function NodeInspector({
       <label>Name<input value={node.data.label} onChange={(event) => onChange({ label: event.target.value })} /></label>
 
       {node.data.nodeType === "agent" && (
-        <AgentEditor config={config} toolNames={toolNames} providerNames={providerNames} onChange={(next) => onChange({ config: next })} />
-      )}
-      {node.data.nodeType === "tool" && (
-        <ToolEditor config={config} toolNames={toolNames} onChange={(next) => onChange({ config: next })} />
+        <AgentEditor config={config} agentOptions={agentOptions} onChange={(next) => onChange({ config: next })} />
       )}
       {node.data.nodeType === "llm" && (
-        <LlmEditor config={config} providerNames={providerNames} onChange={(next) => onChange({ config: next })} />
+        <LlmEditor config={config} toolNames={toolNames} providerNames={providerNames} onChange={(next) => onChange({ config: next })} />
       )}
       {node.data.nodeType === "transform" && (
         <TransformEditor config={config} onChange={(next) => onChange({ config: next })} />
@@ -390,6 +334,9 @@ export function NodeInspector({
       </details>
 
       <div className="node-actions">
+        {node.data.nodeType === "llm" && (
+          <button type="button" onClick={onSaveAsAgent}>Save as agent</button>
+        )}
         <button type="button" disabled={!canDetach} onClick={onDetach}>Detach and reconnect</button>
         <button type="button" className="danger" onClick={onDelete}>Delete node</button>
       </div>

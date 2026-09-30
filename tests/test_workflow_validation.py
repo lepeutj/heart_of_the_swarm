@@ -14,7 +14,6 @@ from heart_of_the_swarm.workflows.configs import (
     InputNodeConfig,
     LLMNodeConfig,
     OutputNodeConfig,
-    ToolNodeConfig,
     TransformNodeConfig,
 )
 
@@ -46,23 +45,18 @@ def workflow_data() -> dict:
                 },
             },
             {
-                "id": "read",
-                "type": "tool",
-                "name": "Read",
-                "config": {
-                    "tool": "document_reader",
-                    "arguments": {"url": {"from_state": "$.target_url"}},
-                    "output_path": "$.document",
-                },
-            },
-            {
                 "id": "summarize",
                 "type": "llm",
                 "name": "Summarize",
                 "config": {
-                    "prompt": "Summarize the document.",
-                    "model": {"provider": "test", "model_id": "test-model"},
-                    "input_path": "$.document",
+                    "agent": {
+                        "name": "ResearchAgent",
+                        "goal": "Research and summarize",
+                        "instructions": "Use the available sources.",
+                        "model": {"provider": "test", "model_id": "test-model"},
+                        "tools": ["web_search"],
+                    },
+                    "input_path": "$.request_copy",
                     "output_path": "$.summary",
                 },
             },
@@ -71,16 +65,7 @@ def workflow_data() -> dict:
                 "type": "agent",
                 "name": "Research",
                 "config": {
-                    "agent": {
-                        "type": "inline",
-                        "spec": {
-                            "name": "ResearchAgent",
-                            "goal": "Verify the summary",
-                            "instructions": "Use the available sources.",
-                            "model": {"provider": "test", "model_id": "test-model"},
-                            "tools": ["web_search"],
-                        },
-                    },
+                    "agent_version_id": "f5427628-42a7-4698-9e8c-7489da8a7a41",
                     "input_path": "$.summary",
                     "output_path": "$.verification",
                 },
@@ -106,8 +91,7 @@ def workflow_data() -> dict:
         ],
         "edges": [
             {"source": "input", "target": "prepare"},
-            {"source": "prepare", "target": "read"},
-            {"source": "read", "target": "summarize"},
+            {"source": "prepare", "target": "summarize"},
             {"source": "summarize", "target": "research"},
             {"source": "research", "target": "verified"},
             {
@@ -143,7 +127,6 @@ def test_valid_workflow_is_converted_to_typed_node_configs() -> None:
     expected = [
         InputNodeConfig,
         TransformNodeConfig,
-        ToolNodeConfig,
         LLMNodeConfig,
         AgentNodeConfig,
         ConditionNodeConfig,
@@ -237,39 +220,24 @@ def test_entrypoint_must_be_an_input_node() -> None:
     assert "workflow.entrypoint.not_input" in issue_codes(data)
 
 
-def test_unknown_tool_and_provider_are_rejected() -> None:
+def test_unknown_inline_agent_tool_and_provider_are_rejected() -> None:
     data = workflow_data()
-    data["nodes"][2]["config"]["tool"] = "shell"
-    data["nodes"][3]["config"]["model"]["provider"] = "unknown"
-    codes = issue_codes(data)
-    assert "workflow.tool.unknown" in codes
-    assert "workflow.provider.unknown" in codes
-
-
-def test_inline_agent_capabilities_are_validated() -> None:
-    data = workflow_data()
-    agent = data["nodes"][4]["config"]["agent"]["spec"]
+    agent = data["nodes"][2]["config"]["agent"]
     agent["model"]["provider"] = "unknown"
     agent["tools"] = ["shell"]
-
     codes = issue_codes(data)
-
-    assert "workflow.provider.unknown" in codes
     assert "workflow.tool.unknown" in codes
+    assert "workflow.provider.unknown" in codes
 
 
 def test_saved_agent_does_not_duplicate_agent_configuration() -> None:
     data = workflow_data()
-    data["nodes"][4]["config"]["agent"] = {
-        "type": "saved",
-        "agent_version_id": "f5427628-42a7-4698-9e8c-7489da8a7a41",
-    }
 
     workflow = validator().validate(WorkflowSpec.model_validate(data))
-    config = workflow.nodes[4].config
+    config = workflow.nodes[3].config
 
     assert isinstance(config, AgentNodeConfig)
-    assert config.agent.type == "saved"
+    assert config.agent_version_id == UUID("f5427628-42a7-4698-9e8c-7489da8a7a41")
 
 
 def test_invalid_json_schema_is_rejected() -> None:
@@ -280,7 +248,7 @@ def test_invalid_json_schema_is_rejected() -> None:
 
 def test_invalid_nested_state_reference_is_rejected() -> None:
     data = workflow_data()
-    data["nodes"][2]["config"]["arguments"] = {"url": {"request": {"from_state": "request.url"}}}
+    data["nodes"][1]["config"]["assign"] = {"$.copy": {"request": {"from_state": "request.url"}}}
     assert "workflow.state.invalid_reference" in issue_codes(data)
 
 

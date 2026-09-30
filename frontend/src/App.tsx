@@ -10,11 +10,20 @@ import {
   type Connection,
 } from "@xyflow/react";
 import {
+  createWorkflowVersion,
+  createAgent,
+  loadAgents,
   loadCapabilities,
   loadProviderNames,
   loadToolNames,
+  loadWorkflow,
+  loadWorkflows,
+  saveWorkflow,
   validateWorkflow,
+  type AgentOption,
   type ValidationIssue,
+  type WorkflowSummary,
+  type AgentSpec,
 } from "./api";
 import { EdgeInspector } from "./components/EdgeInspector";
 import { JsonEditor } from "./components/JsonEditor";
@@ -32,6 +41,7 @@ import {
   type EditorNode,
   type JsonObject,
   type NodeType,
+  type WorkflowEditorDocument,
 } from "./workflow";
 
 const initialNodes: EditorNode[] = [
@@ -61,6 +71,11 @@ export default function App() {
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof loadCapabilities>> | null>(null);
   const [toolNames, setToolNames] = useState<string[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
+  const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
+  const [savedWorkflows, setSavedWorkflows] = useState<WorkflowSummary[]>([]);
+  const [revision, setRevision] = useState<number | null>(null);
+  const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  const [graphKey, setGraphKey] = useState(0);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [insertionEdgeId, setInsertionEdgeId] = useState<string | null>(null);
@@ -75,15 +90,23 @@ export default function App() {
     required: ["request"],
   });
   const [outputSchema, setOutputSchema] = useState<JsonObject>({ type: "string" });
-  const workflowId = useRef(crypto.randomUUID());
+  const workflowId = useRef<string>(crypto.randomUUID());
   const sequence = useRef(1);
 
   useEffect(() => {
-    Promise.all([loadCapabilities(), loadToolNames(), loadProviderNames()])
-      .then(([catalogue, tools, providers]) => {
+    Promise.all([
+      loadCapabilities(),
+      loadToolNames(),
+      loadProviderNames(),
+      loadAgents(),
+      loadWorkflows(),
+    ])
+      .then(([catalogue, tools, providers, agents, workflows]) => {
         setCapabilities(catalogue);
         setToolNames(tools);
         setProviderNames(providers);
+        setAgentOptions(agents);
+        setSavedWorkflows(workflows);
         setStatus("Editor ready");
       })
       .catch((error: Error) => setStatus(error.message));
@@ -239,6 +262,120 @@ export default function App() {
     }
   }
 
+  function editorDocument(): WorkflowEditorDocument {
+    return {
+      positions: Object.fromEntries(nodes.map((node) => [node.id, node.position])),
+      viewport,
+    };
+  }
+
+  async function saveDraft() {
+    setStatus("Saving…");
+    try {
+      const saved = await saveWorkflow(spec, editorDocument(), revision);
+      setRevision(saved.revision);
+      setSavedWorkflows(await loadWorkflows());
+      setStatus(`Draft saved · revision ${saved.revision}`);
+      return saved;
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Save failed");
+      return null;
+    }
+  }
+
+  async function publishVersion() {
+    const saved = await saveDraft();
+    if (!saved) return;
+    try {
+      const version = await createWorkflowVersion(saved.id);
+      setSavedWorkflows(await loadWorkflows());
+      setStatus(`Workflow version ${version.version} created`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Version creation failed");
+    }
+  }
+
+  async function saveSelectedLlmAsAgent() {
+    if (!selectedNode || selectedNode.data.nodeType !== "llm") return;
+    const agent = selectedNode.data.config.agent as AgentSpec | undefined;
+    if (!agent) return;
+    setStatus("Saving agent…");
+    try {
+      const saved = await createAgent(agent);
+      setAgentOptions(await loadAgents());
+      updateSelectedNode({
+        nodeType: "agent",
+        config: {
+          agent_version_id: saved.version_id,
+          input_path: selectedNode.data.config.input_path,
+          output_path: selectedNode.data.config.output_path,
+        },
+      });
+      setStatus(`${saved.name} saved as agent version ${saved.version}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Agent save failed");
+    }
+  }
+
+  async function openWorkflow(id: string) {
+    if (!id) return;
+    setStatus("Loading workflow…");
+    try {
+      const saved = await loadWorkflow(id);
+      workflowId.current = saved.id;
+      setName(saved.spec.name);
+      setDescription(saved.spec.description);
+      setEntrypoint(saved.spec.entrypoint);
+      setInputSchema(saved.spec.input_schema);
+      setOutputSchema(saved.spec.output_schema);
+      setNodes(saved.spec.nodes.map((node, index) => ({
+        id: node.id,
+        position: saved.editor.positions[node.id] ?? { x: 120 + index * 180, y: 160 },
+        data: { label: node.name, nodeType: node.type, config: node.config },
+      })));
+      setEdges(saved.spec.edges.map((edge) => ({
+        id: crypto.randomUUID(),
+        source: edge.source,
+        target: edge.target,
+        label: edge.label,
+        data: { condition: edge.condition ?? null },
+      })));
+      setRevision(saved.revision);
+      setViewport(saved.editor.viewport);
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setIssues([]);
+      sequence.current = saved.spec.nodes.length + 1;
+      setGraphKey((current) => current + 1);
+      setStatus(`Loaded revision ${saved.revision}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Load failed");
+    }
+  }
+
+  function newWorkflow() {
+    workflowId.current = crypto.randomUUID();
+    setName("New workflow");
+    setDescription("");
+    setEntrypoint("input");
+    setInputSchema({
+      type: "object",
+      properties: { request: { type: "string" } },
+      required: ["request"],
+    });
+    setOutputSchema({ type: "string" });
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    setRevision(null);
+    setViewport({ x: 0, y: 0, zoom: 1 });
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setIssues([]);
+    sequence.current = 1;
+    setGraphKey((current) => current + 1);
+    setStatus("New workflow draft");
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -248,6 +385,8 @@ export default function App() {
         </div>
         <div className="topbar-actions">
           <a href="/">Agent workspace</a>
+          <button type="button" onClick={saveDraft}>Save draft</button>
+          <button type="button" onClick={publishVersion}>Create version</button>
           <button type="button" className="primary" onClick={validate}>Validate workflow</button>
         </div>
       </header>
@@ -255,6 +394,22 @@ export default function App() {
       <main className="workspace">
         <aside className="sidebar palette">
           <h2>Workflow</h2>
+          <label>
+            Saved workflows
+            <select
+              value={revision === null ? "" : workflowId.current}
+              onChange={(event) => event.target.value
+                ? openWorkflow(event.target.value)
+                : newWorkflow()}
+            >
+              <option value="">New unsaved workflow</option>
+              {savedWorkflows.map((workflow) => (
+                <option key={workflow.id} value={workflow.id}>
+                  {workflow.name} · r{workflow.revision} · v{workflow.latest_version}
+                </option>
+              ))}
+            </select>
+          </label>
           <label>Name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label>
           <label>
@@ -286,6 +441,7 @@ export default function App() {
 
         <section className="canvas" aria-label="Workflow graph editor">
           <ReactFlow
+            key={graphKey}
             nodes={displayNodes}
             edges={displayEdges}
             onNodesChange={onNodesChange}
@@ -305,7 +461,9 @@ export default function App() {
               setSelectedNodeId(null);
               setSelectedEdgeId(null);
             }}
-            fitView
+            onMoveEnd={(_, nextViewport) => setViewport(nextViewport)}
+            defaultViewport={viewport}
+            fitView={revision === null}
             defaultEdgeOptions={{ interactionWidth: 48 }}
           >
             <Background gap={24} size={1} />
@@ -321,10 +479,12 @@ export default function App() {
               node={selectedNode}
               toolNames={toolNames}
               providerNames={providerNames}
+              agentOptions={agentOptions}
               canDetach={canDetachSelectedNode}
               onChange={updateSelectedNode}
               onDetach={detachSelectedNode}
               onDelete={deleteSelectedNode}
+              onSaveAsAgent={saveSelectedLlmAsAgent}
             />
           )}
           {selectedEdge && (

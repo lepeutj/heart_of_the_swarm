@@ -20,7 +20,3 @@ def resolve_value(value: Any, state: dict[str, Any]) -> Any:
     if isinstance(value, list):
         return [resolve_value(item, state) for item in value]
     return value
-
-
-def resolve_arguments(arguments: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    return {name: resolve_value(value, state) for name, value in arguments.items()}

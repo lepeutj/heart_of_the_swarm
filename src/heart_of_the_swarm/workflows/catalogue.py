@@ -11,7 +11,6 @@ _SUPPORTED_NODE_TYPES = {
     NodeType.INPUT,
     NodeType.AGENT,
     NodeType.LLM,
-    NodeType.TOOL,
     NodeType.CONDITION,
     NodeType.TRANSFORM,
     NodeType.OUTPUT,
@@ -19,9 +18,8 @@ _SUPPORTED_NODE_TYPES = {
 
 _NODE_DESCRIPTIONS = {
     NodeType.INPUT: "Validate and initialize workflow input.",
-    NodeType.AGENT: "Run one inline or saved LangChain agent.",
-    NodeType.LLM: "Run one model call without tools.",
-    NodeType.TOOL: "Invoke one registered tool exactly once.",
+    NodeType.AGENT: "Run one immutable saved agent version.",
+    NodeType.LLM: "Configure an inline LangChain agent with a model and allowed tools.",
     NodeType.CONDITION: "Select one ordered route or its fallback.",
     NodeType.TRANSFORM: "Apply safe declarative state assignments.",
     NodeType.OUTPUT: "Resolve and validate the workflow result.",
