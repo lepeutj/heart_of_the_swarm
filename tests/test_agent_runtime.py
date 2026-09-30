@@ -79,6 +79,7 @@ async def test_runner_validates_builds_and_invokes_agent() -> None:
         "Question",
         system_prompt="Stored prompt",
         callbacks=[callback],
+        metadata={"workflow_id": "workflow-1"},
     )
 
     assert output == "Answer"
@@ -86,7 +87,10 @@ async def test_runner_validates_builds_and_invokes_agent() -> None:
     assert providers.config is spec.model
     assert factory.call == (spec, model, "Stored prompt")
     assert graph.input == {"messages": [{"role": "user", "content": "Question"}]}
-    assert graph.config == {"callbacks": [callback]}
+    assert graph.config == {
+        "callbacks": [callback],
+        "metadata": {"workflow_id": "workflow-1"},
+    }
 
 
 async def test_runner_rejects_result_without_final_assistant_message() -> None:

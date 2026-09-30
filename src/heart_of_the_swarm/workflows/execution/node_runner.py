@@ -8,17 +8,22 @@ from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 from pydantic.v1 import ValidationError as ValidationErrorV1
 
+from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.conditions import ConditionEvaluationError, evaluate_condition
 from heart_of_the_swarm.workflows.configs import (
+    AgentNodeConfig,
     ConditionNodeConfig,
+    InlineAgentSource,
     InputNodeConfig,
     OutputNodeConfig,
+    SavedAgentSource,
     ToolNodeConfig,
     TransformNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
+from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionResolver
 from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
@@ -57,12 +62,16 @@ class WorkflowNodeRunner:
         workflow: ValidatedWorkflowSpec,
         tools: ToolRegistry,
         *,
+        agent_runner: AgentRunner | None = None,
+        agent_versions: AgentVersionResolver | None = None,
         callback: RuntimeCallbackHandler | None = None,
         workflow_run_id: str | None = None,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
         self.workflow_run_id = workflow_run_id
+        self.agent_runner = agent_runner
+        self.agent_versions = agent_versions
         self.resolved_tools = self._resolve_workflow_tools(tools)
 
     async def run(
@@ -91,6 +100,11 @@ class WorkflowNodeRunner:
             elif isinstance(node.config, ToolNodeConfig):
                 result = NodeExecution(
                     await self._invoke_tool(node, state, self.resolved_tools[node.id]),
+                    current_execution,
+                )
+            elif isinstance(node.config, AgentNodeConfig):
+                result = NodeExecution(
+                    await self._invoke_agent(node, state),
                     current_execution,
                 )
             elif isinstance(node.config, ConditionNodeConfig):
@@ -216,6 +230,89 @@ class WorkflowNodeRunner:
                 message=f"Result from tool '{config.tool}' could not be written to state.",
                 node=node,
                 tool_name=config.tool,
+                cause=exc,
+            )
+        return updated
+
+    async def _invoke_agent(
+        self,
+        node: ValidatedWorkflowNode,
+        state: WorkflowState,
+    ) -> WorkflowState:
+        """Resolve one inline or saved agent and delegate its loop to AgentRunner."""
+        config = self._require_config(node, AgentNodeConfig)
+        if self.agent_runner is None:
+            self._raise(
+                code="workflow.execution.agent_runtime_unavailable",
+                message="Agent execution is not configured for this workflow runtime.",
+                node=node,
+            )
+
+        try:
+            agent_input = get_path(state, config.input_path)
+        except StatePathError as exc:
+            self._raise(
+                code="workflow.execution.agent_input_missing",
+                message=f"Input for agent node '{node.id}' could not be resolved.",
+                node=node,
+                cause=exc,
+            )
+        if not isinstance(agent_input, str):
+            self._raise(
+                code="workflow.execution.agent_input_invalid",
+                message=f"Input for agent node '{node.id}' must be a string.",
+                node=node,
+            )
+
+        source = config.agent
+        if isinstance(source, InlineAgentSource):
+            spec = source.spec
+            system_prompt = None
+        elif isinstance(source, SavedAgentSource):
+            if self.agent_versions is None:
+                self._raise(
+                    code="workflow.execution.agent_version_resolver_unavailable",
+                    message="Saved agent versions cannot be resolved by this workflow runtime.",
+                    node=node,
+                )
+            resolved = await self.agent_versions.resolve(source.agent_version_id)
+            if resolved is None:
+                self._raise(
+                    code="workflow.execution.agent_version_not_found",
+                    message=f"Agent version '{source.agent_version_id}' was not found.",
+                    node=node,
+                )
+            spec = resolved.spec
+            system_prompt = resolved.system_prompt
+        else:
+            raise TypeError(f"Node '{node.id}' has an inconsistent agent source.")
+
+        try:
+            output = await self.agent_runner.invoke(
+                spec,
+                agent_input,
+                system_prompt=system_prompt,
+                callbacks=[self.callback] if self.callback is not None else [],
+                metadata=self._node_context(node),
+            )
+        except WorkflowExecutionError:
+            raise
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.agent_failed",
+                message=f"Agent node '{node.id}' failed.",
+                node=node,
+                cause=exc,
+            )
+
+        try:
+            updated = deepcopy(state)
+            set_path(updated, config.output_path, output)
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.agent_output_failed",
+                message=f"Output from agent node '{node.id}' could not be written to state.",
+                node=node,
                 cause=exc,
             )
         return updated

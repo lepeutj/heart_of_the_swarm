@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
@@ -29,6 +30,7 @@ class AgentRunner:
         *,
         system_prompt: str | None = None,
         callbacks: Sequence[BaseCallbackHandler] = (),
+        metadata: Mapping[str, Any] | None = None,
     ) -> str:
         """Execute one LangChain agent invocation and return its final assistant content."""
         self.validator.validate_execution(spec)
@@ -36,7 +38,7 @@ class AgentRunner:
         graph = self.factory.create(spec, model, system_prompt=system_prompt)
         result = await graph.ainvoke(
             {"messages": [{"role": "user", "content": agent_input}]},
-            config={"callbacks": list(callbacks)},
+            config={"callbacks": list(callbacks), "metadata": dict(metadata or {})},
         )
         final = next(
             (

@@ -113,6 +113,15 @@ class Repository:
         record = (await self.session.execute(statement)).scalar_one_or_none()
         return self._agent_detail(agent, record) if record else None
 
+    async def get_agent_version(self, version_id: str) -> AgentDetail | None:
+        statement = (
+            select(AgentRecord, AgentVersionRecord)
+            .join(AgentVersionRecord, AgentVersionRecord.agent_id == AgentRecord.id)
+            .where(AgentVersionRecord.id == version_id)
+        )
+        row = (await self.session.execute(statement)).one_or_none()
+        return self._agent_detail(*row) if row else None
+
     async def start_design(
         self,
         trace_id: str,
@@ -484,6 +493,7 @@ class Repository:
     def _agent_detail(agent: AgentRecord, version: AgentVersionRecord) -> AgentDetail:
         return AgentDetail(
             id=agent.id,
+            version_id=version.id,
             name=agent.name,
             goal=agent.goal,
             version=version.version,

@@ -1,7 +1,9 @@
 from heart_of_the_swarm.workflows.conditions import ConditionSpec, evaluate_condition
 from heart_of_the_swarm.workflows.enums import ConditionOperator, NodeType
 from heart_of_the_swarm.workflows.execution import (
+    AgentVersionResolver,
     ExecutionResult,
+    ResolvedAgentVersion,
     WorkflowExecutionError,
     WorkflowExecutionIssue,
     WorkflowGraph,
@@ -20,10 +22,12 @@ from heart_of_the_swarm.workflows.validation import (
 )
 
 __all__ = [
+    "AgentVersionResolver",
     "ConditionOperator",
     "ConditionSpec",
     "ExecutionResult",
     "NodeType",
+    "ResolvedAgentVersion",
     "ValidatedWorkflowSpec",
     "WorkflowEdge",
     "WorkflowExecutionError",

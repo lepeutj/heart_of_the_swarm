@@ -1,8 +1,9 @@
-from typing import Any
+from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
-from heart_of_the_swarm.spec import ModelConfig
+from heart_of_the_swarm.spec import AgentSpec, ModelConfig
 from heart_of_the_swarm.workflows.state import StatePath
 
 _STATE_PATH_ADAPTER = TypeAdapter(StatePath)
@@ -16,20 +17,23 @@ class InputNodeConfig(NodeConfig):
     pass
 
 
+class InlineAgentSource(NodeConfig):
+    type: Literal["inline"]
+    spec: AgentSpec
+
+
+class SavedAgentSource(NodeConfig):
+    type: Literal["saved"]
+    agent_version_id: UUID
+
+
+AgentSource = Annotated[InlineAgentSource | SavedAgentSource, Field(discriminator="type")]
+
+
 class AgentNodeConfig(NodeConfig):
-    goal: str = Field(min_length=1, max_length=500)
-    instructions: str = Field(min_length=1, max_length=4_000)
-    model: ModelConfig
-    tools: list[str] = Field(default_factory=list, max_length=20)
+    agent: AgentSource
     input_path: StatePath
     output_path: StatePath
-
-    @field_validator("tools")
-    @classmethod
-    def unique_tools(cls, tools: list[str]) -> list[str]:
-        if len(tools) != len(set(tools)):
-            raise ValueError("tools must not contain duplicates")
-        return tools
 
 
 class LLMNodeConfig(NodeConfig):

@@ -6,9 +6,11 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.enums import NodeType
+from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionResolver
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
 from heart_of_the_swarm.workflows.execution.node_runner import WorkflowNodeRunner
 from heart_of_the_swarm.workflows.spec import (
@@ -63,8 +65,16 @@ class WorkflowGraph:
 class WorkflowGraphFactory:
     """Translate a validated workflow directly into a LangGraph StateGraph."""
 
-    def __init__(self, tools: ToolRegistry | None = None) -> None:
+    def __init__(
+        self,
+        tools: ToolRegistry | None = None,
+        *,
+        agent_runner: AgentRunner | None = None,
+        agent_versions: AgentVersionResolver | None = None,
+    ) -> None:
         self.tools = tools or ToolRegistry([])
+        self.agent_runner = agent_runner
+        self.agent_versions = agent_versions
 
     def create(
         self,
@@ -77,9 +87,7 @@ class WorkflowGraphFactory:
         if not isinstance(workflow, ValidatedWorkflowSpec):
             raise TypeError("WorkflowGraphFactory requires a ValidatedWorkflowSpec.")
 
-        unsupported = [
-            node for node in workflow.nodes if node.type in {NodeType.AGENT, NodeType.LLM}
-        ]
+        unsupported = [node for node in workflow.nodes if node.type == NodeType.LLM]
         if unsupported:
             node = unsupported[0]
             raise ValueError(f"Workflow node type '{node.type}' is not supported yet: '{node.id}'.")
@@ -87,6 +95,8 @@ class WorkflowGraphFactory:
         runner = WorkflowNodeRunner(
             workflow,
             self.tools,
+            agent_runner=self.agent_runner,
+            agent_versions=self.agent_versions,
             callback=callback,
             workflow_run_id=workflow_run_id,
         )

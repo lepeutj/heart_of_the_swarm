@@ -71,10 +71,16 @@ def workflow_data() -> dict:
                 "type": "agent",
                 "name": "Research",
                 "config": {
-                    "goal": "Verify the summary",
-                    "instructions": "Use the available sources.",
-                    "model": {"provider": "test", "model_id": "test-model"},
-                    "tools": ["web_search"],
+                    "agent": {
+                        "type": "inline",
+                        "spec": {
+                            "name": "ResearchAgent",
+                            "goal": "Verify the summary",
+                            "instructions": "Use the available sources.",
+                            "model": {"provider": "test", "model_id": "test-model"},
+                            "tools": ["web_search"],
+                        },
+                    },
                     "input_path": "$.summary",
                     "output_path": "$.verification",
                 },
@@ -238,6 +244,32 @@ def test_unknown_tool_and_provider_are_rejected() -> None:
     codes = issue_codes(data)
     assert "workflow.tool.unknown" in codes
     assert "workflow.provider.unknown" in codes
+
+
+def test_inline_agent_capabilities_are_validated() -> None:
+    data = workflow_data()
+    agent = data["nodes"][4]["config"]["agent"]["spec"]
+    agent["model"]["provider"] = "unknown"
+    agent["tools"] = ["shell"]
+
+    codes = issue_codes(data)
+
+    assert "workflow.provider.unknown" in codes
+    assert "workflow.tool.unknown" in codes
+
+
+def test_saved_agent_does_not_duplicate_agent_configuration() -> None:
+    data = workflow_data()
+    data["nodes"][4]["config"]["agent"] = {
+        "type": "saved",
+        "agent_version_id": "f5427628-42a7-4698-9e8c-7489da8a7a41",
+    }
+
+    workflow = validator().validate(WorkflowSpec.model_validate(data))
+    config = workflow.nodes[4].config
+
+    assert isinstance(config, AgentNodeConfig)
+    assert config.agent.type == "saved"
 
 
 def test_invalid_json_schema_is_rejected() -> None:

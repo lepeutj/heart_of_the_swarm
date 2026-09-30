@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 from heart_of_the_swarm.workflows.configs import (
     AgentNodeConfig,
     ConditionNodeConfig,
+    InlineAgentSource,
     InputNodeConfig,
     LLMNodeConfig,
     NodeConfig,
@@ -322,8 +323,10 @@ class WorkflowValidator:
         for node in nodes:
             config = node.config
             if isinstance(config, AgentNodeConfig):
-                issues.extend(self._provider_errors(node.id, config.model.provider))
-                for tool in config.tools:
+                if not isinstance(config.agent, InlineAgentSource):
+                    continue
+                issues.extend(self._provider_errors(node.id, config.agent.spec.model.provider))
+                for tool in config.agent.spec.tools:
                     if tool not in self.tool_names:
                         issues.append(
                             _issue(

@@ -168,6 +168,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         self.trajectory: list[TrajectoryEvent] = []
         self._started: dict[UUID, float] = {}
         self._components: dict[UUID, str] = {}
+        self._model_context: dict[UUID, dict[str, Any]] = {}
         self._tool_started: dict[UUID, float] = {}
         self._tool_context: dict[UUID, dict[str, Any]] = {}
 
@@ -203,13 +204,15 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
     ) -> None:
         self._started[run_id] = perf_counter()
         identifier = str(serialized.get("name") or serialized.get("id", ["unknown"])[-1])
+        context = _workflow_context(kwargs.get("metadata"))
         self._components[run_id] = identifier
+        self._model_context[run_id] = context
         self.record(
             "model.started",
             component=identifier,
             run_id=run_id,
             parent_run_id=parent_run_id,
-            payload={"messages": messages},
+            payload={**context, "messages": messages},
         )
         audit_event(
             "llm.started",
@@ -217,6 +220,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             message_batches=len(messages),
             langchain_run_id=str(run_id),
             parent_run_id=str(parent_run_id) if parent_run_id else None,
+            **context,
         )
 
     def on_llm_end(
@@ -246,12 +250,14 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or 0)
         latency_ms = round((perf_counter() - self._started.pop(run_id, perf_counter())) * 1000, 2)
         component = self._components.pop(run_id, None)
+        context = self._model_context.pop(run_id, {})
         self.record(
             "model.completed",
             component=component,
             run_id=run_id,
             parent_run_id=parent_run_id,
             payload={
+                **context,
                 "generations": response.generations,
                 "metadata": output,
                 "latency_ms": latency_ms,
@@ -284,6 +290,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             token_usage=usage,
             langchain_run_id=str(run_id),
             parent_run_id=str(parent_run_id) if parent_run_id else None,
+            **context,
         )
 
     def on_llm_error(
@@ -296,12 +303,14 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
     ) -> None:
         latency_ms = round((perf_counter() - self._started.pop(run_id, perf_counter())) * 1000, 2)
         component = self._components.pop(run_id, None)
+        context = self._model_context.pop(run_id, {})
         self.record(
             "model.failed",
             component=component,
             run_id=run_id,
             parent_run_id=parent_run_id,
             payload={
+                **context,
                 "error_type": type(error).__name__,
                 "error_message": str(error),
                 "latency_ms": latency_ms,
@@ -324,6 +333,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             error_message=str(error),
             langchain_run_id=str(run_id),
             parent_run_id=str(parent_run_id) if parent_run_id else None,
+            **context,
         )
 
     def on_tool_start(

@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
+from uuid import UUID
 
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
 from heart_of_the_swarm.repository import Repository
 from heart_of_the_swarm.spec import AgentSpec
+from heart_of_the_swarm.workflow_agent_versions import DatabaseAgentVersionResolver
 
 
 def make_spec(name: str = "ResearchAgent") -> AgentSpec:
@@ -28,7 +30,13 @@ async def test_repository_persists_versions_runs_and_usage() -> None:
             )
         assert updated is not None
         assert updated.version == 2
+        assert updated.version_id != agent.version_id
         assert updated.system_prompt == "Updated system prompt"
+
+        resolved = await DatabaseAgentVersionResolver(database).resolve(UUID(updated.version_id))
+        assert resolved is not None
+        assert resolved.spec == updated.spec
+        assert resolved.system_prompt == "Updated system prompt"
 
         async with database.session() as session:
             repository = Repository(session)

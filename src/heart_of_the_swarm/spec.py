@@ -59,6 +59,7 @@ class AgentSummary(BaseModel):
 
 
 class AgentDetail(AgentSummary):
+    version_id: str
     spec: AgentSpec
     prompt_version: str
     system_prompt: str
