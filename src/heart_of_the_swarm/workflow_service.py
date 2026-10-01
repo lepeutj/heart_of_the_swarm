@@ -3,7 +3,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from heart_of_the_swarm.database import Database
-from heart_of_the_swarm.repository import Repository
+from heart_of_the_swarm.repositories import WorkflowRepository
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflows import WorkflowSpec, WorkflowValidator
 from heart_of_the_swarm.workflows.configs import LLMNodeConfig
@@ -38,19 +38,19 @@ class WorkflowService:
             names = ", ".join(sorted(unknown_layout_nodes))
             raise ValueError(f"editor layout contains unknown nodes: {names}")
         async with self.database.session() as session:
-            return await Repository(session).save_workflow(draft)
+            return await WorkflowRepository(session).save(draft)
 
     async def list(self) -> list[WorkflowSummary]:
         async with self.database.session() as session:
-            return await Repository(session).list_workflows()
+            return await WorkflowRepository(session).list_workflows()
 
     async def get(self, workflow_id: UUID) -> WorkflowDraftDetail | None:
         async with self.database.session() as session:
-            return await Repository(session).get_workflow(str(workflow_id))
+            return await WorkflowRepository(session).get(str(workflow_id))
 
     async def create_version(self, workflow_id: UUID) -> WorkflowVersionDetail | None:
         async with self.database.session() as session:
-            draft = await Repository(session).get_workflow(str(workflow_id))
+            draft = await WorkflowRepository(session).get(str(workflow_id))
         if draft is None:
             return None
         try:
@@ -62,7 +62,7 @@ class WorkflowService:
             if isinstance(node.config, LLMNodeConfig):
                 await self.agent_validator.validate(node.config.agent)
         async with self.database.session() as session:
-            return await Repository(session).create_workflow_version(
+            return await WorkflowRepository(session).create_version(
                 str(workflow_id), expected_revision=draft.revision
             )
 

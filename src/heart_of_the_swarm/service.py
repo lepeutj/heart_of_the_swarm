@@ -8,7 +8,7 @@ from heart_of_the_swarm.observability import (
     trace_context,
 )
 from heart_of_the_swarm.providers import ProviderRegistry
-from heart_of_the_swarm.repository import Repository
+from heart_of_the_swarm.repositories import AgentRepository, ObservabilityRepository
 from heart_of_the_swarm.spec import (
     AgentDetail,
     AgentSpec,
@@ -63,7 +63,7 @@ class AgentService:
                 },
             )
             async with self.database.session() as session:
-                design_id = await Repository(session).start_design(
+                design_id = await AgentRepository(session).start_design(
                     trace_id,
                     request.task,
                     builder_config,
@@ -97,16 +97,16 @@ class AgentService:
                 )
                 await self.validator.validate(spec)
                 async with self.database.session() as session:
-                    await Repository(session).complete_design(design_id, spec)
+                    await AgentRepository(session).complete_design(design_id, spec)
                 self.telemetry.set_outputs(span, {"agent_spec": spec.model_dump(mode="json")})
                 return DesignResponse(design_id=design_id, trace_id=trace_id, spec=spec)
             except Exception as exc:
                 async with self.database.session() as session:
-                    await Repository(session).fail_design(design_id, exc, spec)
+                    await AgentRepository(session).fail_design(design_id, exc, spec)
                 raise
             finally:
                 async with self.database.session() as session:
-                    await Repository(session).add_usage(usage.events, trace_id)
+                    await ObservabilityRepository(session).add_usage(usage.events, trace_id)
 
     async def validation_errors(self, spec: AgentSpec) -> list[str]:
         return await self.validator.errors(spec)
@@ -114,25 +114,25 @@ class AgentService:
     async def create_agent(self, spec: AgentSpec) -> AgentDetail:
         await self.validator.validate(spec)
         async with self.database.session() as session:
-            return await Repository(session).create_agent(
+            return await AgentRepository(session).create(
                 spec, AGENT_SYSTEM_PROMPT_VERSION, render_system_prompt(spec)
             )
 
     async def list_agents(self) -> list[AgentSummary]:
         async with self.database.session() as session:
-            return await Repository(session).list_agents()
+            return await AgentRepository(session).list_agents()
 
     async def add_version(self, agent_id: str, spec: AgentSpec) -> AgentDetail | None:
         await self.validator.validate(spec)
         async with self.database.session() as session:
-            return await Repository(session).add_version(
+            return await AgentRepository(session).add_version(
                 agent_id, spec, AGENT_SYSTEM_PROMPT_VERSION, render_system_prompt(spec)
             )
 
     async def get_agent(self, agent_id: str) -> AgentDetail | None:
         async with self.database.session() as session:
-            return await Repository(session).get_agent(agent_id)
+            return await AgentRepository(session).get(agent_id)
 
     async def usage_summary(self) -> list[UsageSummary]:
         async with self.database.session() as session:
-            return await Repository(session).usage_summary()
+            return await ObservabilityRepository(session).usage_summary()

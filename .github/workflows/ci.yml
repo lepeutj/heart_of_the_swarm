@@ -58,3 +58,6 @@ jobs:
 
       - name: Build package
         run: uv build
+
+      - name: Build standalone agent runtime image
+        run: docker build --file docker/agent-runtime.Dockerfile --tag heart-of-the-swarm-agent-runtime:ci .

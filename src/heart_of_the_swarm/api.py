@@ -19,7 +19,7 @@ from heart_of_the_swarm.observability import (
     get_trace_id,
     trace_context,
 )
-from heart_of_the_swarm.repository import WorkflowRevisionConflict
+from heart_of_the_swarm.repositories import WorkflowRevisionConflict
 from heart_of_the_swarm.spec import (
     AgentDetail,
     AgentRunAccepted,

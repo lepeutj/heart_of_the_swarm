@@ -5,7 +5,7 @@ from contextlib import suppress
 
 from heart_of_the_swarm.application import Application
 from heart_of_the_swarm.observability import audit_event, audit_exception
-from heart_of_the_swarm.repository import Repository
+from heart_of_the_swarm.repositories import RunRepository
 
 
 async def run_worker() -> None:
@@ -16,11 +16,11 @@ async def run_worker() -> None:
     try:
         while True:
             async with application.database.session() as session:
-                repository = Repository(session)
-                recovered = await repository.recover_expired_runs(
+                repository = RunRepository(session)
+                recovered = await repository.recover_expired(
                     application.settings.worker_max_attempts
                 )
-                run_id = await repository.claim_next_run(
+                run_id = await repository.claim_next(
                     worker_id, application.settings.worker_lease_seconds
                 )
             if recovered:
@@ -33,7 +33,7 @@ async def run_worker() -> None:
             except Exception as exc:
                 audit_exception("worker.run.failed", worker_id=worker_id, run_id=run_id)
                 async with application.database.session() as session:
-                    await Repository(session).fail_run(run_id, exc)
+                    await RunRepository(session).fail(run_id, exc)
     except asyncio.CancelledError:
         raise
     except Exception:

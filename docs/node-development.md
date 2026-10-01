@@ -95,7 +95,7 @@ store only the configuration needed to reconstruct that representation.
 
 - `workflows/documents.py`: mutable draft and editor-layout API models.
 - `workflow_service.py`: save rules and strict version publication.
-- `models.py` and `repository.py`: workflow draft/version storage.
+- `models.py` and `repositories/workflows.py`: workflow draft/version storage.
 - `frontend/src/App.tsx`: save, reopen, version, and graph reconstruction.
 
 A draft may be incomplete. A `WorkflowVersion` must parse and validate completely. Layout stays in

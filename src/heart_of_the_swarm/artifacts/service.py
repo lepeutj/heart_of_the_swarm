@@ -10,7 +10,7 @@ from heart_of_the_swarm.artifacts.models import (
     AgentArtifactPayload,
 )
 from heart_of_the_swarm.database import Database
-from heart_of_the_swarm.repository import Repository
+from heart_of_the_swarm.repositories import AgentRepository
 
 
 class AgentArtifactExporter:
@@ -21,7 +21,7 @@ class AgentArtifactExporter:
 
     async def export(self, version_id: UUID, directory: Path) -> AgentArtifact | None:
         async with self.database.session() as session:
-            version = await Repository(session).get_agent_version(str(version_id))
+            version = await AgentRepository(session).get_version(str(version_id))
         if version is None:
             return None
 

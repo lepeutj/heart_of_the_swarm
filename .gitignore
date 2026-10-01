@@ -26,6 +26,7 @@ pytest-cache-files-*/
 /src/heart_of_the_swarm/static/workflow-editor/
 dist/
 build/
+/output/
 *.egg-info/
 logs/*.jsonl*
 data/

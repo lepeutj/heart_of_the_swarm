@@ -1,160 +1,21 @@
-import json
 import logging
-import logging.handlers
-import traceback
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
-from threading import Lock
 from time import perf_counter
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
-_trace_id: ContextVar[str | None] = ContextVar("trace_id", default=None)
-_logger = logging.getLogger("heart_of_the_swarm.audit")
-_configure_lock = Lock()
-_configured_target: Path | None = None
-
-
-class JsonLineFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        entry: dict[str, Any] = {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "level": record.levelname,
-            "event": getattr(record, "event", record.getMessage()),
-            "trace_id": getattr(record, "trace_id", None),
-        }
-        entry.update(getattr(record, "event_fields", {}))
-        if record.exc_info:
-            entry["exception"] = "".join(traceback.format_exception(*record.exc_info))
-        return json.dumps(entry, ensure_ascii=False, default=str)
-
-
-def configure_audit_logging(
-    log_file: str,
-    level: str = "INFO",
-    max_bytes: int = 10_000_000,
-    backup_count: int = 5,
-) -> Path:
-    """Configure a process-wide rotating JSONL audit log exactly once."""
-    global _configured_target
-
-    target = Path(log_file).expanduser().resolve()
-    with _configure_lock:
-        if _configured_target is not None:
-            return _configured_target
-        target.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
-            target,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
-            delay=False,
-        )
-        handler.setFormatter(JsonLineFormatter())
-        _logger.handlers.clear()
-        _logger.addHandler(handler)
-        _logger.setLevel(level.upper())
-        _logger.propagate = False
-        _configured_target = target
-    return target
-
-
-def get_trace_id() -> str | None:
-    return _trace_id.get()
-
-
-@contextmanager
-def trace_context(trace_id: str | None = None):
-    existing = get_trace_id()
-    if existing:
-        yield existing
-        return
-
-    assigned = trace_id or str(uuid4())
-    token = _trace_id.set(assigned)
-    try:
-        yield assigned
-    finally:
-        _trace_id.reset(token)
-
-
-def audit_event(event: str, *, level: int = logging.INFO, **fields: Any) -> None:
-    _logger.log(
-        level,
-        event,
-        extra={"event": event, "trace_id": get_trace_id(), "event_fields": fields},
-    )
-
-
-def audit_exception(event: str, **fields: Any) -> None:
-    _logger.error(
-        event,
-        extra={"event": event, "trace_id": get_trace_id(), "event_fields": fields},
-        exc_info=True,
-    )
-
-
-def _size(value: Any) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, str):
-        return len(value)
-    try:
-        return len(json.dumps(value, default=str))
-    except TypeError:
-        return len(str(value))
-
-
-@dataclass
-class ModelUsageEvent:
-    stage: str
-    provider: str
-    model_id: str
-    resolved_provider: str | None = None
-    resolved_model_id: str | None = None
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    cost: float = 0
-    latency_ms: float = 0
-    success: bool = True
-    error_type: str | None = None
-
-
-@dataclass(frozen=True)
-class TrajectoryEvent:
-    sequence: int
-    event_type: str
-    component: str | None
-    langchain_run_id: str | None
-    parent_run_id: str | None
-    payload: dict[str, Any]
-    created_at: datetime
-
-
-def _json_value(value: Any) -> Any:
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_json_value(item) for item in value]
-    if hasattr(value, "model_dump"):
-        return _json_value(value.model_dump(mode="json", serialize_as_any=True))
-    return str(value)
-
-
-def _workflow_context(metadata: Any) -> dict[str, Any]:
-    if not isinstance(metadata, dict):
-        return {}
-    keys = ("workflow_id", "workflow_run_id", "node_id", "node_type")
-    return {key: metadata[key] for key in keys if key in metadata}
+from heart_of_the_swarm.observability.audit import audit_event
+from heart_of_the_swarm.observability.events import (
+    ModelUsageEvent,
+    TrajectoryEvent,
+    json_value,
+    serialized_size,
+    string_id,
+    workflow_context,
+)
 
 
 class RuntimeCallbackHandler(BaseCallbackHandler):
@@ -186,9 +47,9 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
                 sequence=len(self.trajectory) + 1,
                 event_type=event_type,
                 component=component,
-                langchain_run_id=str(run_id) if run_id else None,
-                parent_run_id=str(parent_run_id) if parent_run_id else None,
-                payload=_json_value(payload or {}),
+                langchain_run_id=string_id(run_id),
+                parent_run_id=string_id(parent_run_id),
+                payload=json_value(payload or {}),
                 created_at=datetime.now(UTC),
             )
         )
@@ -204,7 +65,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
     ) -> None:
         self._started[run_id] = perf_counter()
         identifier = str(serialized.get("name") or serialized.get("id", ["unknown"])[-1])
-        context = _workflow_context(kwargs.get("metadata"))
+        context = workflow_context(kwargs.get("metadata"))
         self._components[run_id] = identifier
         self._model_context[run_id] = context
         self.record(
@@ -219,7 +80,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             component=identifier,
             message_batches=len(messages),
             langchain_run_id=str(run_id),
-            parent_run_id=str(parent_run_id) if parent_run_id else None,
+            parent_run_id=string_id(parent_run_id),
             **context,
         )
 
@@ -289,7 +150,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             generations=sum(len(batch) for batch in response.generations),
             token_usage=usage,
             langchain_run_id=str(run_id),
-            parent_run_id=str(parent_run_id) if parent_run_id else None,
+            parent_run_id=string_id(parent_run_id),
             **context,
         )
 
@@ -332,7 +193,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             error_type=type(error).__name__,
             error_message=str(error),
             langchain_run_id=str(run_id),
-            parent_run_id=str(parent_run_id) if parent_run_id else None,
+            parent_run_id=string_id(parent_run_id),
             **context,
         )
 
@@ -346,7 +207,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         component = serialized.get("name", "unknown")
-        context = _workflow_context(kwargs.get("metadata"))
+        context = workflow_context(kwargs.get("metadata"))
         self._components[run_id] = component
         self._tool_started[run_id] = perf_counter()
         self._tool_context[run_id] = context
@@ -362,7 +223,7 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             tool=component,
             input_characters=len(input_str),
             langchain_run_id=str(run_id),
-            parent_run_id=str(parent_run_id) if parent_run_id else None,
+            parent_run_id=string_id(parent_run_id),
             **context,
         )
 
@@ -387,9 +248,9 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
         )
         audit_event(
             "tool.completed",
-            output_characters=_size(output),
+            output_characters=serialized_size(output),
             langchain_run_id=str(run_id),
-            parent_run_id=str(parent_run_id) if parent_run_id else None,
+            parent_run_id=string_id(parent_run_id),
             **context,
         )
 
@@ -423,6 +284,6 @@ class RuntimeCallbackHandler(BaseCallbackHandler):
             error_type=type(error).__name__,
             error_message=str(error),
             langchain_run_id=str(run_id),
-            parent_run_id=str(parent_run_id) if parent_run_id else None,
+            parent_run_id=string_id(parent_run_id),
             **context,
         )

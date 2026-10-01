@@ -7,7 +7,7 @@ import pytest
 from heart_of_the_swarm.artifacts import AgentArtifactExporter, load_agent_artifact
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.factory import render_system_prompt
-from heart_of_the_swarm.repository import Repository
+from heart_of_the_swarm.repositories import AgentRepository
 from heart_of_the_swarm.spec import AgentSpec
 
 
@@ -27,7 +27,7 @@ async def export_artifact(directory: Path):
     try:
         spec = agent_spec()
         async with database.session() as session:
-            saved = await Repository(session).create_agent(spec, "1", render_system_prompt(spec))
+            saved = await AgentRepository(session).create(spec, "1", render_system_prompt(spec))
         artifact = await AgentArtifactExporter(database).export(UUID(saved.version_id), directory)
         assert artifact is not None
         return artifact
