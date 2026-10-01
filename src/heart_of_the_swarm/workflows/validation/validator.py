@@ -319,7 +319,13 @@ class WorkflowValidator:
                             )
                         )
             elif isinstance(config, AgentNodeConfig):
+                pass
+            else:
                 continue
+            if config.response_schema is not None:
+                issues.extend(
+                    _response_schema_errors(node.id, config.response_schema, config.outputs or {})
+                )
         return issues
 
     def _provider_errors(self, node_id: str, provider: str) -> list[WorkflowValidationIssue]:
@@ -347,6 +353,61 @@ def _schema_errors(schema: dict[str, Any], field: str) -> list[WorkflowValidatio
             )
         ]
     return []
+
+
+def _response_schema_errors(
+    node_id: str,
+    schema: dict[str, Any],
+    outputs: dict[str, Any],
+) -> list[WorkflowValidationIssue]:
+    issues = _schema_errors(schema, "config.response_schema")
+    if issues:
+        return [issue.model_copy(update={"node_id": node_id}) for issue in issues]
+    if schema.get("type") != "object":
+        issues.append(
+            _issue(
+                "workflow.agent.response_schema_not_object",
+                "Agent response_schema must describe an object.",
+                node_id,
+                "config.response_schema.type",
+            )
+        )
+        return issues
+    for metadata_field in ("title", "description"):
+        if not isinstance(schema.get(metadata_field), str) or not schema[metadata_field].strip():
+            issues.append(
+                _issue(
+                    "workflow.agent.response_schema_metadata_missing",
+                    f"Agent response_schema requires a non-empty {metadata_field}.",
+                    node_id,
+                    f"config.response_schema.{metadata_field}",
+                )
+            )
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        properties = {}
+    required = schema.get("required")
+    required_names = set(required) if isinstance(required, list) else set()
+    for name in outputs:
+        if name not in properties:
+            issues.append(
+                _issue(
+                    "workflow.agent.output_not_in_schema",
+                    f"Output '{name}' is not declared in response_schema properties.",
+                    node_id,
+                    f"config.outputs.{name}",
+                )
+            )
+        elif name not in required_names:
+            issues.append(
+                _issue(
+                    "workflow.agent.output_not_required",
+                    f"Output '{name}' must be required by response_schema.",
+                    node_id,
+                    f"config.outputs.{name}",
+                )
+            )
+    return issues
 
 
 def _issue(

@@ -78,7 +78,8 @@ class RecordingAgentRunner:
         system_prompt: str | None = None,
         callbacks: Sequence[BaseCallbackHandler] = (),
         metadata: Mapping[str, Any] | None = None,
-    ) -> str:
+        response_schema: dict[str, Any] | None = None,
+    ) -> Any:
         self.calls.append(
             {
                 "spec": spec,
@@ -86,6 +87,7 @@ class RecordingAgentRunner:
                 "system_prompt": system_prompt,
                 "callbacks": list(callbacks),
                 "metadata": dict(metadata or {}),
+                "response_schema": response_schema,
             }
         )
         if self.error is not None:

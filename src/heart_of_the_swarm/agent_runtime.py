@@ -3,6 +3,7 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
+from pydantic import BaseModel
 
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.providers import ProviderRegistry
@@ -31,15 +32,28 @@ class AgentRunner:
         system_prompt: str | None = None,
         callbacks: Sequence[BaseCallbackHandler] = (),
         metadata: Mapping[str, Any] | None = None,
-    ) -> str:
-        """Execute one LangChain agent invocation and return its final assistant content."""
+        response_schema: dict[str, Any] | None = None,
+    ) -> Any:
+        """Execute one agent and return text or LangChain-validated structured output."""
         self.validator.validate_execution(spec)
         model = self.providers.create_model(spec.model)
-        graph = self.factory.create(spec, model, system_prompt=system_prompt)
+        graph = self.factory.create(
+            spec,
+            model,
+            system_prompt=system_prompt,
+            response_schema=response_schema,
+        )
         result = await graph.ainvoke(
             {"messages": [{"role": "user", "content": agent_input}]},
             config={"callbacks": list(callbacks), "metadata": dict(metadata or {})},
         )
+        if response_schema is not None:
+            if "structured_response" not in result:
+                raise RuntimeError("agent returned no structured response")
+            structured = result["structured_response"]
+            if isinstance(structured, BaseModel):
+                return structured.model_dump(mode="json")
+            return structured
         final = next(
             (
                 message

@@ -38,29 +38,34 @@ class RecordingProviders:
 
 
 class FakeGraph:
-    def __init__(self, messages: list[object]) -> None:
+    def __init__(self, messages: list[object], structured_response: object | None = None) -> None:
         self.messages = messages
+        self.structured_response = structured_response
         self.input: dict[str, Any] | None = None
         self.config: dict[str, Any] | None = None
 
     async def ainvoke(self, value: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         self.input = value
         self.config = config
-        return {"messages": self.messages}
+        result = {"messages": self.messages}
+        if self.structured_response is not None:
+            result["structured_response"] = self.structured_response
+        return result
 
 
 class RecordingFactory:
     def __init__(self, graph: FakeGraph) -> None:
         self.graph = graph
-        self.call: tuple[AgentSpec, object, str | None] | None = None
+        self.call: tuple[AgentSpec, object, str | None, dict[str, Any] | None] | None = None
 
     def create(
         self,
         spec: AgentSpec,
         model: object,
         system_prompt: str | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> FakeGraph:
-        self.call = (spec, model, system_prompt)
+        self.call = (spec, model, system_prompt, response_schema)
         return self.graph
 
 
@@ -85,7 +90,7 @@ async def test_runner_validates_builds_and_invokes_agent() -> None:
     assert output == "Answer"
     assert validator.spec is spec
     assert providers.config is spec.model
-    assert factory.call == (spec, model, "Stored prompt")
+    assert factory.call == (spec, model, "Stored prompt", None)
     assert graph.input == {"messages": [{"role": "user", "content": "Question"}]}
     assert graph.config == {
         "callbacks": [callback],
@@ -104,3 +109,26 @@ async def test_runner_rejects_result_without_final_assistant_message() -> None:
 
     with pytest.raises(RuntimeError, match="agent returned no final answer"):
         await runner.invoke(spec, "Question")
+
+
+async def test_runner_returns_langchain_structured_response() -> None:
+    schema = {
+        "title": "Research",
+        "description": "Research result",
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+    }
+    graph = FakeGraph([], structured_response={"answer": "Structured answer"})
+    factory = RecordingFactory(graph)
+    runner = AgentRunner(  # type: ignore[arg-type]
+        RecordingProviders(object()),
+        RecordingValidator(),
+        factory,
+    )
+
+    output = await runner.invoke(make_spec(), "Question", response_schema=schema)
+
+    assert output == {"answer": "Structured answer"}
+    assert factory.call is not None
+    assert factory.call[3] == schema

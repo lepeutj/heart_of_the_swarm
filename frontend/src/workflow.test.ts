@@ -40,16 +40,22 @@ describe("toWorkflowSpec", () => {
   it("configures a visual LLM with the shared AgentSpec", () => {
     expect(defaultConfig("llm")).toMatchObject({
       agent: { name: "NewAgent", tools: [] },
-      input_path: "$.request",
-      output_path: "$.answer",
+      inputs: { request: { from_state: "$.request" } },
+      outputs: { answer: { to_state: "$.answer" } },
     });
   });
 
   it("configures a saved agent by immutable version ID", () => {
     expect(defaultConfig("agent")).toMatchObject({
       agent_version_id: "",
-      input_path: "$.request",
-      output_path: "$.answer",
+      inputs: { request: { from_state: "$.request" } },
+      outputs: { answer: { to_state: "$.answer" } },
+    });
+  });
+
+  it("configures a workflow output as a named state mapping", () => {
+    expect(defaultConfig("output")).toEqual({
+      outputs: { result: { from_state: "$.result" } },
     });
   });
 });

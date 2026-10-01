@@ -252,6 +252,65 @@ def test_invalid_nested_state_reference_is_rejected() -> None:
     assert "workflow.state.invalid_reference" in issue_codes(data)
 
 
+def test_multiple_agent_outputs_require_a_structured_response_schema() -> None:
+    data = workflow_data()
+    data["nodes"][2]["config"].pop("input_path")
+    data["nodes"][2]["config"].pop("output_path")
+    data["nodes"][2]["config"]["inputs"] = {"request": {"from_state": "$.request_copy"}}
+    data["nodes"][2]["config"]["outputs"] = {
+        "answer": {"to_state": "$.research.answer"},
+        "sources": {"to_state": "$.research.sources"},
+    }
+
+    assert "workflow.node.invalid_config" in issue_codes(data)
+
+
+def test_agent_outputs_must_be_required_response_schema_properties() -> None:
+    data = workflow_data()
+    config = data["nodes"][2]["config"]
+    config.pop("input_path")
+    config.pop("output_path")
+    config["inputs"] = {"request": {"from_state": "$.request_copy"}}
+    config["outputs"] = {
+        "answer": {"to_state": "$.research.answer"},
+        "sources": {"to_state": "$.research.sources"},
+    }
+    config["response_schema"] = {
+        "title": "Research",
+        "description": "Research result",
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+    }
+
+    codes = issue_codes(data)
+    assert "workflow.agent.output_not_in_schema" in codes
+
+
+def test_agent_output_destinations_must_not_overlap() -> None:
+    data = workflow_data()
+    config = data["nodes"][2]["config"]
+    config.pop("input_path")
+    config.pop("output_path")
+    config["inputs"] = {"request": {"from_state": "$.request_copy"}}
+    config["outputs"] = {
+        "answer": {"to_state": "$.research"},
+        "sources": {"to_state": "$.research.sources"},
+    }
+    config["response_schema"] = {
+        "title": "Research",
+        "description": "Research result",
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string"},
+            "sources": {"type": "array"},
+        },
+        "required": ["answer", "sources"],
+    }
+
+    assert "workflow.node.invalid_config" in issue_codes(data)
+
+
 def test_validation_issues_identify_the_node_and_field() -> None:
     data = workflow_data()
     data["edges"] = [edge for edge in data["edges"] if edge["source"] != "verified"]

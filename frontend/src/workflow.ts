@@ -93,8 +93,8 @@ export function defaultConfig(nodeType: NodeType): JsonObject {
     case "agent":
       return {
         agent_version_id: "",
-        input_path: "$.request",
-        output_path: "$.answer",
+        inputs: { request: { from_state: "$.request" } },
+        outputs: { answer: { to_state: "$.answer" } },
       };
     case "llm":
       return {
@@ -105,13 +105,13 @@ export function defaultConfig(nodeType: NodeType): JsonObject {
           model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
           tools: [],
         },
-        input_path: "$.request",
-        output_path: "$.answer",
+        inputs: { request: { from_state: "$.request" } },
+        outputs: { answer: { to_state: "$.answer" } },
       };
     case "transform":
       return { assign: { "$.result": { from_state: "$.request" } } };
     case "output":
-      return { output_path: "$.result" };
+      return { outputs: { result: { from_state: "$.result" } } };
     default:
       return {};
   }

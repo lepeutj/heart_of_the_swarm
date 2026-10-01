@@ -60,15 +60,16 @@ def validated_workflow():
 
 
 class RecordingAgentRunner:
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, error: Exception | None = None, output: Any = "Answer") -> None:
         self.error = error
+        self.output = output
         self.calls: list[dict[str, Any]] = []
 
     async def invoke(self, spec, agent_input, **kwargs) -> str:
         self.calls.append({"spec": spec, "input": agent_input, **kwargs})
         if self.error is not None:
             raise self.error
-        return "Answer"
+        return self.output
 
 
 async def test_llm_node_delegates_tool_enabled_spec_to_agent_runner() -> None:
@@ -138,3 +139,96 @@ async def test_llm_node_passes_workflow_metadata_to_agent_runner() -> None:
         "node_id": "research",
         "node_type": "llm",
     }
+
+
+async def test_llm_node_maps_multiple_inputs_and_structured_outputs() -> None:
+    data = workflow_data()
+    response_schema = {
+        "title": "ResearchResult",
+        "description": "Structured research fields.",
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["answer", "confidence"],
+        "additionalProperties": False,
+    }
+    data["output_schema"] = {
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["answer", "confidence"],
+    }
+    data["nodes"][1]["config"] = {
+        "agent": data["nodes"][1]["config"]["agent"],
+        "inputs": {
+            "question": {"from_state": "$.request"},
+            "documents": {"from_state": "$.documents"},
+        },
+        "outputs": {
+            "answer": {"to_state": "$.research.answer"},
+            "confidence": {"to_state": "$.research.confidence"},
+        },
+        "response_schema": response_schema,
+    }
+    data["nodes"][2]["config"] = {
+        "outputs": {
+            "answer": {"from_state": "$.research.answer"},
+            "confidence": {"from_state": "$.research.confidence"},
+        }
+    }
+    workflow = WorkflowValidator(
+        tool_names=["web_search", "calculator"], provider_names=["test"]
+    ).validate(WorkflowSpec.model_validate(data))
+    runner = RecordingAgentRunner(output={"answer": "Result", "confidence": 0.86})
+
+    result = (
+        await WorkflowGraphFactory(agent_runner=runner)
+        .create(workflow)
+        .ainvoke(  # type: ignore[arg-type]
+            {"request": "Research this", "documents": ["A", "B"]}
+        )
+    )
+
+    assert runner.calls[0]["input"] == ('{"documents": ["A", "B"], "question": "Research this"}')
+    assert runner.calls[0]["response_schema"] == response_schema
+    assert result.state["research"] == {"answer": "Result", "confidence": 0.86}
+    assert result.output == {"answer": "Result", "confidence": 0.86}
+
+
+async def test_llm_node_rejects_missing_structured_output_field_atomically() -> None:
+    data = workflow_data()
+    data["nodes"][1]["config"] = {
+        "agent": data["nodes"][1]["config"]["agent"],
+        "inputs": {"request": {"from_state": "$.request"}},
+        "outputs": {
+            "answer": {"to_state": "$.research.answer"},
+            "confidence": {"to_state": "$.research.confidence"},
+        },
+        "response_schema": {
+            "title": "ResearchResult",
+            "description": "Structured research fields.",
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["answer", "confidence"],
+        },
+    }
+    workflow = WorkflowValidator(
+        tool_names=["web_search", "calculator"], provider_names=["test"]
+    ).validate(WorkflowSpec.model_validate(data))
+    original = {"request": "Research this"}
+    graph = WorkflowGraphFactory(  # type: ignore[arg-type]
+        agent_runner=RecordingAgentRunner(output={"answer": "Result"})
+    ).create(workflow)
+
+    with pytest.raises(WorkflowExecutionError) as caught:
+        await graph.ainvoke(original)
+
+    assert caught.value.issue.code == "workflow.execution.invalid_agent_output"
+    assert original == {"request": "Research this"}

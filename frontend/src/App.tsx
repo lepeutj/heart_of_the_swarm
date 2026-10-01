@@ -56,7 +56,7 @@ const initialNodes: EditorNode[] = [
     data: {
       label: "Output",
       nodeType: "output",
-      config: { output_path: "$.request" },
+      config: { outputs: { result: { from_state: "$.request" } } },
     },
   },
 ];
@@ -89,7 +89,11 @@ export default function App() {
     properties: { request: { type: "string" } },
     required: ["request"],
   });
-  const [outputSchema, setOutputSchema] = useState<JsonObject>({ type: "string" });
+  const [outputSchema, setOutputSchema] = useState<JsonObject>({
+    type: "object",
+    properties: { result: { type: "string" } },
+    required: ["result"],
+  });
   const workflowId = useRef<string>(crypto.randomUUID());
   const sequence = useRef(1);
 
@@ -307,8 +311,15 @@ export default function App() {
         nodeType: "agent",
         config: {
           agent_version_id: saved.version_id,
-          input_path: selectedNode.data.config.input_path,
-          output_path: selectedNode.data.config.output_path,
+          ...(selectedNode.data.config.input_path
+            ? { input_path: selectedNode.data.config.input_path }
+            : { inputs: selectedNode.data.config.inputs }),
+          ...(selectedNode.data.config.output_path
+            ? { output_path: selectedNode.data.config.output_path }
+            : { outputs: selectedNode.data.config.outputs }),
+          ...(selectedNode.data.config.response_schema
+            ? { response_schema: selectedNode.data.config.response_schema }
+            : {}),
         },
       });
       setStatus(`${saved.name} saved as agent version ${saved.version}`);

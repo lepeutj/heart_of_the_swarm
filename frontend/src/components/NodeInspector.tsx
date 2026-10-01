@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { JsonEditor } from "./JsonEditor";
+
 import type { AgentOption } from "../api";
 import type { EditorNode, JsonObject } from "../workflow";
+import { AgentDataFlowEditor, WorkflowOutputEditor } from "./DataFlowEditor";
+import { JsonEditor } from "./JsonEditor";
 
 interface NodeInspectorProps {
   node: EditorNode;
@@ -122,8 +124,7 @@ function AgentEditor({
           ))}
         </select>
       </label>
-      <label>Input path<input value={asString(config.input_path)} onChange={(event) => onChange({ ...config, input_path: event.target.value })} /></label>
-      <label>Output path<input value={asString(config.output_path)} onChange={(event) => onChange({ ...config, output_path: event.target.value })} /></label>
+      <AgentDataFlowEditor config={config} onChange={onChange} />
     </div>
   );
 }
@@ -176,8 +177,7 @@ function LlmEditor({ config, toolNames, providerNames, onChange }: {
           ))}
         </div>
       </fieldset>
-      <label>Input path<input value={asString(config.input_path)} onChange={(event) => onChange({ ...config, input_path: event.target.value })} /></label>
-      <label>Output path<input value={asString(config.output_path)} onChange={(event) => onChange({ ...config, output_path: event.target.value })} /></label>
+      <AgentDataFlowEditor config={config} onChange={onChange} />
     </div>
   );
 }
@@ -315,7 +315,7 @@ export function NodeInspector({
         <TransformEditor config={config} onChange={(next) => onChange({ config: next })} />
       )}
       {node.data.nodeType === "output" && (
-        <label>Output path<input value={asString(config.output_path)} onChange={(event) => onChange({ config: { ...config, output_path: event.target.value } })} /></label>
+        <WorkflowOutputEditor config={config} onChange={(next) => onChange({ config: next })} />
       )}
       {node.data.nodeType === "condition" && (
         <p className="field-help">Select an outgoing edge to configure its condition. One outgoing edge must remain the fallback.</p>

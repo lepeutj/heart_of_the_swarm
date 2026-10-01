@@ -1,5 +1,6 @@
 from typing import Any
 
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from pytest import MonkeyPatch
@@ -60,3 +61,38 @@ def test_factory_maps_agent_spec_to_langchain_create_agent(monkeypatch: MonkeyPa
     assert [tool.name for tool in captured["tools"]] == ["calculator"]
     assert captured["system_prompt"] == "Stored prompt"
     assert captured["name"] == "MathAgent"
+
+
+def test_factory_delegates_json_schema_to_langchain_structured_output(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    spec = AgentSpec(
+        name="ResearchAgent",
+        goal="Return structured research",
+        tools=[],
+        instructions="Return the requested fields.",
+        model={"provider": "test", "model_id": "fake"},
+    )
+    schema = {
+        "title": "Research",
+        "description": "Research result",
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+    }
+    captured: dict[str, Any] = {}
+
+    def fake_create_agent(**kwargs: Any) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(factory_module, "create_agent", fake_create_agent)
+
+    AgentFactory(create_default_registry()).create(
+        spec,
+        ToolCapableFakeModel(responses=[AIMessage(content="unused")]),
+        response_schema=schema,
+    )
+
+    assert isinstance(captured["response_format"], ToolStrategy)
+    assert captured["response_format"].schema == schema

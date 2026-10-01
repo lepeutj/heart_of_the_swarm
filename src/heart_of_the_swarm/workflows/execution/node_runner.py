@@ -1,3 +1,5 @@
+import json
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, NoReturn
@@ -152,21 +154,7 @@ class WorkflowNodeRunner:
                 node=node,
             )
 
-        try:
-            agent_input = get_path(state, config.input_path)
-        except StatePathError as exc:
-            self._raise(
-                code="workflow.execution.agent_input_missing",
-                message=f"Input for agent node '{node.id}' could not be resolved.",
-                node=node,
-                cause=exc,
-            )
-        if not isinstance(agent_input, str):
-            self._raise(
-                code="workflow.execution.agent_input_invalid",
-                message=f"Input for agent node '{node.id}' must be a string.",
-                node=node,
-            )
+        agent_input = self._resolve_agent_input(node, config, state)
 
         if isinstance(config, LLMNodeConfig):
             spec = config.agent
@@ -195,6 +183,7 @@ class WorkflowNodeRunner:
                 system_prompt=system_prompt,
                 callbacks=[self.callback] if self.callback is not None else [],
                 metadata=self._node_context(node),
+                response_schema=config.response_schema,
             )
         except WorkflowExecutionError:
             raise
@@ -207,8 +196,9 @@ class WorkflowNodeRunner:
             )
 
         try:
-            updated = deepcopy(state)
-            set_path(updated, config.output_path, output)
+            updated = self._write_agent_output(node, config, state, output)
+        except WorkflowExecutionError:
+            raise
         except Exception as exc:
             self._raise(
                 code="workflow.execution.agent_output_failed",
@@ -216,6 +206,80 @@ class WorkflowNodeRunner:
                 node=node,
                 cause=exc,
             )
+        return updated
+
+    def _resolve_agent_input(
+        self,
+        node: ValidatedWorkflowNode,
+        config: AgentNodeConfig | LLMNodeConfig,
+        state: WorkflowState,
+    ) -> str:
+        """Resolve one legacy input or serialize named state inputs for the agent."""
+        try:
+            if config.input_path is not None:
+                value = get_path(state, config.input_path)
+                if not isinstance(value, str):
+                    self._raise(
+                        code="workflow.execution.agent_input_invalid",
+                        message=f"Input for agent node '{node.id}' must be a string.",
+                        node=node,
+                    )
+                return value
+
+            inputs = {
+                name: get_path(state, binding.from_state)
+                for name, binding in (config.inputs or {}).items()
+            }
+        except StatePathError as exc:
+            self._raise(
+                code="workflow.execution.agent_input_missing",
+                message=f"Input for agent node '{node.id}' could not be resolved.",
+                node=node,
+                cause=exc,
+            )
+
+        if len(inputs) == 1:
+            value = next(iter(inputs.values()))
+            if isinstance(value, str):
+                return value
+        try:
+            return json.dumps(inputs, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            self._raise(
+                code="workflow.execution.agent_input_invalid",
+                message=f"Inputs for agent node '{node.id}' must be JSON serializable.",
+                node=node,
+                cause=exc,
+            )
+
+    def _write_agent_output(
+        self,
+        node: ValidatedWorkflowNode,
+        config: AgentNodeConfig | LLMNodeConfig,
+        state: WorkflowState,
+        output: Any,
+    ) -> WorkflowState:
+        """Atomically project one scalar or named structured response into state."""
+        updated = deepcopy(state)
+        if config.output_path is not None:
+            set_path(updated, config.output_path, output)
+            return updated
+
+        bindings = config.outputs or {}
+        if config.response_schema is None:
+            binding = next(iter(bindings.values()))
+            set_path(updated, binding.to_state, output)
+            return updated
+
+        self._validate_json(node, output, config.response_schema, "agent_output")
+        if not isinstance(output, Mapping):
+            raise TypeError("structured agent output must be an object")
+        missing = [name for name in bindings if name not in output]
+        if missing:
+            raise ValueError(f"structured agent output is missing fields: {', '.join(missing)}")
+        values = {name: deepcopy(output[name]) for name in bindings}
+        for name, binding in bindings.items():
+            set_path(updated, binding.to_state, values[name])
         return updated
 
     def _apply_transform(
@@ -261,10 +325,15 @@ class WorkflowNodeRunner:
         return next(edge.target for edge in outgoing_edges if edge.condition is None)
 
     def _resolve_output(self, node: ValidatedWorkflowNode, state: WorkflowState) -> Any:
-        """Resolve a configured output path with node-specific failure context."""
+        """Resolve one legacy path or a structured set of workflow outputs."""
         config = self._require_config(node, OutputNodeConfig)
         try:
-            return get_path(state, config.output_path)
+            if config.output_path is not None:
+                return get_path(state, config.output_path)
+            return {
+                name: deepcopy(get_path(state, binding.from_state))
+                for name, binding in (config.outputs or {}).items()
+            }
         except StatePathError as exc:
             self._raise(
                 code="workflow.execution.output_missing",
