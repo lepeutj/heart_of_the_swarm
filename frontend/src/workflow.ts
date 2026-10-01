@@ -3,7 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 export type NodeType =
   | "input"
   | "agent"
-  | "llm"
+  | "connector"
   | "condition"
   | "transform"
   | "output";
@@ -30,7 +30,7 @@ export interface WorkflowSpec {
   name: string;
   description: string;
   input_schema: JsonObject;
-  output_schema: JsonObject;
+  output_schema: JsonObject | null;
   nodes: Array<{
     id: string;
     type: NodeType;
@@ -51,13 +51,33 @@ export interface WorkflowDocument {
   name: string;
   description: string;
   inputSchema: JsonObject;
-  outputSchema: JsonObject;
+  outputSchema: JsonObject | null;
   entrypoint: string;
 }
 
 export interface WorkflowEditorDocument {
   positions: Record<string, { x: number; y: number }>;
   viewport: { x: number; y: number; zoom: number };
+}
+
+export function normalizeLoadedNode(
+  node: Omit<WorkflowSpec["nodes"][number], "type"> & { type: NodeType | "llm" },
+): { type: NodeType; config: JsonObject } {
+  if (node.type === "llm") {
+    const { agent, ...config } = node.config;
+    return {
+      type: "agent",
+      config: { ...config, source: { type: "inline", agent } },
+    };
+  }
+  if (node.type === "agent" && !node.config.source && node.config.agent_version_id) {
+    const { agent_version_id, ...config } = node.config;
+    return {
+      type: "agent",
+      config: { ...config, source: { type: "version", agent_version_id } },
+    };
+  }
+  return { type: node.type, config: node.config };
 }
 
 export function toWorkflowSpec(
@@ -92,21 +112,25 @@ export function defaultConfig(nodeType: NodeType): JsonObject {
   switch (nodeType) {
     case "agent":
       return {
-        agent_version_id: "",
-        inputs: { request: { from_state: "$.request" } },
-        outputs: { answer: { to_state: "$.answer" } },
-      };
-    case "llm":
-      return {
-        agent: {
-          name: "NewAgent",
-          goal: "Complete the assigned task",
-          instructions: "Return a clear and accurate answer.",
-          model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
-          tools: [],
+        source: {
+          type: "inline",
+          agent: {
+            name: "NewAgent",
+            goal: "Complete the assigned task",
+            instructions: "Return a clear and accurate answer.",
+            model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
+            tools: [],
+            skills: [],
+          },
         },
         inputs: { request: { from_state: "$.request" } },
         outputs: { answer: { to_state: "$.answer" } },
+      };
+    case "connector":
+      return {
+        capability_id: "http_get_json",
+        inputs: { url: { from_state: "$.url" } },
+        outputs: { result: { to_state: "$.result" } },
       };
     case "transform":
       return { assign: { "$.result": { from_state: "$.request" } } };

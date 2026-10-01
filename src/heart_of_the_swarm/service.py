@@ -9,6 +9,7 @@ from heart_of_the_swarm.observability import (
 )
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.repositories import AgentRepository, ObservabilityRepository
+from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.spec import (
     AgentDetail,
     AgentSpec,
@@ -32,6 +33,7 @@ class AgentService:
         validator: AgentSpecValidator,
         database: Database,
         telemetry: Telemetry,
+        skills: SkillRegistry,
     ) -> None:
         self.settings = settings
         self.tools = tools
@@ -39,6 +41,7 @@ class AgentService:
         self.validator = validator
         self.database = database
         self.telemetry = telemetry
+        self.skills = skills
 
     async def design(self, request: DesignRequest) -> DesignResponse:
         with (
@@ -115,7 +118,7 @@ class AgentService:
         await self.validator.validate(spec)
         async with self.database.session() as session:
             return await AgentRepository(session).create(
-                spec, AGENT_SYSTEM_PROMPT_VERSION, render_system_prompt(spec)
+                spec, AGENT_SYSTEM_PROMPT_VERSION, render_system_prompt(spec, self.skills)
             )
 
     async def list_agents(self) -> list[AgentSummary]:
@@ -126,7 +129,7 @@ class AgentService:
         await self.validator.validate(spec)
         async with self.database.session() as session:
             return await AgentRepository(session).add_version(
-                agent_id, spec, AGENT_SYSTEM_PROMPT_VERSION, render_system_prompt(spec)
+                agent_id, spec, AGENT_SYSTEM_PROMPT_VERSION, render_system_prompt(spec, self.skills)
             )
 
     async def get_agent(self, agent_id: str) -> AgentDetail | None:

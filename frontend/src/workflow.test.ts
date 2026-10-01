@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { defaultConfig, toWorkflowSpec, type EditorEdge, type EditorNode } from "./workflow";
+import {
+  defaultConfig,
+  normalizeLoadedNode,
+  toWorkflowSpec,
+  type EditorEdge,
+  type EditorNode,
+} from "./workflow";
 
 describe("toWorkflowSpec", () => {
   it("serializes React Flow state into the backend contract", () => {
@@ -37,25 +43,69 @@ describe("toWorkflowSpec", () => {
     expect(spec.edges[0]).toEqual({ source: "input", target: "output", label: "done" });
   });
 
-  it("configures a visual LLM with the shared AgentSpec", () => {
-    expect(defaultConfig("llm")).toMatchObject({
-      agent: { name: "NewAgent", tools: [] },
+  it("configures an inline agent with the shared AgentSpec", () => {
+    expect(defaultConfig("agent")).toMatchObject({
+      source: { type: "inline", agent: { name: "NewAgent", tools: [], skills: [] } },
       inputs: { request: { from_state: "$.request" } },
       outputs: { answer: { to_state: "$.answer" } },
     });
   });
 
-  it("configures a saved agent by immutable version ID", () => {
-    expect(defaultConfig("agent")).toMatchObject({
-      agent_version_id: "",
-      inputs: { request: { from_state: "$.request" } },
-      outputs: { answer: { to_state: "$.answer" } },
+  it("configures a deterministic connector", () => {
+    expect(defaultConfig("connector")).toMatchObject({
+      capability_id: "http_get_json",
+      inputs: { url: { from_state: "$.url" } },
+      outputs: { result: { to_state: "$.result" } },
     });
   });
 
   it("configures a workflow output as a named state mapping", () => {
     expect(defaultConfig("output")).toEqual({
       outputs: { result: { from_state: "$.result" } },
+    });
+  });
+
+  it("normalizes a legacy LLM node into an inline agent", () => {
+    const normalized = normalizeLoadedNode({
+      id: "summarize",
+      type: "llm",
+      name: "Summarize",
+      config: {
+        agent: { name: "SummaryAgent" },
+        input_path: "$.request",
+        output_path: "$.answer",
+      },
+    });
+
+    expect(normalized).toEqual({
+      type: "agent",
+      config: {
+        source: { type: "inline", agent: { name: "SummaryAgent" } },
+        input_path: "$.request",
+        output_path: "$.answer",
+      },
+    });
+  });
+
+  it("normalizes a legacy saved agent reference", () => {
+    const normalized = normalizeLoadedNode({
+      id: "research",
+      type: "agent",
+      name: "Research",
+      config: {
+        agent_version_id: "f5427628-42a7-4698-9e8c-7489da8a7a41",
+        input_path: "$.request",
+        output_path: "$.answer",
+      },
+    });
+
+    expect(normalized.config).toEqual({
+      source: {
+        type: "version",
+        agent_version_id: "f5427628-42a7-4698-9e8c-7489da8a7a41",
+      },
+      input_path: "$.request",
+      output_path: "$.answer",
     });
   });
 });

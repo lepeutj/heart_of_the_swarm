@@ -32,21 +32,26 @@ traversal and routing.
 | Node | Declarative configuration | Runtime representation |
 | --- | --- | --- |
 | `input` | Empty config | LangGraph entry node; validates workflow input |
-| `llm` | Inline `AgentSpec` plus input/output paths | `AgentRunner` → LangChain `create_agent` |
-| `agent` | Immutable `agent_version_id` plus paths | Version resolver → `AgentRunner` → `create_agent` |
+| `agent` | Inline `AgentSpec` or immutable version plus mappings | `AgentRunner` → `create_agent` |
+| `connector` | Registered capability plus mappings | One direct capability invocation |
 | `transform` | Restricted state assignments | Small deterministic product adapter |
 | `condition` | Conditions stored on ordered outgoing edges | LangGraph conditional edges |
 | `output` | Output state path | LangGraph terminal node; validates output |
 
-There is no standalone `tool` node. Tools belong to `AgentSpec.tools`, are resolved by the central
-`ToolRegistry`, and are passed to LangChain when the agent is created.
+Agent tools belong to `AgentSpec.tools`. A connector reuses the same registered implementation but
+invokes it exactly once without model choice.
+
+Built-in and discovered MCP capabilities live in the same `ToolRegistry`. MCP discovery registers
+LangChain tools during application startup with source and server-origin metadata. `CONNECTOR` and
+`AgentFactory` resolve only capability IDs and must not branch on their source. Name collisions are
+startup errors rather than implicit replacements.
 
 ## LangChain agent path
 
 ```text
-LLM node: embedded AgentSpec ─┐
-                             ├→ WorkflowNodeRunner._invoke_agent
-AGENT node: AgentVersion ─────┘              ↓
+AGENT inline: embedded AgentSpec ─┐
+                                  ├→ WorkflowNodeRunner._invoke_agent
+AGENT version: AgentVersion ──────┘              ↓
                                       AgentRunner.invoke
                                              ↓
                       ProviderRegistry.create_model + AgentFactory.create
@@ -107,6 +112,7 @@ A draft may be incomplete. A `WorkflowVersion` must parse and validate completel
 - `tests/test_workflow_graph_factory.py`: WorkflowSpec-to-LangGraph translation.
 - `tests/test_workflow_llm_execution.py`: inline agent delegation.
 - `tests/test_workflow_agent_execution.py`: saved-version delegation.
+- `tests/test_workflow_connectors.py`: sequential deterministic capability execution.
 - `tests/test_workflow_execution.py`: input, transform, condition, and output behavior.
 - `tests/test_workflow_documents.py`: drafts and immutable versions.
 - `frontend/src/workflow.test.ts` and `frontend/src/graph.test.ts`: serialization and graph editing.

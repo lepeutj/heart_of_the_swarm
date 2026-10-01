@@ -8,8 +8,10 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 from langchain_core.tools import tool
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from heart_of_the_swarm.config import get_settings
+from heart_of_the_swarm.config import Settings, get_settings
 from heart_of_the_swarm.observability import audit_event, audit_exception
 
 _BINARY_OPERATORS = {
@@ -171,3 +173,38 @@ async def document_reader(url: str) -> str:
         output_characters=len(output),
     )
     return output
+
+
+@tool
+async def http_get_json(url: str) -> dict | list:
+    """Fetch one public HTTP endpoint and return its JSON response."""
+    response = await _fetch_public_url(url)
+    return response.json()
+
+
+def create_database_query(settings: Settings):
+    @tool
+    async def database_query(
+        connection: str,
+        statement: str,
+        parameters: dict | None = None,
+        max_rows: int = 1_000,
+    ) -> dict:
+        """Run one read-only SQL query against a configured database connection."""
+        if connection not in settings.connector_databases:
+            raise ValueError(f"unknown database connection: {connection}")
+        normalized = statement.strip().rstrip(";")
+        if not normalized.lower().startswith(("select ", "with ")) or ";" in normalized:
+            raise ValueError("database_query accepts one SELECT or WITH statement")
+        if not 1 <= max_rows <= 10_000:
+            raise ValueError("max_rows must be between 1 and 10000")
+        engine = create_async_engine(settings.connector_databases[connection])
+        try:
+            async with engine.connect() as database:
+                result = await database.execute(text(normalized), parameters or {})
+                rows = [dict(row) for row in result.mappings().fetchmany(max_rows + 1)]
+        finally:
+            await engine.dispose()
+        return {"rows": rows[:max_rows], "truncated": len(rows) > max_rows}
+
+    return database_query

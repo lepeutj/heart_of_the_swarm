@@ -8,7 +8,7 @@ from heart_of_the_swarm.observability import RuntimeCallbackHandler, audit_event
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
 from heart_of_the_swarm.telemetry import Telemetry
-from heart_of_the_swarm.tools import create_default_registry
+from heart_of_the_swarm.tools import MCPToolLoader, create_default_registry
 from heart_of_the_swarm.validator import AgentSpecValidator
 
 
@@ -17,7 +17,8 @@ class StandaloneAgentRuntime:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.tools = create_default_registry()
+        self.tools = create_default_registry(settings)
+        self.mcp_tools = MCPToolLoader(self.tools, settings.mcp_servers)
         self.providers = ProviderRegistry(settings)
         self.validator = AgentSpecValidator(self.tools, self.providers)
         self.runner = AgentRunner(self.providers, self.validator, AgentFactory(self.tools))
@@ -25,14 +26,22 @@ class StandaloneAgentRuntime:
         self.artifact: AgentArtifact | None = None
 
     async def initialize(self) -> None:
-        artifact = load_agent_artifact(self.settings.agent_artifact_dir)
-        self.validator.validate_execution(artifact.agent.spec)
-        self.artifact = artifact
-        audit_event(
-            "runtime.ready",
-            agent_id=str(artifact.agent.agent_id),
-            agent_version_id=str(artifact.agent.agent_version_id),
-        )
+        await self.mcp_tools.load()
+        try:
+            artifact = load_agent_artifact(self.settings.agent_artifact_dir)
+            self.validator.validate_execution(artifact.agent.spec)
+            self.artifact = artifact
+            audit_event(
+                "runtime.ready",
+                agent_id=str(artifact.agent.agent_id),
+                agent_version_id=str(artifact.agent.agent_version_id),
+            )
+        except Exception:
+            await self.mcp_tools.close()
+            raise
+
+    async def close(self) -> None:
+        await self.mcp_tools.close()
 
     def metadata(self) -> RuntimeMetadata:
         artifact = self._artifact()

@@ -9,14 +9,17 @@ from jsonschema.validators import validator_for
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
+from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.conditions import ConditionEvaluationError, evaluate_condition
 from heart_of_the_swarm.workflows.configs import (
     AgentNodeConfig,
     ConditionNodeConfig,
+    ConnectorNodeConfig,
+    InlineAgentSource,
     InputNodeConfig,
-    LLMNodeConfig,
     OutputNodeConfig,
     TransformNodeConfig,
+    VersionedAgentSource,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionResolver
@@ -58,6 +61,7 @@ class WorkflowNodeRunner:
         *,
         agent_runner: AgentRunner | None = None,
         agent_versions: AgentVersionResolver | None = None,
+        capabilities: ToolRegistry | None = None,
         callback: RuntimeCallbackHandler | None = None,
         workflow_run_id: str | None = None,
     ) -> None:
@@ -66,6 +70,7 @@ class WorkflowNodeRunner:
         self.workflow_run_id = workflow_run_id
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
+        self.capabilities = capabilities
 
     async def run(
         self,
@@ -90,9 +95,14 @@ class WorkflowNodeRunner:
                 result = NodeExecution(state, current_execution)
             elif isinstance(node.config, TransformNodeConfig):
                 result = NodeExecution(self._apply_transform(node, state), current_execution)
-            elif isinstance(node.config, AgentNodeConfig | LLMNodeConfig):
+            elif isinstance(node.config, AgentNodeConfig):
                 result = NodeExecution(
                     await self._invoke_agent(node, state),
+                    current_execution,
+                )
+            elif isinstance(node.config, ConnectorNodeConfig):
+                result = NodeExecution(
+                    await self._invoke_connector(node, state),
                     current_execution,
                 )
             elif isinstance(node.config, ConditionNodeConfig):
@@ -103,7 +113,8 @@ class WorkflowNodeRunner:
                 )
             elif isinstance(node.config, OutputNodeConfig):
                 output = self._resolve_output(node, state)
-                self._validate_json(node, output, self.workflow.output_schema, "output")
+                if self.workflow.output_schema is not None:
+                    self._validate_json(node, output, self.workflow.output_schema, "output")
                 result = NodeExecution(
                     state,
                     current_execution,
@@ -145,7 +156,7 @@ class WorkflowNodeRunner:
     ) -> WorkflowState:
         """Resolve one inline or saved agent and delegate its loop to AgentRunner."""
         config = node.config
-        if not isinstance(config, AgentNodeConfig | LLMNodeConfig):
+        if not isinstance(config, AgentNodeConfig):
             raise TypeError(f"Node '{node.id}' has an inconsistent agent configuration.")
         if self.agent_runner is None:
             self._raise(
@@ -156,21 +167,24 @@ class WorkflowNodeRunner:
 
         agent_input = self._resolve_agent_input(node, config, state)
 
-        if isinstance(config, LLMNodeConfig):
-            spec = config.agent
+        if isinstance(config.source, InlineAgentSource):
+            spec = config.source.agent
             system_prompt = None
         else:
+            source = config.source
+            if not isinstance(source, VersionedAgentSource):
+                raise TypeError(f"Node '{node.id}' has an inconsistent agent source.")
             if self.agent_versions is None:
                 self._raise(
                     code="workflow.execution.agent_version_resolver_unavailable",
                     message="Saved agent versions cannot be resolved by this workflow runtime.",
                     node=node,
                 )
-            resolved = await self.agent_versions.resolve(config.agent_version_id)
+            resolved = await self.agent_versions.resolve(source.agent_version_id)
             if resolved is None:
                 self._raise(
                     code="workflow.execution.agent_version_not_found",
-                    message=f"Agent version '{config.agent_version_id}' was not found.",
+                    message=f"Agent version '{source.agent_version_id}' was not found.",
                     node=node,
                 )
             spec = resolved.spec
@@ -211,7 +225,7 @@ class WorkflowNodeRunner:
     def _resolve_agent_input(
         self,
         node: ValidatedWorkflowNode,
-        config: AgentNodeConfig | LLMNodeConfig,
+        config: AgentNodeConfig,
         state: WorkflowState,
     ) -> str:
         """Resolve one legacy input or serialize named state inputs for the agent."""
@@ -255,7 +269,7 @@ class WorkflowNodeRunner:
     def _write_agent_output(
         self,
         node: ValidatedWorkflowNode,
-        config: AgentNodeConfig | LLMNodeConfig,
+        config: AgentNodeConfig,
         state: WorkflowState,
         output: Any,
     ) -> WorkflowState:
@@ -281,6 +295,58 @@ class WorkflowNodeRunner:
         for name, binding in bindings.items():
             set_path(updated, binding.to_state, values[name])
         return updated
+
+    async def _invoke_connector(
+        self,
+        node: ValidatedWorkflowNode,
+        state: WorkflowState,
+    ) -> WorkflowState:
+        """Invoke one registered capability and project its result into state."""
+        config = self._require_config(node, ConnectorNodeConfig)
+        if self.capabilities is None:
+            self._raise(
+                code="workflow.execution.capability_registry_unavailable",
+                message="Connector execution is not configured for this workflow runtime.",
+                node=node,
+            )
+        try:
+            arguments = {name: resolve_value(value, state) for name, value in config.inputs.items()}
+            capability = self.capabilities.resolve_one(config.capability_id)
+            if capability.handle_tool_error or capability.handle_validation_error:
+                raise ValueError(
+                    "connector capabilities must propagate validation and execution errors"
+                )
+            result = await capability.ainvoke(
+                arguments,
+                config={
+                    "callbacks": [self.callback] if self.callback is not None else [],
+                    "metadata": self._node_context(node),
+                },
+            )
+            if isinstance(result, Mapping):
+                missing = [name for name in config.outputs if name not in result]
+                if missing:
+                    raise ValueError(f"connector result is missing fields: {', '.join(missing)}")
+                values = {name: result[name] for name in config.outputs}
+            elif len(config.outputs) == 1:
+                values = {next(iter(config.outputs)): result}
+            else:
+                raise TypeError("multiple connector outputs require an object result")
+            updated = deepcopy(state)
+            for name, binding in config.outputs.items():
+                set_path(updated, binding.to_state, deepcopy(values[name]))
+            return updated
+        except WorkflowExecutionError:
+            raise
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.connector_failed",
+                message=(
+                    f"Connector node '{node.id}' failed while invoking '{config.capability_id}'."
+                ),
+                node=node,
+                cause=exc,
+            )
 
     def _apply_transform(
         self,

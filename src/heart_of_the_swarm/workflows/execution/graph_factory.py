@@ -8,6 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
+from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionResolver
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
@@ -69,9 +70,11 @@ class WorkflowGraphFactory:
         *,
         agent_runner: AgentRunner | None = None,
         agent_versions: AgentVersionResolver | None = None,
+        capabilities: ToolRegistry | None = None,
     ) -> None:
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
+        self.capabilities = capabilities
 
     def create(
         self,
@@ -88,6 +91,7 @@ class WorkflowGraphFactory:
             workflow,
             agent_runner=self.agent_runner,
             agent_versions=self.agent_versions,
+            capabilities=self.capabilities,
             callback=callback,
             workflow_run_id=workflow_run_id,
         )

@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +24,8 @@ class Settings(BaseSettings):
     model_catalog_ttl_seconds: int = Field(default=900, ge=30, le=86_400)
 
     database_url: str = "sqlite+aiosqlite:///./data/heart_of_the_swarm.db"
+    connector_databases: dict[str, str] = Field(default_factory=dict)
+    mcp_servers: dict[str, str] = Field(default_factory=dict)
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     max_document_bytes: int = Field(default=1_000_000, ge=1_000, le=5_000_000)
 
@@ -37,6 +40,7 @@ class Settings(BaseSettings):
     mlflow_experiment: str = "heart-of-the-swarm"
 
     agent_artifact_dir: Path = Path("/app/artifact")
+    skills_dir: Path = Path("skills")
 
     worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_lease_seconds: int = Field(default=60, ge=15, le=3_600)
@@ -48,6 +52,13 @@ class Settings(BaseSettings):
     def parse_models(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("connector_databases", "mcp_servers", mode="before")
+    @classmethod
+    def parse_json_mapping(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value)
         return value
 
     @field_validator("openai_api_key", "openrouter_api_key", mode="before")

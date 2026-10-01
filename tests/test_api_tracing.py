@@ -2,11 +2,20 @@ from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+from langchain_core.tools import tool
 
 from heart_of_the_swarm import __version__
 from heart_of_the_swarm.api import app, get_application
+from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.spec import AgentRunAccepted
+from heart_of_the_swarm.tools import RegisteredCapability, ToolRegistry
 from heart_of_the_swarm.workflows import WorkflowValidator
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Return test weather for one city."""
+    return city
 
 
 def test_health_response_has_trace_id_header() -> None:
@@ -32,6 +41,24 @@ def test_workflow_editor_build_is_served() -> None:
 
     assert response.status_code == 200
     assert '<div id="root"></div>' in response.text
+
+
+def test_markdown_skill_can_be_uploaded_and_listed(tmp_path) -> None:
+    runtime = SimpleNamespace(skills=SkillRegistry(tmp_path))
+    app.dependency_overrides[get_application] = lambda: runtime
+    try:
+        with TestClient(app) as client:
+            created = client.post(
+                "/api/v1/skills",
+                json={"name": "research", "content": "Verify multiple sources."},
+            )
+            listed = client.get("/api/v1/skills")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert created.status_code == 201
+    assert listed.json() == {"skills": ["research"]}
+    assert (tmp_path / "research.md").read_text(encoding="utf-8") == "Verify multiple sources."
 
 
 def test_api_version_comes_from_the_package() -> None:
@@ -103,8 +130,39 @@ def test_workflow_capabilities_report_runtime_support() -> None:
     nodes = {node["type"]: node for node in response.json()["nodes"]}
     assert nodes["agent"]["available"] is True
     assert "tool" not in nodes
-    assert nodes["llm"]["available"] is True
+    assert nodes["connector"]["available"] is True
     assert "properties" in nodes["agent"]["config_schema"]
+
+
+def test_tools_endpoint_exposes_dynamic_capability_provenance() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        RegisteredCapability(
+            id="get_weather",
+            tool=get_weather,
+            source="mcp",
+            origin="weather",
+        )
+    )
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(tools=registry)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/tools")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "tools": ["get_weather"],
+        "capabilities": [
+            {
+                "id": "get_weather",
+                "source": "mcp",
+                "origin": "weather",
+                "description": "Return test weather for one city.",
+            }
+        ],
+    }
 
 
 def test_workflow_validation_returns_structured_semantic_issues() -> None:
@@ -190,7 +248,7 @@ def test_workflow_validation_returns_node_context_for_schema_issues() -> None:
         "nodes": [
             {
                 "id": "llm",
-                "type": "llm",
+                "type": "agent",
                 "config": {},
             }
         ],

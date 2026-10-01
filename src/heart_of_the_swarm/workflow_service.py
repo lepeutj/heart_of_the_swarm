@@ -6,7 +6,7 @@ from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.repositories import WorkflowRepository
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflows import WorkflowSpec, WorkflowValidator
-from heart_of_the_swarm.workflows.configs import LLMNodeConfig
+from heart_of_the_swarm.workflows.configs import AgentNodeConfig, InlineAgentSource
 from heart_of_the_swarm.workflows.documents import (
     WorkflowDraftDetail,
     WorkflowDraftSave,
@@ -59,8 +59,10 @@ class WorkflowService:
             raise ValueError("workflow draft is not a valid WorkflowSpec") from exc
         validated = self.validator.validate(spec)
         for node in validated.nodes:
-            if isinstance(node.config, LLMNodeConfig):
-                await self.agent_validator.validate(node.config.agent)
+            if isinstance(node.config, AgentNodeConfig) and isinstance(
+                node.config.source, InlineAgentSource
+            ):
+                await self.agent_validator.validate(node.config.source.agent)
         async with self.database.session() as session:
             return await WorkflowRepository(session).create_version(
                 str(workflow_id), expected_revision=draft.revision

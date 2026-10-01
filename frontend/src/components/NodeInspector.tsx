@@ -8,6 +8,7 @@ import { JsonEditor } from "./JsonEditor";
 interface NodeInspectorProps {
   node: EditorNode;
   toolNames: string[];
+  skillNames: string[];
   providerNames: string[];
   agentOptions: AgentOption[];
   canDetach: boolean;
@@ -100,49 +101,99 @@ function ModelEditor({
 
 function AgentEditor({
   config,
+  toolNames,
+  skillNames,
+  providerNames,
   agentOptions,
   onChange,
 }: {
   config: JsonObject;
+  toolNames: string[];
+  skillNames: string[];
+  providerNames: string[];
   agentOptions: AgentOption[];
   onChange: (config: JsonObject) => void;
 }) {
+  const source = asObject(config.source);
+  const sourceType = asString(source.type, "inline");
   return (
     <div className="typed-editor">
-      <p className="field-help">Run an immutable agent version created in the agent workspace.</p>
       <label>
-        Saved agent
+        Agent source
         <select
-          value={asString(config.agent_version_id)}
-          onChange={(event) => onChange({ ...config, agent_version_id: event.target.value })}
+          value={sourceType}
+          onChange={(event) => onChange({
+            ...config,
+            source: event.target.value === "version"
+              ? { type: "version", agent_version_id: "" }
+              : {
+                  type: "inline",
+                  agent: {
+                    name: "NewAgent",
+                    goal: "Complete the assigned task",
+                    instructions: "Return a clear and accurate answer.",
+                    model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
+                    tools: [],
+                    skills: [],
+                  },
+                },
+          })}
         >
-          <option value="">Select an agent version</option>
-          {agentOptions.map((agent) => (
-            <option key={agent.version_id} value={agent.version_id}>
-              {agent.name} · v{agent.version}
-            </option>
-          ))}
+          <option value="inline">Inline AgentSpec</option>
+          <option value="version">Saved AgentVersion</option>
         </select>
       </label>
-      <AgentDataFlowEditor config={config} onChange={onChange} />
+      {sourceType === "version" ? (
+        <label>
+          Saved agent
+          <select
+            value={asString(source.agent_version_id)}
+            onChange={(event) => onChange({
+              ...config,
+              source: { type: "version", agent_version_id: event.target.value },
+            })}
+          >
+            <option value="">Select an agent version</option>
+            {agentOptions.map((agent) => (
+              <option key={agent.version_id} value={agent.version_id}>
+                {agent.name} · v{agent.version}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <InlineAgentEditor
+          config={config}
+          toolNames={toolNames}
+          skillNames={skillNames}
+          providerNames={providerNames}
+          onChange={onChange}
+        />
+      )}
+      {sourceType === "version" && <AgentDataFlowEditor config={config} onChange={onChange} />}
     </div>
   );
 }
 
-function LlmEditor({ config, toolNames, providerNames, onChange }: {
+function InlineAgentEditor({ config, toolNames, skillNames, providerNames, onChange }: {
   config: JsonObject;
   toolNames: string[];
+  skillNames: string[];
   providerNames: string[];
   onChange: (config: JsonObject) => void;
 }) {
-  const agent = asObject(config.agent);
+  const source = asObject(config.source);
+  const agent = asObject(source.agent);
   const model = asObject(agent.model);
   const selectedTools = Array.isArray(agent.tools)
     ? agent.tools.filter((tool): tool is string => typeof tool === "string")
     : [];
 
   function updateAgent(field: string, value: unknown) {
-    onChange({ ...config, agent: { ...agent, [field]: value } });
+    onChange({
+      ...config,
+      source: { type: "inline", agent: { ...agent, [field]: value } },
+    });
   }
 
   function updateModel(field: string, value: unknown) {
@@ -151,7 +202,7 @@ function LlmEditor({ config, toolNames, providerNames, onChange }: {
 
   return (
     <div className="typed-editor">
-      <p className="field-help">This visual LLM is compiled into a LangChain agent that may call its allowed tools.</p>
+      <p className="field-help">This inline AgentSpec is executed by LangChain and may call its allowed tools.</p>
       <label>Name<input value={asString(agent.name)} onChange={(event) => updateAgent("name", event.target.value)} /></label>
       <label>Goal<textarea value={asString(agent.goal)} onChange={(event) => updateAgent("goal", event.target.value)} /></label>
       <label>Instructions<textarea value={asString(agent.instructions)} onChange={(event) => updateAgent("instructions", event.target.value)} /></label>
@@ -176,6 +227,29 @@ function LlmEditor({ config, toolNames, providerNames, onChange }: {
             </label>
           ))}
         </div>
+      </fieldset>
+      <fieldset>
+        <legend>Skills</legend>
+        {skillNames.map((skill) => {
+          const selected = Array.isArray(agent.skills)
+            ? agent.skills.filter((name): name is string => typeof name === "string")
+            : [];
+          return (
+            <label key={skill}>
+              <input
+                type="checkbox"
+                checked={selected.includes(skill)}
+                onChange={(event) => updateAgent(
+                  "skills",
+                  event.target.checked
+                    ? [...selected, skill]
+                    : selected.filter((name) => name !== skill),
+                )}
+              />
+              {skill}
+            </label>
+          );
+        })}
       </fieldset>
       <AgentDataFlowEditor config={config} onChange={onChange} />
     </div>
@@ -286,9 +360,41 @@ function TransformEditor({ config, onChange }: {
   );
 }
 
+function ConnectorEditor({ config, capabilityNames, onChange }: {
+  config: JsonObject;
+  capabilityNames: string[];
+  onChange: (config: JsonObject) => void;
+}) {
+  return (
+    <div className="typed-editor">
+      <p className="field-help">Invoke one registered capability exactly once.</p>
+      <label>
+        Capability
+        <select
+          value={asString(config.capability_id)}
+          onChange={(event) => onChange({ ...config, capability_id: event.target.value })}
+        >
+          {capabilityNames.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>
+      <JsonEditor
+        label="Inputs (literals or state references)"
+        value={asObject(config.inputs)}
+        onApply={(value) => value && onChange({ ...config, inputs: value })}
+      />
+      <JsonEditor
+        label="Outputs (result field to state path)"
+        value={asObject(config.outputs)}
+        onApply={(value) => value && onChange({ ...config, outputs: value })}
+      />
+    </div>
+  );
+}
+
 export function NodeInspector({
   node,
   toolNames,
+  skillNames,
   providerNames,
   agentOptions,
   canDetach,
@@ -306,10 +412,21 @@ export function NodeInspector({
       <label>Name<input value={node.data.label} onChange={(event) => onChange({ label: event.target.value })} /></label>
 
       {node.data.nodeType === "agent" && (
-        <AgentEditor config={config} agentOptions={agentOptions} onChange={(next) => onChange({ config: next })} />
+        <AgentEditor
+          config={config}
+          toolNames={toolNames}
+          skillNames={skillNames}
+          providerNames={providerNames}
+          agentOptions={agentOptions}
+          onChange={(next) => onChange({ config: next })}
+        />
       )}
-      {node.data.nodeType === "llm" && (
-        <LlmEditor config={config} toolNames={toolNames} providerNames={providerNames} onChange={(next) => onChange({ config: next })} />
+      {node.data.nodeType === "connector" && (
+        <ConnectorEditor
+          config={config}
+          capabilityNames={toolNames}
+          onChange={(next) => onChange({ config: next })}
+        />
       )}
       {node.data.nodeType === "transform" && (
         <TransformEditor config={config} onChange={(next) => onChange({ config: next })} />
@@ -334,7 +451,7 @@ export function NodeInspector({
       </details>
 
       <div className="node-actions">
-        {node.data.nodeType === "llm" && (
+        {node.data.nodeType === "agent" && asObject(config.source).type === "inline" && (
           <button type="button" onClick={onSaveAsAgent}>Save as agent</button>
         )}
         <button type="button" disabled={!canDetach} onClick={onDetach}>Detach and reconnect</button>

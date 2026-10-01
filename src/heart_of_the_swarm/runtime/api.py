@@ -19,7 +19,12 @@ def create_app(
         runtime = factory()
         await runtime.initialize()
         app.state.runtime = runtime
-        yield
+        try:
+            yield
+        finally:
+            close = getattr(runtime, "close", None)
+            if close is not None:
+                await close()
 
     app = FastAPI(
         title="Heart of the Swarm Agent Runtime",

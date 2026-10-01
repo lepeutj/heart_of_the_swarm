@@ -2,6 +2,7 @@ import logging
 
 from heart_of_the_swarm.observability import audit_event
 from heart_of_the_swarm.providers import ProviderRegistry
+from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.spec import AgentSpec
 from heart_of_the_swarm.tools import ToolRegistry
 
@@ -11,15 +12,25 @@ class SpecValidationError(ValueError):
 
 
 class AgentSpecValidator:
-    def __init__(self, tools: ToolRegistry, providers: ProviderRegistry) -> None:
+    def __init__(
+        self,
+        tools: ToolRegistry,
+        providers: ProviderRegistry,
+        skills: SkillRegistry | None = None,
+    ) -> None:
         self.tools = tools
         self.providers = providers
+        self.skills = skills
 
     async def errors(self, spec: AgentSpec) -> list[str]:
         errors = []
         unknown = sorted(set(spec.tools) - set(self.tools.names))
         if unknown:
             errors.append(f"unknown tools: {', '.join(unknown)}")
+        if self.skills is not None:
+            unknown_skills = sorted(set(spec.skills) - set(self.skills.names))
+            if unknown_skills:
+                errors.append(f"unknown skills: {', '.join(unknown_skills)}")
         errors.extend(await self.providers.validate(spec))
         return errors
 

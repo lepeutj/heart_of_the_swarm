@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -20,6 +20,14 @@ DataFieldName = Annotated[
     str,
     StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_]*$", max_length=64),
 ]
+
+
+def _validate_distinct_destinations(destinations: list[StatePath]) -> None:
+    """Reject writes whose state paths are equal or nested inside one another."""
+    for index, path in enumerate(destinations):
+        for other in destinations[index + 1 :]:
+            if path == other or path.startswith(f"{other}.") or other.startswith(f"{path}."):
+                raise ValueError("output destinations must not overlap")
 
 
 class NodeConfig(BaseModel):
@@ -60,24 +68,52 @@ class AgentDataFlowConfig(NodeConfig):
         if self.outputs is not None and len(self.outputs) > 1 and self.response_schema is None:
             raise ValueError("multiple outputs require response_schema")
         if self.outputs is not None:
-            destinations = [binding.to_state for binding in self.outputs.values()]
-            for index, path in enumerate(destinations):
-                for other in destinations[index + 1 :]:
-                    if (
-                        path == other
-                        or path.startswith(f"{other}.")
-                        or other.startswith(f"{path}.")
-                    ):
-                        raise ValueError("output destinations must not overlap")
+            _validate_distinct_destinations([binding.to_state for binding in self.outputs.values()])
         return self
 
 
-class AgentNodeConfig(AgentDataFlowConfig):
+class InlineAgentSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["inline"]
+    agent: AgentSpec
+
+
+class VersionedAgentSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["version"]
     agent_version_id: UUID
 
 
-class LLMNodeConfig(AgentDataFlowConfig):
-    agent: AgentSpec
+class AgentNodeConfig(AgentDataFlowConfig):
+    source: InlineAgentSource | VersionedAgentSource
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_source(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "source" in value:
+            return value
+        migrated = dict(value)
+        if "agent" in migrated:
+            migrated["source"] = {"type": "inline", "agent": migrated.pop("agent")}
+        elif "agent_version_id" in migrated:
+            migrated["source"] = {
+                "type": "version",
+                "agent_version_id": migrated.pop("agent_version_id"),
+            }
+        return migrated
+
+
+class ConnectorNodeConfig(NodeConfig):
+    capability_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]*$", max_length=100)
+    inputs: dict[DataFieldName, Any] = Field(default_factory=dict, max_length=50)
+    outputs: dict[DataFieldName, OutputBinding] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def valid_outputs(self) -> "ConnectorNodeConfig":
+        _validate_distinct_destinations([binding.to_state for binding in self.outputs.values()])
+        return self
 
 
 class ConditionNodeConfig(NodeConfig):
@@ -111,7 +147,7 @@ class OutputNodeConfig(NodeConfig):
 WorkflowNodeConfig = (
     InputNodeConfig
     | AgentNodeConfig
-    | LLMNodeConfig
+    | ConnectorNodeConfig
     | ConditionNodeConfig
     | TransformNodeConfig
     | OutputNodeConfig
@@ -120,7 +156,8 @@ WorkflowNodeConfig = (
 NODE_CONFIG_TYPES: dict[NodeType, type[NodeConfig]] = {
     NodeType.INPUT: InputNodeConfig,
     NodeType.AGENT: AgentNodeConfig,
-    NodeType.LLM: LLMNodeConfig,
+    NodeType.LLM: AgentNodeConfig,
+    NodeType.CONNECTOR: ConnectorNodeConfig,
     NodeType.CONDITION: ConditionNodeConfig,
     NodeType.TRANSFORM: TransformNodeConfig,
     NodeType.OUTPUT: OutputNodeConfig,

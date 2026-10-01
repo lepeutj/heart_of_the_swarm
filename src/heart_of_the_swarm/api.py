@@ -20,6 +20,7 @@ from heart_of_the_swarm.observability import (
     trace_context,
 )
 from heart_of_the_swarm.repositories import WorkflowRevisionConflict
+from heart_of_the_swarm.skills import SkillDocument
 from heart_of_the_swarm.spec import (
     AgentDetail,
     AgentRunAccepted,
@@ -162,8 +163,33 @@ async def models(runtime: Runtime, provider: str = Query(...)) -> list[ModelDesc
 
 
 @app.get("/api/v1/tools")
-async def tools(runtime: Runtime) -> dict[str, tuple[str, ...]]:
-    return {"tools": runtime.tools.names}
+async def tools(runtime: Runtime) -> dict[str, object]:
+    return {
+        "tools": runtime.tools.names,
+        "capabilities": [
+            {
+                "id": capability.id,
+                "source": capability.source,
+                "origin": capability.origin,
+                "description": capability.tool.description,
+            }
+            for capability in runtime.tools.capabilities
+        ],
+    }
+
+
+@app.get("/api/v1/skills")
+async def skills(runtime: Runtime) -> dict[str, tuple[str, ...]]:
+    return {"skills": runtime.skills.names}
+
+
+@app.post("/api/v1/skills", status_code=201)
+async def upload_skill(skill: SkillDocument, runtime: Runtime) -> SkillDocument:
+    try:
+        runtime.skills.save(skill)
+    except ValueError as exc:
+        raise api_error(exc, 409) from exc
+    return skill
 
 
 @app.get("/api/v1/workflows/capabilities", response_model=WorkflowCapabilities)

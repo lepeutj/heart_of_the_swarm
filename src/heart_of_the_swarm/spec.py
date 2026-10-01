@@ -19,14 +19,25 @@ class AgentDraft(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
     goal: str = Field(min_length=1, max_length=500)
     tools: list[str] = Field(default_factory=list, max_length=20)
+    skills: list[str] = Field(default_factory=list, max_length=20)
     instructions: str = Field(min_length=1, max_length=4_000)
 
-    @field_validator("tools")
+    @field_validator("tools", "skills")
     @classmethod
-    def tools_are_unique(cls, tools: list[str]) -> list[str]:
-        if len(tools) != len(set(tools)):
-            raise ValueError("tools must not contain duplicates")
-        return tools
+    def names_are_unique(cls, names: list[str]) -> list[str]:
+        if len(names) != len(set(names)):
+            raise ValueError("names must not contain duplicates")
+        return names
+
+    @field_validator("skills")
+    @classmethod
+    def skill_names_are_safe(cls, skills: list[str]) -> list[str]:
+        for skill in skills:
+            if not skill or not skill.replace("_", "").replace("-", "").isalnum():
+                raise ValueError(
+                    "skill names may contain only letters, numbers, hyphens, and underscores"
+                )
+        return skills
 
 
 class AgentSpec(AgentDraft):

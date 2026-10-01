@@ -1,5 +1,5 @@
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from jsonschema.exceptions import SchemaError
@@ -9,7 +9,8 @@ from pydantic import BaseModel, ValidationError
 from heart_of_the_swarm.workflows.configs import (
     NODE_CONFIG_TYPES,
     AgentNodeConfig,
-    LLMNodeConfig,
+    ConnectorNodeConfig,
+    InlineAgentSource,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
@@ -33,9 +34,25 @@ from heart_of_the_swarm.workflows.validation.graph import (
 
 
 class WorkflowValidator:
-    def __init__(self, tool_names: Iterable[str], provider_names: Iterable[str]) -> None:
-        self.tool_names = frozenset(tool_names)
+    def __init__(
+        self,
+        tool_names: Iterable[str] | Callable[[], Iterable[str]],
+        provider_names: Iterable[str],
+        skill_names: Iterable[str] | Callable[[], Iterable[str]] = (),
+    ) -> None:
+        self._tool_names = tool_names
         self.provider_names = frozenset(provider_names)
+        self._skill_names = skill_names
+
+    @property
+    def tool_names(self) -> frozenset[str]:
+        names = self._tool_names() if callable(self._tool_names) else self._tool_names
+        return frozenset(names)
+
+    @property
+    def skill_names(self) -> frozenset[str]:
+        names = self._skill_names() if callable(self._skill_names) else self._skill_names
+        return frozenset(names)
 
     def validate(self, spec: WorkflowSpec) -> ValidatedWorkflowSpec:
         issues: list[WorkflowValidationIssue] = []
@@ -303,29 +320,50 @@ class WorkflowValidator:
                 )
             )
         issues.extend(_schema_errors(spec.input_schema, "input_schema"))
-        issues.extend(_schema_errors(spec.output_schema, "output_schema"))
+        if spec.output_schema is not None:
+            issues.extend(_schema_errors(spec.output_schema, "output_schema"))
         for node in nodes:
             config = node.config
-            if isinstance(config, LLMNodeConfig):
-                issues.extend(self._provider_errors(node.id, config.agent.model.provider))
-                for tool in config.agent.tools:
-                    if tool not in self.tool_names:
-                        issues.append(
-                            _issue(
-                                "workflow.tool.unknown",
-                                f"Tool '{tool}' is not registered.",
-                                node.id,
-                                "config.tools",
+            if isinstance(config, AgentNodeConfig):
+                if isinstance(config.source, InlineAgentSource):
+                    agent = config.source.agent
+                    issues.extend(self._provider_errors(node.id, agent.model.provider))
+                    for tool in agent.tools:
+                        if tool not in self.tool_names:
+                            issues.append(
+                                _issue(
+                                    "workflow.tool.unknown",
+                                    f"Tool '{tool}' is not registered.",
+                                    node.id,
+                                    "config.source.agent.tools",
+                                )
                             )
+                    for skill in agent.skills:
+                        if skill not in self.skill_names:
+                            issues.append(
+                                _issue(
+                                    "workflow.skill.unknown",
+                                    f"Skill '{skill}' is not registered.",
+                                    node.id,
+                                    "config.source.agent.skills",
+                                )
+                            )
+                if config.response_schema is not None:
+                    issues.extend(
+                        _response_schema_errors(
+                            node.id, config.response_schema, config.outputs or {}
                         )
-            elif isinstance(config, AgentNodeConfig):
-                pass
-            else:
-                continue
-            if config.response_schema is not None:
-                issues.extend(
-                    _response_schema_errors(node.id, config.response_schema, config.outputs or {})
-                )
+                    )
+            elif isinstance(config, ConnectorNodeConfig):
+                if config.capability_id not in self.tool_names:
+                    issues.append(
+                        _issue(
+                            "workflow.connector.unknown",
+                            f"Capability '{config.capability_id}' is not registered.",
+                            node.id,
+                            "config.capability_id",
+                        )
+                    )
         return issues
 
     def _provider_errors(self, node_id: str, provider: str) -> list[WorkflowValidationIssue]:
@@ -336,7 +374,7 @@ class WorkflowValidator:
                 "workflow.provider.unknown",
                 f"Provider '{provider}' is not registered.",
                 node_id,
-                "config.agent.model.provider",
+                "config.source.agent.model.provider",
             )
         ]
 

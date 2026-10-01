@@ -8,8 +8,9 @@ from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import configure_audit_logging
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.service import AgentService
+from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.telemetry import Telemetry
-from heart_of_the_swarm.tools import create_default_registry
+from heart_of_the_swarm.tools import MCPToolLoader, create_default_registry
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflow_service import WorkflowService
 from heart_of_the_swarm.workflows import WorkflowValidator
@@ -27,14 +28,18 @@ class Application:
             self.settings.log_max_bytes,
             self.settings.log_backup_count,
         )
-        self.tools = create_default_registry()
+        self.tools = create_default_registry(self.settings)
+        self.mcp_tools = MCPToolLoader(self.tools, self.settings.mcp_servers)
+        self.skills = SkillRegistry(self.settings.skills_dir)
         self.providers = ProviderRegistry(self.settings)
-        self.validator = AgentSpecValidator(self.tools, self.providers)
+        self.validator = AgentSpecValidator(self.tools, self.providers, self.skills)
         self.database = Database(self.settings.database_url)
         self.telemetry = Telemetry(self.settings)
-        self.factory = AgentFactory(self.tools)
+        self.factory = AgentFactory(self.tools, self.skills)
         self.agent_runner = AgentRunner(self.providers, self.validator, self.factory)
-        self.workflow_validator = WorkflowValidator(self.tools.names, self.providers.names)
+        self.workflow_validator = WorkflowValidator(
+            lambda: self.tools.names, self.providers.names, lambda: self.skills.names
+        )
         self.workflows = WorkflowService(self.database, self.workflow_validator, self.validator)
         self.agents = AgentService(
             self.settings,
@@ -43,6 +48,7 @@ class Application:
             self.validator,
             self.database,
             self.telemetry,
+            self.skills,
         )
         self.runs = RunService(self.database, self.validator)
         self.executor = AgentExecutor(
@@ -54,6 +60,12 @@ class Application:
 
     async def initialize(self) -> None:
         await self.database.initialize()
+        try:
+            await self.mcp_tools.load()
+        except Exception:
+            await self.database.close()
+            raise
 
     async def close(self) -> None:
+        await self.mcp_tools.close()
         await self.database.close()

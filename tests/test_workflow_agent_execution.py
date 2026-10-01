@@ -43,7 +43,7 @@ def validated_workflow():
                 "type": "agent",
                 "name": "Agent",
                 "config": {
-                    "agent_version_id": str(VERSION_ID),
+                    "source": {"type": "version", "agent_version_id": str(VERSION_ID)},
                     "input_path": "$.request",
                     "output_path": "$.answer",
                 },

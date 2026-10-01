@@ -62,15 +62,18 @@ async def test_structured_agent_workflow_runs_end_to_end() -> None:
                 {"id": "input", "type": "input", "name": "Input", "config": {}},
                 {
                     "id": "research",
-                    "type": "llm",
+                    "type": "agent",
                     "name": "Research",
                     "config": {
-                        "agent": {
-                            "name": "ResearchAgent",
-                            "goal": "Answer one research question",
-                            "instructions": "Use the supplied context and report confidence.",
-                            "model": {"provider": "test", "model_id": "fake"},
-                            "tools": [],
+                        "source": {
+                            "type": "inline",
+                            "agent": {
+                                "name": "ResearchAgent",
+                                "goal": "Answer one research question",
+                                "instructions": "Use the supplied context and report confidence.",
+                                "model": {"provider": "test", "model_id": "fake"},
+                                "tools": [],
+                            },
                         },
                         "inputs": {
                             "question": {"from_state": "$.question"},

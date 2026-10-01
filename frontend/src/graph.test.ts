@@ -13,7 +13,7 @@ function node(id: string, x: number, y: number, nodeType: EditorNode["data"]["no
 
 describe("workflow graph editing", () => {
   it("finds and splits the edge under an unconnected node", () => {
-    const nodes = [node("a", 0, 0, "input"), node("b", 400, 0, "output"), node("new", 200, 0, "llm")];
+    const nodes = [node("a", 0, 0, "input"), node("b", 400, 0, "output"), node("new", 200, 0, "agent")];
     const edges: EditorEdge[] = [{ id: "a-b", source: "a", target: "b", data: { condition: { path: "$.ok" } } }];
 
     expect(findInsertionEdge(nodes[2], nodes, edges)?.id).toBe("a-b");

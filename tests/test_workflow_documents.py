@@ -19,15 +19,18 @@ def draft(*, inline_agent: bool = False, valid: bool = True) -> WorkflowDraftSav
         middle = [
             {
                 "id": "research",
-                "type": "llm",
+                "type": "agent",
                 "name": "Research",
                 "config": {
-                    "agent": {
-                        "name": "ResearchAgent",
-                        "goal": "Research",
-                        "instructions": "Use available tools.",
-                        "model": {"provider": "test", "model_id": "test-model"},
-                        "tools": ["web_search"],
+                    "source": {
+                        "type": "inline",
+                        "agent": {
+                            "name": "ResearchAgent",
+                            "goal": "Research",
+                            "instructions": "Use available tools.",
+                            "model": {"provider": "test", "model_id": "test-model"},
+                            "tools": ["web_search"],
+                        },
                     },
                     "input_path": "$.request",
                     "output_path": "$.answer",
@@ -109,7 +112,7 @@ async def test_structurally_incomplete_agent_node_can_be_saved_but_not_published
             "type": "agent",
             "name": "Agent",
             "config": {
-                "agent_version_id": "",
+                "source": {"type": "version", "agent_version_id": ""},
                 "input_path": "$.request",
                 "output_path": "$.answer",
             },
@@ -118,7 +121,7 @@ async def test_structurally_incomplete_agent_node_can_be_saved_but_not_published
     try:
         saved = await service.save(WORKFLOW_ID, incomplete)
 
-        assert saved.spec["nodes"][1]["config"]["agent_version_id"] == ""
+        assert saved.spec["nodes"][1]["config"]["source"]["agent_version_id"] == ""
         with pytest.raises(WorkflowValidationError) as error:
             await service.create_version(saved.id)
         assert "workflow.node.invalid_config" in {issue.code for issue in error.value.issues}

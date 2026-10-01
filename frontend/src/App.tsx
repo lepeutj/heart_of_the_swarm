@@ -15,10 +15,12 @@ import {
   loadAgents,
   loadCapabilities,
   loadProviderNames,
+  loadSkillNames,
   loadToolNames,
   loadWorkflow,
   loadWorkflows,
   saveWorkflow,
+  uploadSkill,
   validateWorkflow,
   type AgentOption,
   type ValidationIssue,
@@ -36,6 +38,7 @@ import {
 } from "./graph";
 import {
   defaultConfig,
+  normalizeLoadedNode,
   toWorkflowSpec,
   type EditorEdge,
   type EditorNode,
@@ -70,6 +73,7 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<EditorEdge>(initialEdges);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof loadCapabilities>> | null>(null);
   const [toolNames, setToolNames] = useState<string[]>([]);
+  const [skillNames, setSkillNames] = useState<string[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
   const [savedWorkflows, setSavedWorkflows] = useState<WorkflowSummary[]>([]);
@@ -89,7 +93,7 @@ export default function App() {
     properties: { request: { type: "string" } },
     required: ["request"],
   });
-  const [outputSchema, setOutputSchema] = useState<JsonObject>({
+  const [outputSchema, setOutputSchema] = useState<JsonObject | null>({
     type: "object",
     properties: { result: { type: "string" } },
     required: ["result"],
@@ -101,13 +105,15 @@ export default function App() {
     Promise.all([
       loadCapabilities(),
       loadToolNames(),
+      loadSkillNames(),
       loadProviderNames(),
       loadAgents(),
       loadWorkflows(),
     ])
-      .then(([catalogue, tools, providers, agents, workflows]) => {
+      .then(([catalogue, tools, skills, providers, agents, workflows]) => {
         setCapabilities(catalogue);
         setToolNames(tools);
+        setSkillNames(skills);
         setProviderNames(providers);
         setAgentOptions(agents);
         setSavedWorkflows(workflows);
@@ -299,9 +305,11 @@ export default function App() {
     }
   }
 
-  async function saveSelectedLlmAsAgent() {
-    if (!selectedNode || selectedNode.data.nodeType !== "llm") return;
-    const agent = selectedNode.data.config.agent as AgentSpec | undefined;
+  async function saveSelectedInlineAgent() {
+    if (!selectedNode || selectedNode.data.nodeType !== "agent") return;
+    const source = selectedNode.data.config.source as JsonObject | undefined;
+    if (source?.type !== "inline") return;
+    const agent = source.agent as AgentSpec | undefined;
     if (!agent) return;
     setStatus("Saving agent…");
     try {
@@ -310,7 +318,7 @@ export default function App() {
       updateSelectedNode({
         nodeType: "agent",
         config: {
-          agent_version_id: saved.version_id,
+          source: { type: "version", agent_version_id: saved.version_id },
           ...(selectedNode.data.config.input_path
             ? { input_path: selectedNode.data.config.input_path }
             : { inputs: selectedNode.data.config.inputs }),
@@ -339,11 +347,18 @@ export default function App() {
       setEntrypoint(saved.spec.entrypoint);
       setInputSchema(saved.spec.input_schema);
       setOutputSchema(saved.spec.output_schema);
-      setNodes(saved.spec.nodes.map((node, index) => ({
-        id: node.id,
-        position: saved.editor.positions[node.id] ?? { x: 120 + index * 180, y: 160 },
-        data: { label: node.name, nodeType: node.type, config: node.config },
-      })));
+      setNodes(saved.spec.nodes.map((node, index) => {
+        const normalized = normalizeLoadedNode(node);
+        return {
+          id: node.id,
+          position: saved.editor.positions[node.id] ?? { x: 120 + index * 180, y: 160 },
+          data: {
+            label: node.name,
+            nodeType: normalized.type,
+            config: normalized.config,
+          },
+        };
+      }));
       setEdges(saved.spec.edges.map((edge) => ({
         id: crypto.randomUUID(),
         source: edge.source,
@@ -431,7 +446,31 @@ export default function App() {
             </select>
           </label>
           <JsonEditor label="Input schema" value={inputSchema} onApply={(value) => value && setInputSchema(value)} />
-          <JsonEditor label="Output schema" value={outputSchema} onApply={(value) => value && setOutputSchema(value)} />
+          <JsonEditor
+            label="Output schema (optional)"
+            value={outputSchema ?? {}}
+            onApply={(value) => value && setOutputSchema(value)}
+          />
+          <button type="button" onClick={() => setOutputSchema(null)}>Use untyped outputs</button>
+          <label>
+            Upload Skill (.md)
+            <input
+              type="file"
+              accept=".md,text/markdown"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                const name = file.name.replace(/\.md$/i, "");
+                try {
+                  await uploadSkill(name, await file.text());
+                  setSkillNames(await loadSkillNames());
+                  setStatus(`Skill ${name} uploaded`);
+                } catch (error) {
+                  setStatus(error instanceof Error ? error.message : "Skill upload failed");
+                }
+              }}
+            />
+          </label>
 
           <h2>Nodes</h2>
           <div className="node-palette">
@@ -489,13 +528,14 @@ export default function App() {
             <NodeInspector
               node={selectedNode}
               toolNames={toolNames}
+              skillNames={skillNames}
               providerNames={providerNames}
               agentOptions={agentOptions}
               canDetach={canDetachSelectedNode}
               onChange={updateSelectedNode}
               onDetach={detachSelectedNode}
               onDelete={deleteSelectedNode}
-              onSaveAsAgent={saveSelectedLlmAsAgent}
+              onSaveAsAgent={saveSelectedInlineAgent}
             />
           )}
           {selectedEdge && (

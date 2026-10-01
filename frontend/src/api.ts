@@ -43,6 +43,7 @@ export type AgentSpec = {
   instructions: string;
   model: Record<string, unknown>;
   tools: string[];
+  skills: string[];
 };
 
 export interface WorkflowSummary {
@@ -77,6 +78,18 @@ export function loadCapabilities(): Promise<WorkflowCapabilities> {
 export async function loadToolNames(): Promise<string[]> {
   const result = await request<{ tools: string[] }>("/api/v1/tools");
   return result.tools;
+}
+
+export async function loadSkillNames(): Promise<string[]> {
+  const result = await request<{ skills: string[] }>("/api/v1/skills");
+  return result.skills;
+}
+
+export function uploadSkill(name: string, content: string): Promise<{ name: string }> {
+  return request("/api/v1/skills", {
+    method: "POST",
+    body: JSON.stringify({ name, content }),
+  });
 }
 
 export async function loadProviderNames(): Promise<string[]> {

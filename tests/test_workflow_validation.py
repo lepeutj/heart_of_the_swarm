@@ -12,7 +12,6 @@ from heart_of_the_swarm.workflows.configs import (
     AgentNodeConfig,
     ConditionNodeConfig,
     InputNodeConfig,
-    LLMNodeConfig,
     OutputNodeConfig,
     TransformNodeConfig,
 )
@@ -46,15 +45,18 @@ def workflow_data() -> dict:
             },
             {
                 "id": "summarize",
-                "type": "llm",
+                "type": "agent",
                 "name": "Summarize",
                 "config": {
-                    "agent": {
-                        "name": "ResearchAgent",
-                        "goal": "Research and summarize",
-                        "instructions": "Use the available sources.",
-                        "model": {"provider": "test", "model_id": "test-model"},
-                        "tools": ["web_search"],
+                    "source": {
+                        "type": "inline",
+                        "agent": {
+                            "name": "ResearchAgent",
+                            "goal": "Research and summarize",
+                            "instructions": "Use the available sources.",
+                            "model": {"provider": "test", "model_id": "test-model"},
+                            "tools": ["web_search"],
+                        },
                     },
                     "input_path": "$.request_copy",
                     "output_path": "$.summary",
@@ -65,7 +67,10 @@ def workflow_data() -> dict:
                 "type": "agent",
                 "name": "Research",
                 "config": {
-                    "agent_version_id": "f5427628-42a7-4698-9e8c-7489da8a7a41",
+                    "source": {
+                        "type": "version",
+                        "agent_version_id": "f5427628-42a7-4698-9e8c-7489da8a7a41",
+                    },
                     "input_path": "$.summary",
                     "output_path": "$.verification",
                 },
@@ -127,7 +132,7 @@ def test_valid_workflow_is_converted_to_typed_node_configs() -> None:
     expected = [
         InputNodeConfig,
         TransformNodeConfig,
-        LLMNodeConfig,
+        AgentNodeConfig,
         AgentNodeConfig,
         ConditionNodeConfig,
         OutputNodeConfig,
@@ -222,7 +227,7 @@ def test_entrypoint_must_be_an_input_node() -> None:
 
 def test_unknown_inline_agent_tool_and_provider_are_rejected() -> None:
     data = workflow_data()
-    agent = data["nodes"][2]["config"]["agent"]
+    agent = data["nodes"][2]["config"]["source"]["agent"]
     agent["model"]["provider"] = "unknown"
     agent["tools"] = ["shell"]
     codes = issue_codes(data)
@@ -237,7 +242,43 @@ def test_saved_agent_does_not_duplicate_agent_configuration() -> None:
     config = workflow.nodes[3].config
 
     assert isinstance(config, AgentNodeConfig)
-    assert config.agent_version_id == UUID("f5427628-42a7-4698-9e8c-7489da8a7a41")
+    assert config.source.agent_version_id == UUID("f5427628-42a7-4698-9e8c-7489da8a7a41")
+
+
+def test_legacy_saved_agent_configuration_is_migrated() -> None:
+    data = workflow_data()
+    config = data["nodes"][3]["config"]
+    version_id = config.pop("source")["agent_version_id"]
+    config["agent_version_id"] = version_id
+
+    workflow = validator().validate(WorkflowSpec.model_validate(data))
+    migrated = workflow.nodes[3].config
+
+    assert isinstance(migrated, AgentNodeConfig)
+    assert migrated.source.agent_version_id == UUID(version_id)
+
+
+def test_connector_output_destinations_must_not_overlap() -> None:
+    data = workflow_data()
+    data["nodes"].insert(
+        1,
+        {
+            "id": "connector",
+            "type": "connector",
+            "name": "Connector",
+            "config": {
+                "capability_id": "calculator",
+                "outputs": {
+                    "result": {"to_state": "$.data"},
+                    "details": {"to_state": "$.data.details"},
+                },
+            },
+        },
+    )
+    data["edges"][0] = {"source": "input", "target": "connector"}
+    data["edges"].insert(1, {"source": "connector", "target": "prepare"})
+
+    assert "workflow.node.invalid_config" in issue_codes(data)
 
 
 def test_invalid_json_schema_is_rejected() -> None:

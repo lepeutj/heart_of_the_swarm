@@ -25,15 +25,18 @@ def workflow_data() -> dict[str, Any]:
             {"id": "input", "type": "input", "name": "Input", "config": {}},
             {
                 "id": "research",
-                "type": "llm",
+                "type": "agent",
                 "name": "Research",
                 "config": {
-                    "agent": {
-                        "name": "ResearchAgent",
-                        "goal": "Research the request",
-                        "instructions": "Use tools when they improve the answer.",
-                        "model": {"provider": "test", "model_id": "test-model"},
-                        "tools": ["web_search", "calculator"],
+                    "source": {
+                        "type": "inline",
+                        "agent": {
+                            "name": "ResearchAgent",
+                            "goal": "Research the request",
+                            "instructions": "Use tools when they improve the answer.",
+                            "model": {"provider": "test", "model_id": "test-model"},
+                            "tools": ["web_search", "calculator"],
+                        },
                     },
                     "input_path": "$.request",
                     "output_path": "$.answer",
@@ -137,7 +140,7 @@ async def test_llm_node_passes_workflow_metadata_to_agent_runner() -> None:
         "workflow_id": str(workflow.id),
         "workflow_run_id": "run-1",
         "node_id": "research",
-        "node_type": "llm",
+        "node_type": "agent",
     }
 
 
@@ -163,7 +166,7 @@ async def test_llm_node_maps_multiple_inputs_and_structured_outputs() -> None:
         "required": ["answer", "confidence"],
     }
     data["nodes"][1]["config"] = {
-        "agent": data["nodes"][1]["config"]["agent"],
+        "source": data["nodes"][1]["config"]["source"],
         "inputs": {
             "question": {"from_state": "$.request"},
             "documents": {"from_state": "$.documents"},
@@ -202,7 +205,7 @@ async def test_llm_node_maps_multiple_inputs_and_structured_outputs() -> None:
 async def test_llm_node_rejects_missing_structured_output_field_atomically() -> None:
     data = workflow_data()
     data["nodes"][1]["config"] = {
-        "agent": data["nodes"][1]["config"]["agent"],
+        "source": data["nodes"][1]["config"]["source"],
         "inputs": {"request": {"from_state": "$.request"}},
         "outputs": {
             "answer": {"to_state": "$.research.answer"},
