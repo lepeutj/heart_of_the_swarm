@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,8 @@ class Settings(BaseSettings):
     mlflow_enabled: bool = False
     mlflow_tracking_uri: str = "http://localhost:5000"
     mlflow_experiment: str = "heart-of-the-swarm"
+
+    agent_artifact_dir: Path = Path("/app/artifact")
 
     worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_lease_seconds: int = Field(default=60, ge=15, le=3_600)

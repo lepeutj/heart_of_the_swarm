@@ -25,6 +25,9 @@ dependencies = [
   "jsonschema>=4.23,<5",
 ]
 
+[project.scripts]
+swarm-export-agent = "heart_of_the_swarm.artifacts.cli:main"
+
 [dependency-groups]
 dev = [
   "pytest>=8.3,<9",

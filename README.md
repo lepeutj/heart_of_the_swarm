@@ -31,6 +31,44 @@ the host `logs` directory.
 `/health` is a process liveness check. `/ready` verifies the database connection, required tables,
 and expected Alembic revision; Docker uses readiness when deciding whether the API is healthy.
 
+## Standalone agent runtime
+
+Export one immutable agent version from the control-plane database:
+
+```bash
+uv run --locked swarm-export-agent <agent-version-uuid> ./artifact
+```
+
+The output contains only portable declarations:
+
+```text
+artifact/
+├── manifest.json
+└── agent.json
+```
+
+Build and run the generic runtime image with the artifact mounted read-only:
+
+```bash
+docker build -f docker/agent-runtime.Dockerfile -t heart-of-the-swarm-agent-runtime .
+docker run --rm -p 8080:8000 \
+  --mount type=bind,source="$(pwd)/artifact",target=/app/artifact,readonly \
+  -e OPENAI_API_KEY \
+  heart-of-the-swarm-agent-runtime
+```
+
+Use `OPENROUTER_API_KEY` instead for an OpenRouter artifact. The running container exposes only
+`GET /health`, `GET /metadata`, and `POST /invoke`. It does not connect to PostgreSQL, the control
+plane API, or the worker.
+
+```bash
+curl http://localhost:8080/health
+curl http://localhost:8080/metadata
+curl -X POST http://localhost:8080/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"input":"Complete the assigned task."}'
+```
+
 ## Agent workflow
 
 ```text
