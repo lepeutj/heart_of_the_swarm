@@ -37,6 +37,16 @@ export interface AgentOption {
   version: number;
 }
 
+export interface ToolCapability {
+  id: string;
+  source: "builtin" | "mcp";
+  origin: string | null;
+  description: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown> | null;
+  annotations: Record<string, unknown>;
+}
+
 export type AgentSpec = {
   name: string;
   goal: string;
@@ -75,9 +85,9 @@ export function loadCapabilities(): Promise<WorkflowCapabilities> {
   return request("/api/v1/workflows/capabilities");
 }
 
-export async function loadToolNames(): Promise<string[]> {
-  const result = await request<{ tools: string[] }>("/api/v1/tools");
-  return result.tools;
+export async function loadTools(): Promise<ToolCapability[]> {
+  const result = await request<{ capabilities: ToolCapability[] }>("/api/v1/tools");
+  return result.capabilities;
 }
 
 export async function loadSkillNames(): Promise<string[]> {

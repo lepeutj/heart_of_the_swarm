@@ -164,6 +164,7 @@ async def models(runtime: Runtime, provider: str = Query(...)) -> list[ModelDesc
 
 @app.get("/api/v1/tools")
 async def tools(runtime: Runtime) -> dict[str, object]:
+    mcp_statuses = getattr(getattr(runtime, "mcp_tools", None), "statuses", ())
     return {
         "tools": runtime.tools.names,
         "capabilities": [
@@ -172,8 +173,20 @@ async def tools(runtime: Runtime) -> dict[str, object]:
                 "source": capability.source,
                 "origin": capability.origin,
                 "description": capability.tool.description,
+                "input_schema": capability.input_schema,
+                "output_schema": None,
+                "annotations": capability.annotations,
             }
             for capability in runtime.tools.capabilities
+        ],
+        "mcp_servers": [
+            {
+                "name": status.name,
+                "state": status.state,
+                "tools": status.tools,
+                "error": status.error,
+            }
+            for status in mcp_statuses
         ],
     }
 

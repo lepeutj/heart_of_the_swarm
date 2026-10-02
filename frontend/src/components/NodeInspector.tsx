@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { AgentOption } from "../api";
+import type { AgentOption, ToolCapability } from "../api";
 import type { EditorNode, JsonObject } from "../workflow";
 import { AgentDataFlowEditor, WorkflowOutputEditor } from "./DataFlowEditor";
 import { JsonEditor } from "./JsonEditor";
@@ -8,6 +8,7 @@ import { JsonEditor } from "./JsonEditor";
 interface NodeInspectorProps {
   node: EditorNode;
   toolNames: string[];
+  capabilities: ToolCapability[];
   skillNames: string[];
   providerNames: string[];
   agentOptions: AgentOption[];
@@ -360,28 +361,138 @@ function TransformEditor({ config, onChange }: {
   );
 }
 
-function ConnectorEditor({ config, capabilityNames, onChange }: {
+function schemaProperties(schema: Record<string, unknown>): Record<string, JsonObject> {
+  const properties = schema.properties;
+  if (typeof properties !== "object" || properties === null || Array.isArray(properties)) return {};
+  return Object.fromEntries(
+    Object.entries(properties).filter((entry): entry is [string, JsonObject] => (
+      typeof entry[1] === "object" && entry[1] !== null && !Array.isArray(entry[1])
+    )),
+  );
+}
+
+function defaultLiteral(schema: JsonObject): unknown {
+  if (schema.type === "number" || schema.type === "integer") return 0;
+  if (schema.type === "boolean") return false;
+  if (schema.type === "array") return [];
+  if (schema.type === "object") return {};
+  return "";
+}
+
+function ConnectorEditor({ config, capabilities, onChange }: {
   config: JsonObject;
-  capabilityNames: string[];
+  capabilities: ToolCapability[];
   onChange: (config: JsonObject) => void;
 }) {
+  const capabilityId = asString(config.capability_id);
+  const capability = capabilities.find((item) => item.id === capabilityId);
+  const inputs = asObject(config.inputs);
+  const properties = schemaProperties(capability?.input_schema ?? {});
+  const required = new Set(
+    Array.isArray(capability?.input_schema.required)
+      ? capability.input_schema.required.filter((name): name is string => typeof name === "string")
+      : [],
+  );
+
+  function changeCapability(nextId: string) {
+    const nextCapability = capabilities.find((item) => item.id === nextId);
+    const nextProperties = schemaProperties(nextCapability?.input_schema ?? {});
+    onChange({
+      ...config,
+      capability_id: nextId,
+      inputs: Object.fromEntries(
+        Object.entries(nextProperties)
+          .filter(([name]) => (
+            Array.isArray(nextCapability?.input_schema.required)
+            && nextCapability.input_schema.required.includes(name)
+          ))
+          .map(([name]) => [name, { from_state: `$.${name}` }]),
+      ),
+    });
+  }
+
+  function setInput(name: string, value: unknown) {
+    onChange({ ...config, inputs: { ...inputs, [name]: value } });
+  }
+
   return (
     <div className="typed-editor">
       <p className="field-help">Invoke one registered capability exactly once.</p>
       <label>
         Capability
         <select
-          value={asString(config.capability_id)}
-          onChange={(event) => onChange({ ...config, capability_id: event.target.value })}
+          value={capabilityId}
+          onChange={(event) => changeCapability(event.target.value)}
         >
-          {capabilityNames.map((name) => <option key={name} value={name}>{name}</option>)}
+          {!capability && capabilityId && <option value={capabilityId}>{capabilityId} · unavailable</option>}
+          {capabilities.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.id}{item.source === "mcp" ? ` · ${item.origin}` : ""}
+            </option>
+          ))}
         </select>
       </label>
-      <JsonEditor
-        label="Inputs (literals or state references)"
-        value={asObject(config.inputs)}
-        onApply={(value) => value && onChange({ ...config, inputs: value })}
-      />
+      {capability && <p className="field-help">{capability.description}</p>}
+      {Object.keys(properties).length ? <fieldset>
+        <legend>Arguments</legend>
+        {Object.entries(properties).map(([name, schema]) => {
+          const enabled = name in inputs;
+          const value = inputs[name];
+          const stateReference = asObject(value).from_state;
+          const usesState = typeof stateReference === "string";
+          return (
+            <div className="mapping-row" key={name}>
+              <label>
+                {!required.has(name) && (
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(event) => {
+                      if (event.target.checked) setInput(name, { from_state: `$.${name}` });
+                      else {
+                        const next = { ...inputs };
+                        delete next[name];
+                        onChange({ ...config, inputs: next });
+                      }
+                    }}
+                  />
+                )}
+                {asString(schema.title, name)}{required.has(name) ? " *" : ""}
+              </label>
+              {enabled && (
+                <>
+                  <select
+                    value={usesState ? "state" : "literal"}
+                    onChange={(event) => setInput(
+                      name,
+                      event.target.value === "state"
+                        ? { from_state: `$.${name}` }
+                        : defaultLiteral(schema),
+                    )}
+                  >
+                    <option value="state">State path</option>
+                    <option value="literal">Literal</option>
+                  </select>
+                  {usesState ? (
+                    <input
+                      value={stateReference}
+                      onChange={(event) => setInput(name, { from_state: event.target.value })}
+                    />
+                  ) : (
+                    <ValueEditor value={value} onApply={(next) => setInput(name, next)} />
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </fieldset> : (
+        <JsonEditor
+          label="Arguments (schema unavailable)"
+          value={inputs}
+          onApply={(value) => value && onChange({ ...config, inputs: value })}
+        />
+      )}
       <JsonEditor
         label="Outputs (result field to state path)"
         value={asObject(config.outputs)}
@@ -394,6 +505,7 @@ function ConnectorEditor({ config, capabilityNames, onChange }: {
 export function NodeInspector({
   node,
   toolNames,
+  capabilities,
   skillNames,
   providerNames,
   agentOptions,
@@ -424,7 +536,7 @@ export function NodeInspector({
       {node.data.nodeType === "connector" && (
         <ConnectorEditor
           config={config}
-          capabilityNames={toolNames}
+          capabilities={capabilities}
           onChange={(next) => onChange({ config: next })}
         />
       )}

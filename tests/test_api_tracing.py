@@ -152,17 +152,20 @@ def test_tools_endpoint_exposes_dynamic_capability_provenance() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json() == {
-        "tools": ["get_weather"],
-        "capabilities": [
-            {
-                "id": "get_weather",
-                "source": "mcp",
-                "origin": "weather",
-                "description": "Return test weather for one city.",
-            }
-        ],
+    body = response.json()
+    assert body["tools"] == ["get_weather"]
+    capability = body["capabilities"][0]
+    assert capability | {"input_schema": None} == {
+        "id": "get_weather",
+        "source": "mcp",
+        "origin": "weather",
+        "description": "Return test weather for one city.",
+        "input_schema": None,
+        "output_schema": None,
+        "annotations": {},
     }
+    assert capability["input_schema"]["properties"]["city"]["type"] == "string"
+    assert capability["input_schema"]["required"] == ["city"]
 
 
 def test_workflow_validation_returns_structured_semantic_issues() -> None:

@@ -60,11 +60,7 @@ class Application:
 
     async def initialize(self) -> None:
         await self.database.initialize()
-        try:
-            await self.mcp_tools.load()
-        except Exception:
-            await self.database.close()
-            raise
+        await self.mcp_tools.load()
 
     async def close(self) -> None:
         await self.mcp_tools.close()

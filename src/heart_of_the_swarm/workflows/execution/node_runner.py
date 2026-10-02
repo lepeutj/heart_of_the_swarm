@@ -311,12 +311,8 @@ class WorkflowNodeRunner:
             )
         try:
             arguments = {name: resolve_value(value, state) for name, value in config.inputs.items()}
-            capability = self.capabilities.resolve_one(config.capability_id)
-            if capability.handle_tool_error or capability.handle_validation_error:
-                raise ValueError(
-                    "connector capabilities must propagate validation and execution errors"
-                )
-            result = await capability.ainvoke(
+            result = await self.capabilities.invoke_one(
+                config.capability_id,
                 arguments,
                 config={
                     "callbacks": [self.callback] if self.callback is not None else [],

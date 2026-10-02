@@ -16,7 +16,7 @@ import {
   loadCapabilities,
   loadProviderNames,
   loadSkillNames,
-  loadToolNames,
+  loadTools,
   loadWorkflow,
   loadWorkflows,
   saveWorkflow,
@@ -26,6 +26,7 @@ import {
   type ValidationIssue,
   type WorkflowSummary,
   type AgentSpec,
+  type ToolCapability,
 } from "./api";
 import { EdgeInspector } from "./components/EdgeInspector";
 import { JsonEditor } from "./components/JsonEditor";
@@ -72,7 +73,7 @@ export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<EditorNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<EditorEdge>(initialEdges);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof loadCapabilities>> | null>(null);
-  const [toolNames, setToolNames] = useState<string[]>([]);
+  const [tools, setTools] = useState<ToolCapability[]>([]);
   const [skillNames, setSkillNames] = useState<string[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
@@ -104,15 +105,15 @@ export default function App() {
   useEffect(() => {
     Promise.all([
       loadCapabilities(),
-      loadToolNames(),
+      loadTools(),
       loadSkillNames(),
       loadProviderNames(),
       loadAgents(),
       loadWorkflows(),
     ])
-      .then(([catalogue, tools, skills, providers, agents, workflows]) => {
+      .then(([catalogue, loadedTools, skills, providers, agents, workflows]) => {
         setCapabilities(catalogue);
-        setToolNames(tools);
+        setTools(loadedTools);
         setSkillNames(skills);
         setProviderNames(providers);
         setAgentOptions(agents);
@@ -123,6 +124,7 @@ export default function App() {
   }, []);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const toolNames = tools.map((tool) => tool.id);
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId) ?? null;
   const issueNodeIds = useMemo(
     () => new Set(issues.flatMap((issue) => (issue.node_id ? [issue.node_id] : []))),
@@ -528,6 +530,7 @@ export default function App() {
             <NodeInspector
               node={selectedNode}
               toolNames={toolNames}
+              capabilities={tools}
               skillNames={skillNames}
               providerNames={providerNames}
               agentOptions={agentOptions}
