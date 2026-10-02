@@ -136,15 +136,19 @@ def test_workflow_capabilities_report_runtime_support() -> None:
 
 def test_tools_endpoint_exposes_dynamic_capability_provenance() -> None:
     registry = ToolRegistry()
+    namespaced_tool = get_weather.model_copy(update={"name": "weather__get_weather"})
     registry.register(
         RegisteredCapability(
-            id="get_weather",
-            tool=get_weather,
+            id="weather__get_weather",
+            tool=namespaced_tool,
             source="mcp",
             origin="weather",
         )
     )
-    app.dependency_overrides[get_application] = lambda: SimpleNamespace(tools=registry)
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        tools=registry,
+        mcp_tools=SimpleNamespace(statuses=()),
+    )
     try:
         with TestClient(app) as client:
             response = client.get("/api/v1/tools")
@@ -153,19 +157,22 @@ def test_tools_endpoint_exposes_dynamic_capability_provenance() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["tools"] == ["get_weather"]
+    assert body["tools"] == ["weather__get_weather"]
     capability = body["capabilities"][0]
-    assert capability | {"input_schema": None} == {
-        "id": "get_weather",
+    assert capability | {"input_schema": None, "schema_fingerprint": None} == {
+        "id": "weather__get_weather",
         "source": "mcp",
         "origin": "weather",
         "description": "Return test weather for one city.",
         "input_schema": None,
         "output_schema": None,
         "annotations": {},
+        "schema_fingerprint": None,
     }
     assert capability["input_schema"]["properties"]["city"]["type"] == "string"
     assert capability["input_schema"]["required"] == ["city"]
+    assert len(capability["schema_fingerprint"]) == 64
+    assert body["mcp_servers"] == []
 
 
 def test_workflow_validation_returns_structured_semantic_issues() -> None:

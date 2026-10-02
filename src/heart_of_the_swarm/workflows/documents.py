@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from heart_of_the_swarm.tools import CapabilityContract
 from heart_of_the_swarm.workflows.spec import WorkflowSpec
 
 
@@ -60,4 +61,5 @@ class WorkflowVersionDetail(BaseModel):
     version: int
     spec: WorkflowSpec
     editor: WorkflowEditorDocument
+    capability_contracts: list[CapabilityContract] = Field(default_factory=list)
     created_at: datetime

@@ -31,6 +31,7 @@ import {
 import { EdgeInspector } from "./components/EdgeInspector";
 import { JsonEditor } from "./components/JsonEditor";
 import { NodeInspector } from "./components/NodeInspector";
+import { MCPServerPanel } from "./components/mcp/MCPServerPanel";
 import {
   detachNodeAndReconnect,
   findInsertionEdge,
@@ -101,6 +102,10 @@ export default function App() {
   });
   const workflowId = useRef<string>(crypto.randomUUID());
   const sequence = useRef(1);
+
+  async function reloadTools() {
+    setTools(await loadTools());
+  }
 
   useEffect(() => {
     Promise.all([
@@ -473,6 +478,8 @@ export default function App() {
               }}
             />
           </label>
+
+          <MCPServerPanel onCatalogueChanged={reloadTools} />
 
           <h2>Nodes</h2>
           <div className="node-palette">

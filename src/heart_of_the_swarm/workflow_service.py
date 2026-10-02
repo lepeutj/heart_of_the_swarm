@@ -3,10 +3,16 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from heart_of_the_swarm.database import Database
-from heart_of_the_swarm.repositories import WorkflowRepository
+from heart_of_the_swarm.repositories import AgentRepository, WorkflowRepository
+from heart_of_the_swarm.tools import CapabilityContract, ToolRegistry
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflows import WorkflowSpec, WorkflowValidator
-from heart_of_the_swarm.workflows.configs import AgentNodeConfig, InlineAgentSource
+from heart_of_the_swarm.workflows.configs import (
+    AgentNodeConfig,
+    ConnectorNodeConfig,
+    InlineAgentSource,
+    VersionedAgentSource,
+)
 from heart_of_the_swarm.workflows.documents import (
     WorkflowDraftDetail,
     WorkflowDraftSave,
@@ -23,10 +29,12 @@ class WorkflowService:
         database: Database,
         validator: WorkflowValidator,
         agent_validator: AgentSpecValidator,
+        tools: ToolRegistry,
     ) -> None:
         self.database = database
         self.validator = validator
         self.agent_validator = agent_validator
+        self.tools = tools
 
     async def save(self, workflow_id: UUID, draft: WorkflowDraftSave) -> WorkflowDraftDetail:
         draft_id = self._draft_id(draft.spec)
@@ -58,14 +66,31 @@ class WorkflowService:
         except ValidationError as exc:
             raise ValueError("workflow draft is not a valid WorkflowSpec") from exc
         validated = self.validator.validate(spec)
+        capability_ids: set[str] = set()
         for node in validated.nodes:
-            if isinstance(node.config, AgentNodeConfig) and isinstance(
-                node.config.source, InlineAgentSource
-            ):
-                await self.agent_validator.validate(node.config.source.agent)
+            if isinstance(node.config, ConnectorNodeConfig):
+                capability_ids.add(node.config.capability_id)
+            elif isinstance(node.config, AgentNodeConfig):
+                if isinstance(node.config.source, InlineAgentSource):
+                    agent_spec = await self.agent_validator.validate(node.config.source.agent)
+                else:
+                    source = node.config.source
+                    if not isinstance(source, VersionedAgentSource):
+                        raise TypeError("validated agent node has an invalid source")
+                    async with self.database.session() as session:
+                        version = await AgentRepository(session).get_version(
+                            str(source.agent_version_id)
+                        )
+                    if version is None:
+                        raise ValueError(f"agent version not found: {source.agent_version_id}")
+                    agent_spec = version.spec
+                capability_ids.update(agent_spec.tools)
+        contracts: list[CapabilityContract] = [
+            self.tools.contract(capability_id) for capability_id in sorted(capability_ids)
+        ]
         async with self.database.session() as session:
             return await WorkflowRepository(session).create_version(
-                str(workflow_id), expected_revision=draft.revision
+                str(workflow_id), contracts, expected_revision=draft.revision
             )
 
     @staticmethod

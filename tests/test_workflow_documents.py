@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from heart_of_the_swarm.database import Database
+from heart_of_the_swarm.tools import create_default_registry
 from heart_of_the_swarm.workflow_service import WorkflowService
 from heart_of_the_swarm.workflows import WorkflowValidationError, WorkflowValidator
 from heart_of_the_swarm.workflows.documents import WorkflowDraftSave
@@ -87,6 +88,7 @@ async def test_draft_can_be_saved_incomplete_but_not_published() -> None:
         database,
         WorkflowValidator([], ["test"]),
         RecordingAgentValidator(),  # type: ignore[arg-type]
+        create_default_registry(),
     )
     try:
         saved = await service.save(WORKFLOW_ID, draft(valid=False))
@@ -103,6 +105,7 @@ async def test_structurally_incomplete_agent_node_can_be_saved_but_not_published
         database,
         WorkflowValidator([], ["test"]),
         RecordingAgentValidator(),  # type: ignore[arg-type]
+        create_default_registry(),
     )
     incomplete = draft()
     incomplete.spec["nodes"].insert(
@@ -137,6 +140,7 @@ async def test_publishing_validates_inline_agent_and_creates_version() -> None:
         database,
         WorkflowValidator(["web_search"], ["test"]),
         agent_validator,  # type: ignore[arg-type]
+        create_default_registry(),
     )
     try:
         saved = await service.save(WORKFLOW_ID, draft(inline_agent=True))
@@ -145,6 +149,11 @@ async def test_publishing_validates_inline_agent_and_creates_version() -> None:
         assert version is not None
         assert version.version == 1
         assert agent_validator.specs[0].tools == ["web_search"]
+        assert [contract.capability_id for contract in version.capability_contracts] == [
+            "web_search"
+        ]
+        assert version.capability_contracts[0].source == "builtin"
+        assert len(version.capability_contracts[0].schema_fingerprint) == 64
     finally:
         await database.close()
 
@@ -156,6 +165,7 @@ async def test_layout_rejects_unknown_node_ids() -> None:
         database,
         WorkflowValidator([], ["test"]),
         RecordingAgentValidator(),  # type: ignore[arg-type]
+        create_default_registry(),
     )
     invalid = draft()
     invalid.editor.positions["missing"] = {"x": 0, "y": 0}  # type: ignore[assignment]

@@ -99,6 +99,17 @@ textarea { min-height: 76px; resize: vertical; font-family: ui-monospace, SFMono
 .issue strong { color: #ffaaa5; font-size: 12px; }
 .issue span { font-size: 12px; line-height: 1.4; }
 .issue small { color: #9c8986; }
+.mcp-panel { margin-top: 24px; }
+.mcp-server-list { display: grid; gap: 8px; margin-top: 12px; }
+.mcp-server { padding: 10px; border: 1px solid #2b3831; border-radius: 7px; background: #0e1411; }
+.mcp-server > div:first-child { display: flex; justify-content: space-between; gap: 8px; }
+.mcp-server small { display: block; overflow-wrap: anywhere; color: #7f8e84; }
+.mcp-server ul { margin: 8px 0; padding-left: 18px; color: #a8b7ad; font-size: 11px; }
+.mcp-actions { display: flex; gap: 6px; }
+.mcp-state { font-size: 10px; text-transform: uppercase; }
+.mcp-state.ready { color: #79d19c; }
+.mcp-state.error { color: #ff938c; }
+.mcp-state.not_loaded { color: #f4c66d; }
 details { margin-top: 20px; }
 summary { cursor: pointer; color: #a8b7ad; font-size: 12px; }
 pre { max-height: 360px; overflow: auto; padding: 10px; border-radius: 6px; color: #b9c9bf; background: #090c0a; font-size: 10px; white-space: pre-wrap; }

@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 
 from heart_of_the_swarm.database import Database
+from heart_of_the_swarm.mcp_service import MCPServerService
 from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
 from heart_of_the_swarm.repositories import (
     AgentRepository,
@@ -13,6 +14,7 @@ from heart_of_the_swarm.repositories import (
     WorkflowRevisionConflict,
 )
 from heart_of_the_swarm.spec import AgentSpec
+from heart_of_the_swarm.tools import MCPServerCreate
 from heart_of_the_swarm.workflow_agent_versions import DatabaseAgentVersionResolver
 from heart_of_the_swarm.workflows import WorkflowSpec
 from heart_of_the_swarm.workflows.documents import WorkflowDraftSave
@@ -61,6 +63,37 @@ def make_workflow_draft(expected_revision: int | None = None) -> WorkflowDraftSa
         },
         expected_revision=expected_revision,
     )
+
+
+async def test_mcp_sources_are_persisted_for_other_processes() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    first_process = MCPServerService(database)
+    second_process = MCPServerService(database)
+    try:
+        created = await first_process.create(
+            MCPServerCreate(name="github", url="https://mcp.example.test/tools")
+        )
+
+        assert await second_process.enabled_sources() == {
+            "github": "https://mcp.example.test/tools"
+        }
+        loaded = await second_process.get(str(created.id))
+        assert loaded is not None
+        assert (loaded.id, loaded.name, loaded.url, loaded.enabled) == (
+            created.id,
+            created.name,
+            created.url,
+            created.enabled,
+        )
+        await second_process.seed({"github": "https://seed.example.test/tools"})
+        assert await first_process.enabled_sources() == {"github": "https://mcp.example.test/tools"}
+        with pytest.raises(ValueError, match="already exists"):
+            await second_process.create(
+                MCPServerCreate(name="github", url="https://other.example.test/tools")
+            )
+    finally:
+        await database.close()
 
 
 async def test_repository_persists_versions_runs_and_usage() -> None:

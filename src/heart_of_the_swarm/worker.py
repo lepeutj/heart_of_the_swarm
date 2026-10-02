@@ -15,6 +15,7 @@ async def run_worker() -> None:
     audit_event("worker.started", worker_id=worker_id)
     try:
         while True:
+            await application.sync_mcp_tools()
             async with application.database.session() as session:
                 repository = RunRepository(session)
                 recovered = await repository.recover_expired(

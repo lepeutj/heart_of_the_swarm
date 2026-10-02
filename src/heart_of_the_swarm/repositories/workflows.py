@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -5,6 +6,7 @@ from sqlalchemy import select
 
 from heart_of_the_swarm.models import WorkflowRecord, WorkflowVersionRecord
 from heart_of_the_swarm.repositories.base import RepositoryBase
+from heart_of_the_swarm.tools import CapabilityContract
 from heart_of_the_swarm.workflows.documents import (
     WorkflowDraftDetail,
     WorkflowDraftSave,
@@ -67,7 +69,10 @@ class WorkflowRepository(RepositoryBase):
         return self._detail(workflow) if workflow else None
 
     async def create_version(
-        self, workflow_id: str, expected_revision: int | None = None
+        self,
+        workflow_id: str,
+        capability_contracts: Sequence[CapabilityContract] = (),
+        expected_revision: int | None = None,
     ) -> WorkflowVersionDetail | None:
         statement = select(WorkflowRecord).where(WorkflowRecord.id == workflow_id).with_for_update()
         workflow = (await self.session.execute(statement)).scalar_one_or_none()
@@ -82,6 +87,9 @@ class WorkflowRepository(RepositoryBase):
             version=workflow.latest_version,
             spec=workflow.spec,
             editor=workflow.editor,
+            capability_contracts=[
+                contract.model_dump(mode="json") for contract in capability_contracts
+            ],
             created_at=datetime.now(UTC),
         )
         self.session.add(version)
@@ -116,5 +124,6 @@ class WorkflowRepository(RepositoryBase):
             version=version.version,
             spec=version.spec,
             editor=version.editor,
+            capability_contracts=version.capability_contracts,
             created_at=version.created_at,
         )

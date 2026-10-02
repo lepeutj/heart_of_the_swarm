@@ -5,6 +5,7 @@ from heart_of_the_swarm.config import Settings, get_settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.execution import AgentExecutor, RunService
 from heart_of_the_swarm.factory import AgentFactory
+from heart_of_the_swarm.mcp_service import MCPServerService
 from heart_of_the_swarm.observability import configure_audit_logging
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.service import AgentService
@@ -29,18 +30,21 @@ class Application:
             self.settings.log_backup_count,
         )
         self.tools = create_default_registry(self.settings)
-        self.mcp_tools = MCPToolLoader(self.tools, self.settings.mcp_servers)
+        self.mcp_tools = MCPToolLoader(self.tools, {})
         self.skills = SkillRegistry(self.settings.skills_dir)
         self.providers = ProviderRegistry(self.settings)
         self.validator = AgentSpecValidator(self.tools, self.providers, self.skills)
         self.database = Database(self.settings.database_url)
+        self.mcp_servers = MCPServerService(self.database)
         self.telemetry = Telemetry(self.settings)
         self.factory = AgentFactory(self.tools, self.skills)
         self.agent_runner = AgentRunner(self.providers, self.validator, self.factory)
         self.workflow_validator = WorkflowValidator(
             lambda: self.tools.names, self.providers.names, lambda: self.skills.names
         )
-        self.workflows = WorkflowService(self.database, self.workflow_validator, self.validator)
+        self.workflows = WorkflowService(
+            self.database, self.workflow_validator, self.validator, self.tools
+        )
         self.agents = AgentService(
             self.settings,
             self.tools,
@@ -60,7 +64,12 @@ class Application:
 
     async def initialize(self) -> None:
         await self.database.initialize()
-        await self.mcp_tools.load()
+        await self.mcp_servers.seed(self.settings.mcp_servers)
+        await self.sync_mcp_tools()
+
+    async def sync_mcp_tools(self) -> tuple[str, ...]:
+        """Synchronize this process registry with the shared persisted MCP sources."""
+        return await self.mcp_tools.sync(await self.mcp_servers.enabled_sources())
 
     async def close(self) -> None:
         await self.mcp_tools.close()

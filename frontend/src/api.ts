@@ -45,6 +45,31 @@ export interface ToolCapability {
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown> | null;
   annotations: Record<string, unknown>;
+  schema_fingerprint: string;
+}
+
+export interface MCPServerStatus {
+  name: string;
+  state: "ready" | "error" | "not_loaded";
+  tools: string[];
+  error: string | null;
+}
+
+export interface MCPServer {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  status: MCPServerStatus;
+}
+
+export interface MCPServerTestResult {
+  name: string;
+  reachable: boolean;
+  tools: string[];
+  error: string | null;
 }
 
 export type AgentSpec = {
@@ -88,6 +113,25 @@ export function loadCapabilities(): Promise<WorkflowCapabilities> {
 export async function loadTools(): Promise<ToolCapability[]> {
   const result = await request<{ capabilities: ToolCapability[] }>("/api/v1/tools");
   return result.capabilities;
+}
+
+export function loadMCPServers(): Promise<MCPServer[]> {
+  return request("/api/v1/mcp/servers");
+}
+
+export function createMCPServer(name: string, url: string): Promise<MCPServer> {
+  return request("/api/v1/mcp/servers", {
+    method: "POST",
+    body: JSON.stringify({ name, url, enabled: true }),
+  });
+}
+
+export function testMCPServer(id: string): Promise<MCPServerTestResult> {
+  return request(`/api/v1/mcp/servers/${id}/test`, { method: "POST" });
+}
+
+export function refreshMCPServer(id: string): Promise<MCPServer> {
+  return request(`/api/v1/mcp/servers/${id}/refresh`, { method: "POST" });
 }
 
 export async function loadSkillNames(): Promise<string[]> {

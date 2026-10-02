@@ -36,6 +36,14 @@ from heart_of_the_swarm.spec import (
     UsageSummary,
     ValidationResponse,
 )
+from heart_of_the_swarm.tools import (
+    MCPServerCreate,
+    MCPServerDetail,
+    MCPServerStatus,
+    MCPServerTestResult,
+    MCPServerView,
+    ToolCatalogueResponse,
+)
 from heart_of_the_swarm.validator import SpecValidationError
 from heart_of_the_swarm.workflows import (
     WorkflowCapabilities,
@@ -162,33 +170,69 @@ async def models(runtime: Runtime, provider: str = Query(...)) -> list[ModelDesc
         raise api_error(exc) from exc
 
 
-@app.get("/api/v1/tools")
-async def tools(runtime: Runtime) -> dict[str, object]:
-    mcp_statuses = getattr(getattr(runtime, "mcp_tools", None), "statuses", ())
-    return {
-        "tools": runtime.tools.names,
-        "capabilities": [
-            {
-                "id": capability.id,
-                "source": capability.source,
-                "origin": capability.origin,
-                "description": capability.tool.description,
-                "input_schema": capability.input_schema,
-                "output_schema": None,
-                "annotations": capability.annotations,
-            }
-            for capability in runtime.tools.capabilities
-        ],
-        "mcp_servers": [
-            {
-                "name": status.name,
-                "state": status.state,
-                "tools": status.tools,
-                "error": status.error,
-            }
-            for status in mcp_statuses
-        ],
-    }
+@app.get("/api/v1/tools", response_model=ToolCatalogueResponse)
+async def tools(runtime: Runtime) -> ToolCatalogueResponse:
+    return ToolCatalogueResponse(
+        tools=runtime.tools.names,
+        capabilities=tuple(capability.descriptor() for capability in runtime.tools.capabilities),
+        mcp_servers=runtime.mcp_tools.statuses,
+    )
+
+
+def _mcp_server_view(
+    server: MCPServerDetail,
+    statuses: tuple[MCPServerStatus, ...],
+) -> MCPServerView:
+    status = next(
+        (item for item in statuses if item.name == server.name),
+        MCPServerStatus(name=server.name, state="not_loaded"),
+    )
+    return MCPServerView(**server.model_dump(), status=status)
+
+
+@app.get("/api/v1/mcp/servers", response_model=list[MCPServerView])
+async def list_mcp_servers(runtime: Runtime) -> list[MCPServerView]:
+    return [
+        _mcp_server_view(server, runtime.mcp_tools.statuses)
+        for server in await runtime.mcp_servers.list()
+    ]
+
+
+@app.post("/api/v1/mcp/servers", response_model=MCPServerView, status_code=201)
+async def create_mcp_server(source: MCPServerCreate, runtime: Runtime) -> MCPServerView:
+    try:
+        server = await runtime.mcp_servers.create(source)
+        await runtime.sync_mcp_tools()
+    except ValueError as exc:
+        raise api_error(exc, 409) from exc
+    return _mcp_server_view(server, runtime.mcp_tools.statuses)
+
+
+@app.post("/api/v1/mcp/servers/{server_id}/test", response_model=MCPServerTestResult)
+async def test_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerTestResult:
+    server = await runtime.mcp_servers.get(str(server_id))
+    if server is None:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    try:
+        names = await runtime.mcp_tools.test(server.name, server.url)
+    except Exception as exc:
+        return MCPServerTestResult(
+            name=server.name,
+            reachable=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    return MCPServerTestResult(name=server.name, reachable=True, tools=names)
+
+
+@app.post("/api/v1/mcp/servers/{server_id}/refresh", response_model=MCPServerView)
+async def refresh_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerView:
+    server = await runtime.mcp_servers.get(str(server_id))
+    if server is None:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    if not server.enabled:
+        raise HTTPException(status_code=409, detail="MCP server is disabled")
+    await runtime.mcp_tools.refresh(server.name)
+    return _mcp_server_view(server, runtime.mcp_tools.statuses)
 
 
 @app.get("/api/v1/skills")

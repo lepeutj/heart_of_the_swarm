@@ -7,6 +7,16 @@ from heart_of_the_swarm.tools.builtin import (
     web_search,
 )
 from heart_of_the_swarm.tools.mcp import MCPToolLoader
+from heart_of_the_swarm.tools.models import (
+    CapabilityContract,
+    CapabilityDescriptor,
+    MCPServerCreate,
+    MCPServerDetail,
+    MCPServerStatus,
+    MCPServerTestResult,
+    MCPServerView,
+    ToolCatalogueResponse,
+)
 from heart_of_the_swarm.tools.registry import RegisteredCapability, ToolRegistry
 
 
@@ -17,4 +27,17 @@ def create_default_registry(settings: Settings | None = None) -> ToolRegistry:
     )
 
 
-__all__ = ["MCPToolLoader", "RegisteredCapability", "ToolRegistry", "create_default_registry"]
+__all__ = [
+    "CapabilityContract",
+    "CapabilityDescriptor",
+    "MCPServerCreate",
+    "MCPServerDetail",
+    "MCPServerStatus",
+    "MCPServerTestResult",
+    "MCPServerView",
+    "MCPToolLoader",
+    "RegisteredCapability",
+    "ToolCatalogueResponse",
+    "ToolRegistry",
+    "create_default_registry",
+]

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any, Self
 
@@ -9,6 +10,7 @@ from langchain_core.tools import BaseTool, ToolException, tool
 
 from heart_of_the_swarm.spec import AgentSpec
 from heart_of_the_swarm.tools import MCPToolLoader, RegisteredCapability, ToolRegistry
+from heart_of_the_swarm.tools.models import CapabilityContract
 from heart_of_the_swarm.workflows import (
     WorkflowExecutionError,
     WorkflowGraphFactory,
@@ -62,6 +64,23 @@ class FailingAdapter:
 
     async def list_tools(self, *, cache_mode: str = "use") -> list[BaseTool]:
         return []
+
+
+class BlockingAdapter:
+    def __init__(self, entered: asyncio.Event, release: asyncio.Event) -> None:
+        self.entered = entered
+        self.release = release
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        return None
+
+    async def list_tools(self, *, cache_mode: str = "use") -> list[BaseTool]:
+        self.entered.set()
+        await self.release.wait()
+        return [local_weather]
 
 
 class RecordingAgentRunner:
@@ -164,14 +183,15 @@ async def test_real_mcp_discovery_exposes_schema_and_structured_result() -> None
     )
 
     loaded = await loader.load()
-    capability = next(item for item in registry.capabilities if item.id == "get_weather")
-    result = await registry.invoke_one("get_weather", {"city": "Paris"})
+    capability = next(item for item in registry.capabilities if item.id == "weather__get_weather")
+    result = await registry.invoke_one("weather__get_weather", {"city": "Paris"})
 
-    assert loaded == ("get_weather", "greet", "fail_weather")
+    assert loaded == ("weather__get_weather", "weather__greet", "weather__fail_weather")
     assert capability.source == "mcp"
     assert capability.origin == "weather"
     assert capability.input_schema["required"] == ["city"]
-    assert registry.resolve(["get_weather"]) == [capability.tool]
+    assert capability.tool.name == "weather__get_weather"
+    assert registry.resolve(["weather__get_weather"]) == [capability.tool]
     assert result == {"summary": "Sunny in Paris", "temperature": 21}
     await loader.close()
 
@@ -185,7 +205,7 @@ async def test_real_mcp_text_result_remains_mappable() -> None:
     )
     await loader.load()
 
-    assert await registry.invoke_one("greet", {"name": "Ada"}) == {"result": "Hello Ada"}
+    assert await registry.invoke_one("weather__greet", {"name": "Ada"}) == {"result": "Hello Ada"}
     await loader.close()
 
 
@@ -198,7 +218,7 @@ async def test_real_mcp_tool_executes_through_connector_agent_and_output() -> No
     )
     await loader.load()
     workflow = WorkflowValidator(lambda: registry.names, ["test"]).validate(
-        connector_workflow("get_weather", with_agent=True)
+        connector_workflow("weather__get_weather", with_agent=True)
     )
     runner = RecordingAgentRunner()
 
@@ -222,7 +242,7 @@ async def test_real_mcp_error_becomes_connector_failure() -> None:
         adapter_factory=lambda _: MCPAdapter(weather_server()),
     )
     await loader.load()
-    workflow = connector_workflow("fail_weather")
+    workflow = connector_workflow("weather__fail_weather")
     workflow.nodes[1].config["outputs"] = {"result": {"to_state": "$.weather"}}
     validated = WorkflowValidator(lambda: registry.names, []).validate(workflow)
 
@@ -254,9 +274,9 @@ async def test_unavailable_mcp_server_does_not_hide_healthy_tools() -> None:
 
     loaded = await loader.load()
 
-    assert loaded == ("get_weather", "greet", "fail_weather")
+    assert loaded == ("weather__get_weather", "weather__greet", "weather__fail_weather")
     assert "local_weather" in registry.names
-    assert "get_weather" in registry.names
+    assert "weather__get_weather" in registry.names
     assert [(status.name, status.state) for status in loader.statuses] == [
         ("offline", "error"),
         ("weather", "ready"),
@@ -273,12 +293,38 @@ async def test_failed_refresh_keeps_previous_server_catalogue() -> None:
 
     loader = MCPToolLoader(registry, {"weather": "source"}, adapter_factory=adapter_factory)
     await loader.load()
-    original = registry.resolve_one("get_weather")
+    original = registry.resolve_one("weather__get_weather")
     fail_refresh = True
 
     assert await loader.refresh("weather") == ()
-    assert registry.resolve_one("get_weather") is original
+    assert registry.resolve_one("weather__get_weather") is original
     assert loader.statuses[0].state == "error"
+    await loader.close()
+
+
+async def test_refreshes_for_one_server_are_serialized() -> None:
+    registry = ToolRegistry()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    adapters_created = 0
+
+    def adapter_factory(_: str) -> BlockingAdapter:
+        nonlocal adapters_created
+        adapters_created += 1
+        return BlockingAdapter(entered, release)
+
+    loader = MCPToolLoader(registry, {"weather": "source"}, adapter_factory=adapter_factory)
+    first = asyncio.create_task(loader.refresh("weather"))
+    await entered.wait()
+    second = asyncio.create_task(loader.refresh("weather"))
+    await asyncio.sleep(0)
+
+    assert adapters_created == 1
+    release.set()
+    assert await asyncio.gather(first, second) == [
+        ("weather__local_weather",),
+        ("weather__local_weather",),
+    ]
     await loader.close()
 
 
@@ -303,3 +349,32 @@ def test_replace_source_is_atomic_when_refreshed_catalogue_collides() -> None:
         registry.replace_source("mcp", "weather", [collision])
 
     assert registry.resolve_one("remote_weather") is original.tool
+
+
+def test_registry_rejects_a_changed_published_capability_contract() -> None:
+    registry = ToolRegistry([local_weather])
+    current = registry.contract("local_weather")
+    changed = CapabilityContract(
+        capability_id=current.capability_id,
+        source=current.source,
+        origin=current.origin,
+        schema_fingerprint="0" * 64,
+    )
+
+    registry.verify_contracts([current])
+    with pytest.raises(ValueError, match="capability contract changed"):
+        registry.verify_contracts([changed])
+
+
+def test_mcp_capability_ids_are_provider_safe_and_stable() -> None:
+    capability_id = MCPToolLoader._capability_id(
+        "weather", "a.remote/tool-name-that-is-long-enough-to-exceed-provider-limits-by-far"
+    )
+
+    assert capability_id == MCPToolLoader._capability_id(
+        "weather", "a.remote/tool-name-that-is-long-enough-to-exceed-provider-limits-by-far"
+    )
+    assert len(capability_id) <= 64
+    assert set(capability_id) <= set(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+    )

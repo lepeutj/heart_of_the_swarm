@@ -42,9 +42,9 @@ Agent tools belong to `AgentSpec.tools`. A connector reuses the same registered 
 invokes it exactly once without model choice.
 
 Built-in and discovered MCP capabilities live in the same `ToolRegistry`. MCP discovery registers
-LangChain tools during application startup with source and server-origin metadata. `CONNECTOR` and
-`AgentFactory` resolve only capability IDs and must not branch on their source. Name collisions are
-startup errors rather than implicit replacements.
+LangChain tools from persisted HTTP sources with source and server-origin metadata. `CONNECTOR` and
+`AgentFactory` resolve only capability IDs and must not branch on their source. MCP IDs use the
+provider-safe `server__tool` namespace and refresh replaces only that server's catalogue.
 
 ## LangChain agent path
 

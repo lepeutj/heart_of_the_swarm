@@ -1,12 +1,16 @@
+import json
 from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, Literal
 from uuid import uuid4
 
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
+
+from heart_of_the_swarm.tools.models import CapabilityContract, CapabilityDescriptor
 
 CapabilitySource = Literal["builtin", "mcp"]
 
@@ -44,6 +48,40 @@ class RegisteredCapability:
         tool_metadata = mcp.get("tool", {}) if isinstance(mcp, dict) else {}
         annotations = tool_metadata.get("annotations", {})
         return deepcopy(annotations) if isinstance(annotations, dict) else {}
+
+    @property
+    def output_schema(self) -> dict[str, Any] | None:
+        return None
+
+    @property
+    def schema_fingerprint(self) -> str:
+        payload = json.dumps(
+            {"input_schema": self.input_schema, "output_schema": self.output_schema},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return sha256(payload).hexdigest()
+
+    def descriptor(self) -> CapabilityDescriptor:
+        return CapabilityDescriptor(
+            id=self.id,
+            source=self.source,
+            origin=self.origin,
+            description=self.tool.description,
+            input_schema=self.input_schema,
+            output_schema=self.output_schema,
+            annotations=self.annotations,
+            schema_fingerprint=self.schema_fingerprint,
+        )
+
+    def contract(self) -> CapabilityContract:
+        return CapabilityContract(
+            capability_id=self.id,
+            source=self.source,
+            origin=self.origin,
+            schema_fingerprint=self.schema_fingerprint,
+        )
 
 
 class ToolRegistry:
@@ -100,6 +138,14 @@ class ToolRegistry:
             candidate[capability.id] = capability
         self._capabilities = candidate
 
+    def remove_source(self, source: CapabilitySource, origin: str) -> None:
+        """Remove one source catalogue without changing unrelated capabilities."""
+        self._capabilities = {
+            name: capability
+            for name, capability in self._capabilities.items()
+            if not (capability.source == source and capability.origin == origin)
+        }
+
     def resolve(self, names: list[str]) -> list[BaseTool]:
         unknown = sorted(set(names) - self._capabilities.keys())
         if unknown:
@@ -112,6 +158,19 @@ class ToolRegistry:
             return self._capabilities[name].tool
         except KeyError as exc:
             raise ValueError(f"unknown tool: {name}") from exc
+
+    def describe(self, name: str) -> CapabilityDescriptor:
+        return self._resolve_capability(name).descriptor()
+
+    def contract(self, name: str) -> CapabilityContract:
+        return self._resolve_capability(name).contract()
+
+    def verify_contracts(self, contracts: Iterable[CapabilityContract]) -> None:
+        """Reject missing or schema-incompatible versioned capabilities."""
+        for expected in contracts:
+            current = self._resolve_capability(expected.capability_id).contract()
+            if current != expected:
+                raise ValueError(f"capability contract changed: {expected.capability_id}")
 
     async def invoke_one(
         self,
