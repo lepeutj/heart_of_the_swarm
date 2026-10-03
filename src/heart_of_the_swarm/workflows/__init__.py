@@ -10,10 +10,15 @@ from heart_of_the_swarm.workflows.execution import (
     AgentVersionResolver,
     ExecutionResult,
     ResolvedAgentVersion,
+    WorkflowEventSink,
     WorkflowExecutionError,
+    WorkflowExecutionEvent,
     WorkflowExecutionIssue,
     WorkflowGraph,
     WorkflowGraphFactory,
+    WorkflowRuntimePolicy,
+    WorkflowVersionRunner,
+    validate_workflow_input,
 )
 from heart_of_the_swarm.workflows.spec import (
     ValidatedWorkflowSpec,
@@ -41,6 +46,10 @@ __all__ = [
     "WorkflowExecutionIssue",
     "WorkflowGraph",
     "WorkflowGraphFactory",
+    "WorkflowEventSink",
+    "WorkflowExecutionEvent",
+    "WorkflowRuntimePolicy",
+    "WorkflowVersionRunner",
     "WorkflowNodeCapability",
     "WorkflowNode",
     "WorkflowSpec",
@@ -50,4 +59,5 @@ __all__ = [
     "WorkflowValidator",
     "evaluate_condition",
     "workflow_capabilities",
+    "validate_workflow_input",
 ]

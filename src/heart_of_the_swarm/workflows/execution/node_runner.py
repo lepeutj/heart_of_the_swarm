@@ -28,6 +28,7 @@ from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
 )
+from heart_of_the_swarm.workflows.execution.validation import validate_workflow_input
 from heart_of_the_swarm.workflows.spec import (
     ValidatedWorkflowNode,
     ValidatedWorkflowSpec,
@@ -95,7 +96,7 @@ class WorkflowNodeRunner:
         await self._record_node("node.started", node)
         try:
             if isinstance(node.config, InputNodeConfig):
-                self._validate_json(node, state, self.workflow.input_schema, "input")
+                validate_workflow_input(self.workflow, state, node)
                 result = NodeExecution(state, current_execution)
             elif isinstance(node.config, TransformNodeConfig):
                 result = NodeExecution(self._apply_transform(node, state), current_execution)

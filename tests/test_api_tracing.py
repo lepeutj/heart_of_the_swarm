@@ -9,7 +9,11 @@ from heart_of_the_swarm.api import app, get_application
 from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.spec import AgentRunAccepted
 from heart_of_the_swarm.tools import RegisteredCapability, ToolRegistry
-from heart_of_the_swarm.workflows import WorkflowValidator
+from heart_of_the_swarm.workflows import (
+    WorkflowExecutionError,
+    WorkflowExecutionIssue,
+    WorkflowValidator,
+)
 
 
 @tool
@@ -120,6 +124,39 @@ def test_unknown_run_trajectory_returns_not_found() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "run not found"
+
+
+def test_invalid_workflow_input_is_rejected_synchronously() -> None:
+    workflow_id = UUID("47d174a8-b35e-4563-bd86-3bc6b5b5947f")
+    version_id = UUID("c1a19ef5-eb93-4723-a720-c83371bef05f")
+
+    class FakeWorkflowRuns:
+        async def queue(self, received_version_id, workflow_input, trace_id):
+            assert received_version_id == version_id
+            assert workflow_input == {}
+            assert trace_id
+            raise WorkflowExecutionError(
+                WorkflowExecutionIssue(
+                    code="workflow.execution.invalid_input",
+                    message="Workflow input is invalid: 'request' is a required property",
+                    workflow_id=workflow_id,
+                )
+            )
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_runs=FakeWorkflowRuns()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/v1/workflow-versions/{version_id}/runs",
+                json={"input": {}},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["message"].startswith("Workflow input is invalid")
 
 
 def test_workflow_capabilities_report_runtime_support() -> None:

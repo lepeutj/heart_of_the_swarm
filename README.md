@@ -132,10 +132,11 @@ worker executes the pinned version.
 ## Runtime architecture
 
 The API is the control plane: it designs and versions agents, validates requests, and queues runs.
-The worker is the execution plane: it fairly claims queued agent and workflow runs and persists
-their lifecycle. Agent runs delegate to `AgentRunner`; workflow runs rebuild the validated graph and
-delegate traversal to LangGraph. Both processes use the same application image and PostgreSQL
-database.
+Workflow input is checked against the immutable version before a run is created. The worker fairly
+claims queued agent and workflow runs and persists their lifecycle. Agent runs delegate to
+`AgentRunner`; workflow runs pass an already-loaded version to `WorkflowVersionRunner`, which is
+independent from PostgreSQL and delegates traversal to LangGraph. Both processes currently use the
+same application image and PostgreSQL database.
 
 PostgreSQL is also the initial queue. Workers claim rows atomically, renew a lease while working,
 and recover expired leases after a crash. More workers can be added without changing the API. A

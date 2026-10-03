@@ -11,7 +11,14 @@ from heart_of_the_swarm.repositories import WorkflowRepository, WorkflowRunRepos
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflow_agent_versions import DatabaseAgentVersionResolver
-from heart_of_the_swarm.workflows import WorkflowGraphFactory, WorkflowValidator
+from heart_of_the_swarm.workflows import (
+    WorkflowExecutionEvent,
+    WorkflowGraphFactory,
+    WorkflowRuntimePolicy,
+    WorkflowValidator,
+    WorkflowVersionRunner,
+    validate_workflow_input,
+)
 from heart_of_the_swarm.workflows.runs import (
     WorkflowRunAccepted,
     WorkflowRunDetail,
@@ -42,7 +49,8 @@ class WorkflowRunService:
             version = await WorkflowRepository(session).get_version(str(version_id))
         if version is None:
             raise ValueError("workflow version not found")
-        self.validator.validate(version.spec)
+        workflow = self.validator.validate(version.spec)
+        validate_workflow_input(workflow, workflow_input)
         self.tools.verify_contracts(version.capability_contracts)
         async with self.database.session() as session:
             return await WorkflowRunRepository(session).queue(
@@ -63,8 +71,24 @@ class WorkflowRunService:
             return await repository.list_events(str(run_id))
 
 
+class _DatabaseWorkflowEventSink:
+    """Persist portable runner events as workflow business events."""
+
+    def __init__(self, database: Database, run_id: str) -> None:
+        self.database = database
+        self.run_id = run_id
+
+    async def emit(self, event: WorkflowExecutionEvent) -> None:
+        async with self.database.session() as session:
+            await WorkflowRunRepository(session).add_event(
+                self.run_id,
+                event.event_type,
+                event.data,
+            )
+
+
 class WorkflowExecutor:
-    """Rebuild and execute one immutable workflow through LangGraph."""
+    """Own durable run lifecycle around the portable workflow runner."""
 
     def __init__(
         self,
@@ -77,13 +101,19 @@ class WorkflowExecutor:
     ) -> None:
         self.settings = settings
         self.database = database
-        self.validator = validator
-        self.tools = tools
         self.telemetry = telemetry
-        self.graphs = WorkflowGraphFactory(
-            agent_runner=agent_runner,
-            agent_versions=DatabaseAgentVersionResolver(database),
-            capabilities=tools,
+        self.runner = WorkflowVersionRunner(
+            validator,
+            tools,
+            WorkflowGraphFactory(
+                agent_runner=agent_runner,
+                agent_versions=DatabaseAgentVersionResolver(database),
+                capabilities=tools,
+            ),
+        )
+        self.policy = WorkflowRuntimePolicy(
+            timeout_seconds=settings.workflow_timeout_seconds,
+            recursion_limit=settings.workflow_recursion_limit,
         )
 
     async def execute(self, run_id: str, worker_id: str) -> None:
@@ -95,14 +125,6 @@ class WorkflowExecutor:
         stop_heartbeat = asyncio.Event()
         heartbeat = asyncio.create_task(self._heartbeat(run_id, worker_id, stop_heartbeat))
         started = time.perf_counter()
-
-        async def persist_node_event(
-            event_type: str,
-            _node: object,
-            payload: dict[str, Any],
-        ) -> None:
-            async with self.database.session() as session:
-                await WorkflowRunRepository(session).add_event(run_id, event_type, payload)
 
         with (
             trace_context(context.trace_id),
@@ -131,18 +153,13 @@ class WorkflowExecutor:
                 run_id=run_id,
             )
             try:
-                self.tools.verify_contracts(context.version.capability_contracts)
-                validated = self.validator.validate(context.version.spec)
-                graph = self.graphs.create(
-                    validated,
-                    workflow_run_id=run_id,
-                    event_sink=persist_node_event,
+                result = await self.runner.run(
+                    context.version,
+                    context.input,
+                    self.policy,
+                    _DatabaseWorkflowEventSink(self.database, run_id),
+                    execution_id=run_id,
                 )
-                async with asyncio.timeout(self.settings.workflow_timeout_seconds):
-                    result = await graph.ainvoke(
-                        context.input,
-                        recursion_limit=self.settings.workflow_recursion_limit,
-                    )
                 async with self.database.session() as session:
                     await WorkflowRunRepository(session).finish(
                         run_id,

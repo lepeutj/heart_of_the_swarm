@@ -1,5 +1,7 @@
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from langchain_core.tools import tool
@@ -10,8 +12,19 @@ from heart_of_the_swarm.repositories import WorkflowRepository, WorkflowRunRepos
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflow_execution import WorkflowExecutor, WorkflowRunService
-from heart_of_the_swarm.workflows import WorkflowValidator
-from heart_of_the_swarm.workflows.documents import WorkflowDraftSave
+from heart_of_the_swarm.workflows import (
+    WorkflowExecutionError,
+    WorkflowGraphFactory,
+    WorkflowRuntimePolicy,
+    WorkflowValidator,
+    WorkflowVersionRunner,
+)
+from heart_of_the_swarm.workflows.documents import (
+    WorkflowDraftSave,
+    WorkflowVersionDetail,
+)
+from heart_of_the_swarm.workflows.execution import WorkflowExecutionEvent
+from heart_of_the_swarm.workflows.spec import WorkflowSpec
 
 
 @tool
@@ -101,6 +114,76 @@ async def published_version(
         )
     assert version is not None
     return version
+
+
+class RecordingEventSink:
+    def __init__(self) -> None:
+        self.events: list[WorkflowExecutionEvent] = []
+
+    async def emit(self, event: WorkflowExecutionEvent) -> None:
+        self.events.append(event)
+
+
+def standalone_version() -> WorkflowVersionDetail:
+    draft = workflow_draft()
+    spec = WorkflowSpec.model_validate(draft.spec)
+    return WorkflowVersionDetail(
+        id=uuid4(),
+        workflow_id=spec.id,
+        version=1,
+        spec=spec,
+        editor=draft.editor,
+        created_at=datetime.now(UTC),
+    )
+
+
+async def test_version_runner_executes_loaded_version_without_persistence() -> None:
+    tools = ToolRegistry()
+    validator = WorkflowValidator(lambda: tools.names, [])
+    sink = RecordingEventSink()
+    runner = WorkflowVersionRunner(
+        validator,
+        tools,
+        WorkflowGraphFactory(capabilities=tools),
+    )
+
+    result = await runner.run(
+        standalone_version(),
+        {"request": "portable"},
+        WorkflowRuntimePolicy(timeout_seconds=1, recursion_limit=20),
+        sink,
+        execution_id="standalone-run",
+    )
+
+    assert result.output == "portable"
+    assert result.executed_nodes == ("input", "copy", "output")
+    assert [event.event_type for event in sink.events] == [
+        "node.started",
+        "node.completed",
+        "node.started",
+        "node.completed",
+        "node.started",
+        "node.completed",
+    ]
+    assert {event.data["workflow_run_id"] for event in sink.events} == {"standalone-run"}
+
+
+async def test_invalid_input_is_rejected_before_a_run_is_queued() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    tools = ToolRegistry()
+    validator = WorkflowValidator(lambda: tools.names, [])
+    try:
+        version = await published_version(database, tools)
+        service = WorkflowRunService(database, validator, tools)
+
+        with pytest.raises(WorkflowExecutionError, match="Workflow input is invalid"):
+            await service.queue(version.id, {}, "trace-invalid-input")
+
+        async with database.session() as session:
+            assert await WorkflowRunRepository(session).claim_next("worker-1", 60) is None
+    finally:
+        await database.close()
 
 
 async def test_workflow_run_executes_version_and_persists_node_events() -> None:
