@@ -97,6 +97,10 @@ GET  /api/v1/workflows/{id}/versions/latest
 POST /api/v1/workflow-versions/{id}/runs
 GET  /api/v1/workflow-runs/{id}
 GET  /api/v1/workflow-runs/{id}/events
+POST /api/v1/triggers
+GET  /api/v1/triggers
+GET  /api/v1/triggers/{id}
+POST /api/v1/hooks/{trigger_id}
 GET  /health
 GET  /ready
 POST /api/v1/workflows/validate

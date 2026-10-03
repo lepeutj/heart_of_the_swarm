@@ -15,6 +15,16 @@ class WorkflowRunRequest(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
 
 
+class WorkflowRunOrigin(BaseModel):
+    """Metadata describing the trigger invocation that created a run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    trigger_id: UUID
+    trigger_type: str
+    trigger_event_id: UUID
+
+
 class WorkflowRunAccepted(BaseModel):
     run_id: UUID
     trace_id: str
@@ -22,6 +32,9 @@ class WorkflowRunAccepted(BaseModel):
     workflow_version_id: UUID
     workflow_version: int
     status: RunStatus
+    trigger_id: UUID | None = None
+    trigger_type: str | None = None
+    trigger_event_id: UUID | None = None
 
 
 class WorkflowRunDetail(WorkflowRunAccepted):

@@ -23,6 +23,7 @@ from heart_of_the_swarm.workflows.runs import (
     WorkflowRunAccepted,
     WorkflowRunDetail,
     WorkflowRunEvent,
+    WorkflowRunOrigin,
 )
 
 
@@ -44,6 +45,7 @@ class WorkflowRunService:
         version_id: UUID,
         workflow_input: dict[str, Any],
         trace_id: str,
+        origin: WorkflowRunOrigin | None = None,
     ) -> WorkflowRunAccepted:
         async with self.database.session() as session:
             version = await WorkflowRepository(session).get_version(str(version_id))
@@ -57,6 +59,7 @@ class WorkflowRunService:
                 version,
                 trace_id,
                 workflow_input,
+                origin,
             )
 
     async def get(self, run_id: UUID) -> WorkflowRunDetail | None:

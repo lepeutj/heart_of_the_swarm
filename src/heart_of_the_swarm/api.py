@@ -44,6 +44,13 @@ from heart_of_the_swarm.tools import (
     MCPServerView,
     ToolCatalogueResponse,
 )
+from heart_of_the_swarm.triggers import (
+    TriggerDetail,
+    TriggerDisabledError,
+    TriggerInvocationError,
+    TriggerNotFoundError,
+    TriggerSpec,
+)
 from heart_of_the_swarm.validator import SpecValidationError
 from heart_of_the_swarm.workflows import (
     WorkflowCapabilities,
@@ -400,6 +407,53 @@ async def list_workflow_run_events(
     if events is None:
         raise HTTPException(status_code=404, detail="workflow run not found")
     return events
+
+
+@app.post("/api/v1/triggers", response_model=TriggerDetail, status_code=201)
+async def create_trigger(spec: TriggerSpec, runtime: Runtime) -> TriggerDetail:
+    try:
+        return await runtime.triggers.create(spec)
+    except ValueError as exc:
+        raise api_error(exc, 422) from exc
+
+
+@app.get("/api/v1/triggers", response_model=list[TriggerDetail])
+async def list_triggers(runtime: Runtime) -> list[TriggerDetail]:
+    return await runtime.triggers.list()
+
+
+@app.get("/api/v1/triggers/{trigger_id}", response_model=TriggerDetail)
+async def get_trigger(trigger_id: UUID, runtime: Runtime) -> TriggerDetail:
+    trigger = await runtime.triggers.get(trigger_id)
+    if trigger is None:
+        raise HTTPException(status_code=404, detail="trigger not found")
+    return trigger
+
+
+@app.post(
+    "/api/v1/hooks/{trigger_id}",
+    response_model=WorkflowRunAccepted,
+    status_code=202,
+)
+async def invoke_webhook(
+    trigger_id: UUID,
+    payload: dict[str, Any],
+    runtime: Runtime,
+) -> WorkflowRunAccepted:
+    try:
+        return await runtime.webhook_triggers.invoke(
+            trigger_id,
+            payload,
+            get_trace_id() or str(uuid4()),
+        )
+    except TriggerNotFoundError as exc:
+        raise api_error(exc, 404) from exc
+    except TriggerDisabledError as exc:
+        raise api_error(exc, 409) from exc
+    except (TriggerInvocationError, WorkflowValidationError, SpecValidationError) as exc:
+        raise api_error(exc, 422) from exc
+    except ValueError as exc:
+        raise api_error(exc, 422) from exc
 
 
 @app.post("/api/v1/agents/design", response_model=DesignResponse)

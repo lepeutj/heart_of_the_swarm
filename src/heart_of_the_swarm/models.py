@@ -115,6 +115,11 @@ class WorkflowRunRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
     trace_id: Mapped[str] = mapped_column(String(64), index=True)
+    trigger_id: Mapped[str | None] = mapped_column(
+        ForeignKey("triggers.id"), nullable=True, index=True
+    )
+    trigger_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    trigger_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(20), index=True)
     input: Mapped[dict[str, Any]] = mapped_column(JSON)
     output: Mapped[Any | None] = mapped_column(JSON, nullable=True)

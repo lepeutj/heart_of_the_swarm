@@ -14,6 +14,7 @@ from heart_of_the_swarm.workflows.runs import (
     WorkflowRunAccepted,
     WorkflowRunDetail,
     WorkflowRunEvent,
+    WorkflowRunOrigin,
 )
 
 
@@ -34,11 +35,15 @@ class WorkflowRunRepository(RepositoryBase):
         version: WorkflowVersionDetail,
         trace_id: str,
         workflow_input: dict[str, Any],
+        origin: WorkflowRunOrigin | None = None,
     ) -> WorkflowRunAccepted:
         run = WorkflowRunRecord(
             id=str(uuid4()),
             workflow_version_id=str(version.id),
             trace_id=trace_id,
+            trigger_id=str(origin.trigger_id) if origin else None,
+            trigger_type=origin.trigger_type if origin else None,
+            trigger_event_id=str(origin.trigger_event_id) if origin else None,
             status=RunStatus.QUEUED,
             input=workflow_input,
             event_sequence=0,
@@ -48,7 +53,12 @@ class WorkflowRunRepository(RepositoryBase):
         self._add_event(
             run,
             "workflow.queued",
-            {"workflow_id": str(version.workflow_id), "workflow_version": version.version},
+            {
+                "workflow_id": str(version.workflow_id),
+                "workflow_version": version.version,
+                "trigger_id": str(origin.trigger_id) if origin else None,
+                "trigger_event_id": str(origin.trigger_event_id) if origin else None,
+            },
         )
         await self.session.commit()
         return self._accepted(run, version)
@@ -217,6 +227,9 @@ class WorkflowRunRepository(RepositoryBase):
             workflow_version_id=version.id,
             workflow_version=version.version,
             status=run.status,
+            trigger_id=run.trigger_id,
+            trigger_type=run.trigger_type,
+            trigger_event_id=run.trigger_event_id,
         )
 
     @classmethod

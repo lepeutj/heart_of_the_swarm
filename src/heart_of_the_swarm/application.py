@@ -13,6 +13,7 @@ from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import MCPToolLoader, create_default_registry
 from heart_of_the_swarm.triggers.service import TriggerService
+from heart_of_the_swarm.triggers.webhook import WebhookTriggerService
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflow_execution import WorkflowExecutor, WorkflowRunService
 from heart_of_the_swarm.workflow_service import WorkflowService
@@ -63,6 +64,7 @@ class Application:
             self.workflow_validator,
             self.tools,
         )
+        self.webhook_triggers = WebhookTriggerService(self.triggers, self.workflow_runs)
         self.executor = AgentExecutor(
             self.settings,
             self.database,
