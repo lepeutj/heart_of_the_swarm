@@ -17,6 +17,7 @@ import {
   loadProviderNames,
   loadSkillNames,
   loadTools,
+  loadLatestWorkflowVersion,
   loadWorkflow,
   loadWorkflows,
   saveWorkflow,
@@ -27,11 +28,14 @@ import {
   type WorkflowSummary,
   type AgentSpec,
   type ToolCapability,
+  type WorkflowRunEvent,
+  type WorkflowVersion,
 } from "./api";
 import { EdgeInspector } from "./components/EdgeInspector";
 import { JsonEditor } from "./components/JsonEditor";
 import { NodeInspector } from "./components/NodeInspector";
 import { MCPServerPanel } from "./components/mcp/MCPServerPanel";
+import { WorkflowRunPanel } from "./components/runs/WorkflowRunPanel";
 import {
   detachNodeAndReconnect,
   findInsertionEdge,
@@ -79,6 +83,8 @@ export default function App() {
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
   const [savedWorkflows, setSavedWorkflows] = useState<WorkflowSummary[]>([]);
+  const [publishedVersion, setPublishedVersion] = useState<WorkflowVersion | null>(null);
+  const [runNodeStates, setRunNodeStates] = useState<Record<string, string>>({});
   const [revision, setRevision] = useState<number | null>(null);
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const [graphKey, setGraphKey] = useState(0);
@@ -138,9 +144,12 @@ export default function App() {
   const displayNodes = useMemo(
     () => nodes.map((node) => ({
       ...node,
-      className: issueNodeIds.has(node.id) ? "node-invalid" : undefined,
+      className: [
+        issueNodeIds.has(node.id) ? "node-invalid" : "",
+        runNodeStates[node.id] ? `node-run-${runNodeStates[node.id]}` : "",
+      ].filter(Boolean).join(" ") || undefined,
     })),
-    [nodes, issueNodeIds],
+    [nodes, issueNodeIds, runNodeStates],
   );
   const displayEdges = useMemo(
     () => edges.map((edge) => ({
@@ -305,6 +314,8 @@ export default function App() {
     if (!saved) return;
     try {
       const version = await createWorkflowVersion(saved.id);
+      setPublishedVersion(version);
+      setRunNodeStates({});
       setSavedWorkflows(await loadWorkflows());
       setStatus(`Workflow version ${version.version} created`);
     } catch (error) {
@@ -347,7 +358,10 @@ export default function App() {
     if (!id) return;
     setStatus("Loading workflow…");
     try {
-      const saved = await loadWorkflow(id);
+      const [saved, latestVersion] = await Promise.all([
+        loadWorkflow(id),
+        loadLatestWorkflowVersion(id),
+      ]);
       workflowId.current = saved.id;
       setName(saved.spec.name);
       setDescription(saved.spec.description);
@@ -374,6 +388,8 @@ export default function App() {
         data: { condition: edge.condition ?? null },
       })));
       setRevision(saved.revision);
+      setPublishedVersion(latestVersion);
+      setRunNodeStates({});
       setViewport(saved.editor.viewport);
       setSelectedNodeId(null);
       setSelectedEdgeId(null);
@@ -400,6 +416,8 @@ export default function App() {
     setNodes(initialNodes);
     setEdges(initialEdges);
     setRevision(null);
+    setPublishedVersion(null);
+    setRunNodeStates({});
     setViewport({ x: 0, y: 0, zoom: 1 });
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
@@ -407,6 +425,18 @@ export default function App() {
     sequence.current = 1;
     setGraphKey((current) => current + 1);
     setStatus("New workflow draft");
+  }
+
+  function updateRunNodeStates(events: WorkflowRunEvent[]) {
+    const states: Record<string, string> = {};
+    for (const event of events) {
+      const nodeId = event.data.node_id;
+      if (typeof nodeId !== "string") continue;
+      if (event.event_type === "node.started") states[nodeId] = "running";
+      if (event.event_type === "node.completed") states[nodeId] = "completed";
+      if (event.event_type === "node.failed") states[nodeId] = "failed";
+    }
+    setRunNodeStates(states);
   }
 
   return (
@@ -575,6 +605,11 @@ export default function App() {
               </article>
             ))}
           </div>
+
+          <WorkflowRunPanel
+            version={publishedVersion}
+            onEvents={updateRunNodeStates}
+          />
 
           <details>
             <summary>WorkflowSpec JSON</summary>

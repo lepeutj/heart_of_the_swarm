@@ -56,6 +56,10 @@ class WorkflowService:
         async with self.database.session() as session:
             return await WorkflowRepository(session).get(str(workflow_id))
 
+    async def latest_version(self, workflow_id: UUID) -> WorkflowVersionDetail | None:
+        async with self.database.session() as session:
+            return await WorkflowRepository(session).get_latest_version(str(workflow_id))
+
     async def create_version(self, workflow_id: UUID) -> WorkflowVersionDetail | None:
         async with self.database.session() as session:
             draft = await WorkflowRepository(session).get(str(workflow_id))

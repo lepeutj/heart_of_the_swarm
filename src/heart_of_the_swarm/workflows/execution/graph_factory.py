@@ -41,18 +41,25 @@ class WorkflowGraph:
         self.graph = graph
         self.runner = runner
 
-    async def ainvoke(self, workflow_input: WorkflowState) -> ExecutionResult:
+    async def ainvoke(
+        self,
+        workflow_input: WorkflowState,
+        *,
+        recursion_limit: int | None = None,
+    ) -> ExecutionResult:
         """Run the StateGraph and return the stable workflow result model."""
         if not isinstance(workflow_input, dict):
             entrypoint = next(
                 node for node in self.workflow.nodes if node.id == self.workflow.entrypoint
             )
             self.runner.reject_non_object_input(entrypoint)
+        config = {"recursion_limit": recursion_limit} if recursion_limit is not None else None
         result = await self.graph.ainvoke(
             {
                 "data": deepcopy(workflow_input),
                 "executed_nodes": (),
-            }
+            },
+            config=config,
         )
         return ExecutionResult(
             workflow_id=self.workflow.id,
@@ -82,6 +89,8 @@ class WorkflowGraphFactory:
         *,
         callback: RuntimeCallbackHandler | None = None,
         workflow_run_id: str | None = None,
+        event_sink: Callable[[str, ValidatedWorkflowNode, dict[str, Any]], Awaitable[None]]
+        | None = None,
     ) -> WorkflowGraph:
         """Build one graph while resolving registered capabilities up front."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
@@ -94,6 +103,7 @@ class WorkflowGraphFactory:
             capabilities=self.capabilities,
             callback=callback,
             workflow_run_id=workflow_run_id,
+            event_sink=event_sink,
         )
         outgoing = self._outgoing_edges(workflow)
         graph_node_ids = {node.id: self._graph_node_id(node.id) for node in workflow.nodes}

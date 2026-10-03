@@ -94,6 +94,53 @@ export interface WorkflowDraft extends WorkflowSummary {
   editor: WorkflowEditorDocument;
 }
 
+export interface WorkflowVersion {
+  id: string;
+  workflow_id: string;
+  version: number;
+}
+
+export type WorkflowRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "timed_out";
+
+export interface WorkflowRun {
+  run_id: string;
+  trace_id: string;
+  workflow_id: string;
+  workflow_version_id: string;
+  workflow_version: number;
+  status: WorkflowRunStatus;
+  input: Record<string, unknown>;
+  output: unknown;
+  error: string | null;
+  attempt: number;
+  queued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface WorkflowRunAccepted {
+  run_id: string;
+  trace_id: string;
+  workflow_id: string;
+  workflow_version_id: string;
+  workflow_version: number;
+  status: WorkflowRunStatus;
+}
+
+export interface WorkflowRunEvent {
+  id: string;
+  workflow_run_id: string;
+  sequence: number;
+  event_type: string;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -192,6 +239,28 @@ export function saveWorkflow(
   });
 }
 
-export function createWorkflowVersion(id: string): Promise<{ version: number }> {
+export function createWorkflowVersion(id: string): Promise<WorkflowVersion> {
   return request(`/api/v1/workflows/${id}/versions`, { method: "POST" });
+}
+
+export function loadLatestWorkflowVersion(id: string): Promise<WorkflowVersion | null> {
+  return request(`/api/v1/workflows/${id}/versions/latest`);
+}
+
+export function createWorkflowRun(
+  versionId: string,
+  input: Record<string, unknown>,
+): Promise<WorkflowRunAccepted> {
+  return request(`/api/v1/workflow-versions/${versionId}/runs`, {
+    method: "POST",
+    body: JSON.stringify({ input }),
+  });
+}
+
+export function loadWorkflowRun(runId: string): Promise<WorkflowRun> {
+  return request(`/api/v1/workflow-runs/${runId}`);
+}
+
+export function loadWorkflowRunEvents(runId: string): Promise<WorkflowRunEvent[]> {
+  return request(`/api/v1/workflow-runs/${runId}/events`);
 }

@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=60, ge=15, le=3_600)
     worker_heartbeat_seconds: int = Field(default=15, ge=5, le=300)
     worker_max_attempts: int = Field(default=3, ge=1, le=20)
+    workflow_timeout_seconds: float = Field(default=120, gt=0, le=3_600)
+    workflow_recursion_limit: int = Field(default=100, ge=2, le=10_000)
 
     @field_validator("allowed_agent_models", mode="before")
     @classmethod

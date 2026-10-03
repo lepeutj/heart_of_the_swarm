@@ -93,6 +93,10 @@ GET  /api/v1/workflows
 GET  /api/v1/workflows/{id}
 PUT  /api/v1/workflows/{id}
 POST /api/v1/workflows/{id}/versions
+GET  /api/v1/workflows/{id}/versions/latest
+POST /api/v1/workflow-versions/{id}/runs
+GET  /api/v1/workflow-runs/{id}
+GET  /api/v1/workflow-runs/{id}/events
 GET  /health
 GET  /ready
 POST /api/v1/workflows/validate
@@ -121,17 +125,17 @@ Example design request:
 }
 ```
 
-The draft is returned for review and is not executed automatically. Starting a run returns
-`202 Accepted` with a run ID. The UI polls the run resource while the worker executes the pinned
-agent version.
+The draft is returned for review and is not executed automatically. Starting an agent or immutable
+workflow-version run returns `202 Accepted` with a run ID. The UI polls the run resource while the
+worker executes the pinned version.
 
 ## Runtime architecture
 
 The API is the control plane: it designs and versions agents, validates requests, and queues runs.
-The worker is the execution plane: it claims queued runs and persists their lifecycle. It delegates
-the framework invocation to a persistence-independent `AgentRunner`, which validates the saved
-specification, resolves the model, builds the LangChain agent, and returns its final response. Both
-processes use the same application image and PostgreSQL database.
+The worker is the execution plane: it fairly claims queued agent and workflow runs and persists
+their lifecycle. Agent runs delegate to `AgentRunner`; workflow runs rebuild the validated graph and
+delegate traversal to LangGraph. Both processes use the same application image and PostgreSQL
+database.
 
 PostgreSQL is also the initial queue. Workers claim rows atomically, renew a lease while working,
 and recover expired leases after a crash. More workers can be added without changing the API. A
@@ -152,7 +156,13 @@ The workflow contract defines input, inline tool-enabled LLM, saved agent, trans
 and output nodes. Inline LLM configuration is an `AgentSpec` executed through `create_agent`; saved
 agent nodes reference immutable versions. LangGraph remains the only orchestration engine.
 Workflow drafts store executable specifications separately from React Flow layout and publish into
-immutable validated versions.
+immutable validated versions. Published versions can be queued from the editor, bounded by timeout
+and LangGraph recursion limits, followed through ordered workflow/node business events, and read
+back with their structured output.
+
+Workflow runs are not replayed automatically after a worker lease expires. Without durable
+checkpoints and connector idempotency, replaying a partially executed graph could repeat external
+side effects.
 
 For the file-by-file path from a React node to LangGraph and LangChain, see
 [`docs/node-development.md`](docs/node-development.md).
@@ -245,8 +255,9 @@ Frontend changes additionally require `pnpm test` and `pnpm build` from `fronten
 
 ## Current boundaries
 
-The UI is intentionally functional rather than visually final. Cancellation is cooperative: a
-model request already in progress finishes before the worker observes it. Authentication,
-role-based access, hard execution timeouts, prompt redaction, retention policies, and production
-network controls remain future work. Do not expose the current stack publicly without
-authentication and rate limits.
+The UI is intentionally functional rather than visually final. Agent cancellation is cooperative:
+a model request already in progress finishes before the worker observes it. Workflow runs have a
+hard timeout but do not yet support cancellation, checkpoints, resume, or human approval.
+Authentication, role-based access, prompt redaction, retention policies, and production network
+controls remain future work. Do not expose the current stack publicly without authentication and
+rate limits.

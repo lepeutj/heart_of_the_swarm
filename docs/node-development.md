@@ -113,6 +113,10 @@ A draft may be incomplete. A `WorkflowVersion` must parse and validate completel
 - `tests/test_workflow_llm_execution.py`: inline agent delegation.
 - `tests/test_workflow_agent_execution.py`: saved-version delegation.
 - `tests/test_workflow_connectors.py`: sequential deterministic capability execution.
+- `src/heart_of_the_swarm/workflow_execution.py`: durable version execution and runtime bounds.
+- `src/heart_of_the_swarm/repositories/workflow_runs.py`: queue, leases, ordered business events,
+  and final result persistence.
+- `tests/test_workflow_runs.py`: durable success, timeout, contract drift, and no-replay recovery.
 - `tests/test_workflow_execution.py`: input, transform, condition, and output behavior.
 - `tests/test_workflow_documents.py`: drafts and immutable versions.
 - `frontend/src/workflow.test.ts` and `frontend/src/graph.test.ts`: serialization and graph editing.

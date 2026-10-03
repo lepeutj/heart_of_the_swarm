@@ -1,5 +1,6 @@
+import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, NoReturn
@@ -64,10 +65,13 @@ class WorkflowNodeRunner:
         capabilities: ToolRegistry | None = None,
         callback: RuntimeCallbackHandler | None = None,
         workflow_run_id: str | None = None,
+        event_sink: Callable[[str, ValidatedWorkflowNode, dict[str, Any]], Awaitable[None]]
+        | None = None,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
         self.workflow_run_id = workflow_run_id
+        self.event_sink = event_sink
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
         self.capabilities = capabilities
@@ -88,7 +92,7 @@ class WorkflowNodeRunner:
             )
 
         current_execution = (*executed_nodes, node.id)
-        self._record_node("node.started", node)
+        await self._record_node("node.started", node)
         try:
             if isinstance(node.config, InputNodeConfig):
                 self._validate_json(node, state, self.workflow.input_schema, "input")
@@ -127,8 +131,18 @@ class WorkflowNodeRunner:
                     message=f"Node type '{node.type}' is not supported by this runtime.",
                     node=node,
                 )
+        except asyncio.CancelledError:
+            await self._record_node(
+                "node.failed",
+                node,
+                {
+                    "error_code": "workflow.execution.cancelled",
+                    "safe_message": f"Node '{node.id}' execution was cancelled.",
+                },
+            )
+            raise
         except WorkflowExecutionError as exc:
-            self._record_node(
+            await self._record_node(
                 "node.failed",
                 node,
                 {
@@ -138,7 +152,7 @@ class WorkflowNodeRunner:
             )
             raise
 
-        self._record_node("node.completed", node)
+        await self._record_node("node.completed", node)
         return result
 
     def reject_non_object_input(self, node: ValidatedWorkflowNode) -> NoReturn:
@@ -431,20 +445,22 @@ class WorkflowNodeRunner:
             "node_type": str(node.type),
         }
 
-    def _record_node(
+    async def _record_node(
         self,
         event_type: str,
         node: ValidatedWorkflowNode,
         payload: dict[str, Any] | None = None,
     ) -> None:
         """Record node lifecycle through the existing trajectory callback."""
-        if self.callback is None:
-            return
-        self.callback.record(
-            event_type,
-            component=node.id,
-            payload={**self._node_context(node), **(payload or {})},
-        )
+        event_payload = {**self._node_context(node), **(payload or {})}
+        if self.callback is not None:
+            self.callback.record(
+                event_type,
+                component=node.id,
+                payload=event_payload,
+            )
+        if self.event_sink is not None:
+            await self.event_sink(event_type, node, event_payload)
 
     def _raise(
         self,

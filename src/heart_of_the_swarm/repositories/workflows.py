@@ -68,6 +68,20 @@ class WorkflowRepository(RepositoryBase):
         workflow = await self.session.get(WorkflowRecord, workflow_id)
         return self._detail(workflow) if workflow else None
 
+    async def get_version(self, version_id: str) -> WorkflowVersionDetail | None:
+        version = await self.session.get(WorkflowVersionRecord, version_id)
+        return self._version_detail(version) if version else None
+
+    async def get_latest_version(self, workflow_id: str) -> WorkflowVersionDetail | None:
+        statement = (
+            select(WorkflowVersionRecord)
+            .where(WorkflowVersionRecord.workflow_id == workflow_id)
+            .order_by(WorkflowVersionRecord.version.desc())
+            .limit(1)
+        )
+        version = (await self.session.execute(statement)).scalar_one_or_none()
+        return self._version_detail(version) if version else None
+
     async def create_version(
         self,
         workflow_id: str,

@@ -58,6 +58,12 @@ from heart_of_the_swarm.workflows.documents import (
     WorkflowSummary,
     WorkflowVersionDetail,
 )
+from heart_of_the_swarm.workflows.runs import (
+    WorkflowRunAccepted,
+    WorkflowRunDetail,
+    WorkflowRunEvent,
+    WorkflowRunRequest,
+)
 
 PACKAGE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -338,6 +344,62 @@ async def create_workflow_version(
     if version is None:
         raise HTTPException(status_code=404, detail="workflow not found")
     return version
+
+
+@app.get(
+    "/api/v1/workflows/{workflow_id}/versions/latest",
+    response_model=WorkflowVersionDetail | None,
+)
+async def get_latest_workflow_version(
+    workflow_id: UUID,
+    runtime: Runtime,
+) -> WorkflowVersionDetail | None:
+    return await runtime.workflows.latest_version(workflow_id)
+
+
+@app.post(
+    "/api/v1/workflow-versions/{version_id}/runs",
+    response_model=WorkflowRunAccepted,
+    status_code=202,
+)
+async def run_workflow_version(
+    version_id: UUID,
+    request: WorkflowRunRequest,
+    runtime: Runtime,
+) -> WorkflowRunAccepted:
+    try:
+        return await runtime.workflow_runs.queue(
+            version_id,
+            request.input,
+            get_trace_id() or str(uuid4()),
+        )
+    except ValueError as exc:
+        status_code = 404 if str(exc) == "workflow version not found" else 422
+        raise api_error(exc, status_code) from exc
+    except (WorkflowValidationError, SpecValidationError) as exc:
+        raise api_error(exc, 422) from exc
+
+
+@app.get("/api/v1/workflow-runs/{run_id}", response_model=WorkflowRunDetail)
+async def get_workflow_run(run_id: UUID, runtime: Runtime) -> WorkflowRunDetail:
+    run = await runtime.workflow_runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="workflow run not found")
+    return run
+
+
+@app.get(
+    "/api/v1/workflow-runs/{run_id}/events",
+    response_model=list[WorkflowRunEvent],
+)
+async def list_workflow_run_events(
+    run_id: UUID,
+    runtime: Runtime,
+) -> list[WorkflowRunEvent]:
+    events = await runtime.workflow_runs.events(run_id)
+    if events is None:
+        raise HTTPException(status_code=404, detail="workflow run not found")
+    return events
 
 
 @app.post("/api/v1/agents/design", response_model=DesignResponse)

@@ -110,6 +110,13 @@ textarea { min-height: 76px; resize: vertical; font-family: ui-monospace, SFMono
 .mcp-state.ready { color: #79d19c; }
 .mcp-state.error { color: #ff938c; }
 .mcp-state.not_loaded { color: #f4c66d; }
+.workflow-run-panel { margin-top: 24px; }
+.run-events { display: grid; gap: 4px; max-height: 180px; overflow: auto; padding-left: 20px; }
+.run-events li { color: #8fa097; font-size: 11px; }
+.run-events strong { margin-right: 6px; color: #c7d5cd; }
+.react-flow__node.node-run-running { box-shadow: 0 0 0 2px #f4c66d; }
+.react-flow__node.node-run-completed { box-shadow: 0 0 0 2px #79d19c; }
+.react-flow__node.node-run-failed { box-shadow: 0 0 0 2px #ff938c; }
 details { margin-top: 20px; }
 summary { cursor: pointer; color: #a8b7ad; font-size: 12px; }
 pre { max-height: 360px; overflow: auto; padding: 10px; border-radius: 6px; color: #b9c9bf; background: #090c0a; font-size: 10px; white-space: pre-wrap; }
