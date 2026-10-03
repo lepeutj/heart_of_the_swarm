@@ -12,6 +12,7 @@ from heart_of_the_swarm.service import AgentService
 from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import MCPToolLoader, create_default_registry
+from heart_of_the_swarm.triggers.service import TriggerService
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflow_execution import WorkflowExecutor, WorkflowRunService
 from heart_of_the_swarm.workflow_service import WorkflowService
@@ -56,6 +57,7 @@ class Application:
             self.skills,
         )
         self.runs = RunService(self.database, self.validator)
+        self.triggers = TriggerService(self.database)
         self.workflow_runs = WorkflowRunService(
             self.database,
             self.workflow_validator,

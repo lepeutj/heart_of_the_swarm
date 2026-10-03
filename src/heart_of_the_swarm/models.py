@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -76,6 +77,34 @@ class MCPServerRecord(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     url: Mapped[str] = mapped_column(String(2048))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TriggerRecord(Base):
+    __tablename__ = "triggers"
+    __table_args__ = (
+        CheckConstraint(
+            "trigger_type IN ('manual', 'webhook', 'schedule')",
+            name="ck_triggers_type",
+        ),
+        CheckConstraint(
+            "target_type IN ('agent', 'workflow')",
+            name="ck_triggers_target_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    trigger_type: Mapped[str] = mapped_column(String(20), index=True)
+    target_type: Mapped[str] = mapped_column(String(20), index=True)
+    target_version_id: Mapped[str] = mapped_column(String(36), index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    next_fire_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
