@@ -82,6 +82,36 @@ to the server-side registry:
 - `calculator`
 - `document_reader`
 
+## Standalone workflow runtime
+
+Export one immutable workflow version:
+
+```bash
+uv run --locked swarm-export-workflow <workflow-version-uuid> ./workflow-artifact
+```
+
+The output contains `manifest.json` and `workflow.json`. Build and run the generic image:
+
+```bash
+docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflow-runtime .
+docker run --rm -p 8080:8000 \
+  --mount type=bind,source="$(pwd)/workflow-artifact",target=/app/artifact,readonly \
+  -e OPENAI_API_KEY \
+  heart-of-the-swarm-workflow-runtime
+```
+
+Invoke it with the workflow's declared object input:
+
+```bash
+curl -X POST http://localhost:8080/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"input":{"expression":"2 + 3 * 4"}}'
+```
+
+The runtime reconstructs LangGraph from the declaration and uses the same portable runner as the
+worker. It does not connect to PostgreSQL. V1 supports built-in capabilities and inline agents;
+MCP capabilities, saved-agent references, and external Skill files are rejected during export.
+
 ## API
 
 ```text

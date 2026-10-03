@@ -27,6 +27,7 @@ dependencies = [
 
 [project.scripts]
 swarm-export-agent = "heart_of_the_swarm.artifacts.cli:main"
+swarm-export-workflow = "heart_of_the_swarm.artifacts.workflow_cli:main"
 
 [dependency-groups]
 dev = [

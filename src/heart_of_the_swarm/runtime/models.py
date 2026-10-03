@@ -1,22 +1,26 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
-from heart_of_the_swarm.artifacts.models import AgentArtifactManifest
+from heart_of_the_swarm.artifacts.models import (
+    AgentArtifactManifest,
+    WorkflowArtifactManifest,
+)
 
 
 class InvokeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    input: str = Field(min_length=1, max_length=10_000)
+    input: Any
 
 
 class InvokeResponse(BaseModel):
     run_id: str
     trace_id: str
-    output: str
+    output: Any
 
 
 class RuntimeMetadata(BaseModel):
-    manifest: AgentArtifactManifest
-    agent: dict[str, Any]
+    manifest: AgentArtifactManifest | WorkflowArtifactManifest
+    agent: dict[str, Any] | None = None
+    workflow: dict[str, Any] | None = None

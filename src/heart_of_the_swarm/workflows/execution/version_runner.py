@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from heart_of_the_swarm.tools import ToolRegistry
-from heart_of_the_swarm.workflows.documents import WorkflowVersionDetail
+from heart_of_the_swarm.workflows.documents import WorkflowVersionSnapshot
 from heart_of_the_swarm.workflows.execution.graph_factory import WorkflowGraphFactory
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
 from heart_of_the_swarm.workflows.execution.validation import validate_workflow_input
@@ -51,7 +51,7 @@ class WorkflowVersionRunner:
 
     async def run(
         self,
-        version: WorkflowVersionDetail,
+        version: WorkflowVersionSnapshot,
         input_data: dict[str, Any],
         policy: WorkflowRuntimePolicy,
         event_sink: WorkflowEventSink | None = None,

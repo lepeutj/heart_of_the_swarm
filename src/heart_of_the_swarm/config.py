@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     mlflow_experiment: str = "heart-of-the-swarm"
 
     agent_artifact_dir: Path = Path("/app/artifact")
+    workflow_artifact_dir: Path = Path("/app/artifact")
     skills_dir: Path = Path("skills")
 
     worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)

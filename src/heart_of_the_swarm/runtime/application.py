@@ -56,6 +56,8 @@ class StandaloneAgentRuntime:
         )
 
     async def invoke(self, agent_input: str) -> InvokeResponse:
+        if not isinstance(agent_input, str) or not 1 <= len(agent_input) <= 10_000:
+            raise ValueError("agent input must be a non-empty string of at most 10000 characters")
         artifact = self._artifact()
         run_id = str(uuid4())
         trace_id = str(uuid4())

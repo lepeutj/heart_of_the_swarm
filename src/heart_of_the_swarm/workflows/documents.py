@@ -55,11 +55,18 @@ class WorkflowDraftDetail(WorkflowSummary):
     editor: WorkflowEditorDocument
 
 
-class WorkflowVersionDetail(BaseModel):
+class WorkflowVersionSnapshot(BaseModel):
+    """Persistence-independent data required to execute one immutable version."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     id: UUID
     workflow_id: UUID
     version: int
     spec: WorkflowSpec
+    capability_contracts: tuple[CapabilityContract, ...] = ()
+
+
+class WorkflowVersionDetail(WorkflowVersionSnapshot):
     editor: WorkflowEditorDocument
-    capability_contracts: list[CapabilityContract] = Field(default_factory=list)
     created_at: datetime
