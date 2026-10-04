@@ -44,8 +44,16 @@ describe("toWorkflowSpec", () => {
   });
 
   it("configures an inline agent with the shared AgentSpec", () => {
-    expect(defaultConfig("agent")).toMatchObject({
-      source: { type: "inline", agent: { name: "NewAgent", tools: [], skills: [] } },
+    expect(defaultConfig("agent", "openrouter")).toMatchObject({
+      source: {
+        type: "inline",
+        agent: {
+          name: "NewAgent",
+          model: { provider: "openrouter" },
+          tools: [],
+          skills: [],
+        },
+      },
       inputs: { request: { from_state: "$.request" } },
       outputs: { answer: { to_state: "$.answer" } },
     });

@@ -190,7 +190,7 @@ export default function App() {
         data: {
           label: nodeType.charAt(0).toUpperCase() + nodeType.slice(1),
           nodeType,
-          config: defaultConfig(nodeType),
+          config: defaultConfig(nodeType, providerNames[0]),
         },
       },
     ]);

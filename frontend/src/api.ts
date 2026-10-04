@@ -30,6 +30,17 @@ interface ProviderStatus {
   configured: boolean;
 }
 
+export interface ModelDescriptor {
+  provider: string;
+  model_id: string;
+  name: string;
+  context_length: number | null;
+  prompt_price: string | null;
+  completion_price: string | null;
+  supports_tools: boolean;
+  supports_structured_output: boolean;
+}
+
 export interface AgentOption {
   id: string;
   version_id: string;
@@ -195,7 +206,11 @@ export function uploadSkill(name: string, content: string): Promise<{ name: stri
 
 export async function loadProviderNames(): Promise<string[]> {
   const result = await request<ProviderStatus[]>("/api/v1/providers");
-  return result.map((provider) => provider.id);
+  return result.filter((provider) => provider.configured).map((provider) => provider.id);
+}
+
+export function loadModels(provider: string): Promise<ModelDescriptor[]> {
+  return request(`/api/v1/models?provider=${encodeURIComponent(provider)}`);
 }
 
 export function validateWorkflow(spec: WorkflowSpec): Promise<ValidationResult> {

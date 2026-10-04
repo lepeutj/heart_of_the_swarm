@@ -108,7 +108,7 @@ export function toWorkflowSpec(
   };
 }
 
-export function defaultConfig(nodeType: NodeType): JsonObject {
+export function defaultConfig(nodeType: NodeType, defaultProvider = "openai"): JsonObject {
   switch (nodeType) {
     case "agent":
       return {
@@ -118,7 +118,7 @@ export function defaultConfig(nodeType: NodeType): JsonObject {
             name: "NewAgent",
             goal: "Complete the assigned task",
             instructions: "Return a clear and accurate answer.",
-            model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
+            model: { provider: defaultProvider, model_id: "", temperature: 0, max_tokens: null },
             tools: [],
             skills: [],
           },

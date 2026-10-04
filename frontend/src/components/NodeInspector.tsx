@@ -4,6 +4,7 @@ import type { AgentOption, ToolCapability } from "../api";
 import type { EditorNode, JsonObject } from "../workflow";
 import { AgentDataFlowEditor, WorkflowOutputEditor } from "./DataFlowEditor";
 import { JsonEditor } from "./JsonEditor";
+import { ModelEditor } from "./ModelEditor";
 
 interface NodeInspectorProps {
   node: EditorNode;
@@ -51,55 +52,6 @@ function ValueEditor({ value, onApply }: { value: unknown; onApply: (value: unkn
   );
 }
 
-function ModelEditor({
-  model,
-  providerNames,
-  onChange,
-}: {
-  model: JsonObject;
-  providerNames: string[];
-  onChange: (field: string, value: unknown) => void;
-}) {
-  const provider = asString(model.provider);
-  return (
-    <>
-      <label>
-        Provider
-        <select value={provider} onChange={(event) => onChange("provider", event.target.value)}>
-          {!providerNames.includes(provider) && <option value={provider}>{provider}</option>}
-          {providerNames.map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>
-      </label>
-      <label>Model ID<input value={asString(model.model_id)} onChange={(event) => onChange("model_id", event.target.value)} /></label>
-      <div className="field-grid">
-        <label>
-          Temperature
-          <input
-            type="number"
-            min="0"
-            max="2"
-            step="0.1"
-            value={typeof model.temperature === "number" ? model.temperature : 0}
-            onChange={(event) => onChange("temperature", Number(event.target.value))}
-          />
-        </label>
-        <label>
-          Max tokens
-          <input
-            type="number"
-            min="1"
-            value={typeof model.max_tokens === "number" ? model.max_tokens : ""}
-            onChange={(event) => onChange(
-              "max_tokens",
-              event.target.value ? Number(event.target.value) : null,
-            )}
-          />
-        </label>
-      </div>
-    </>
-  );
-}
-
 function AgentEditor({
   config,
   toolNames,
@@ -133,7 +85,12 @@ function AgentEditor({
                     name: "NewAgent",
                     goal: "Complete the assigned task",
                     instructions: "Return a clear and accurate answer.",
-                    model: { provider: "openai", model_id: "", temperature: 0, max_tokens: null },
+                    model: {
+                      provider: providerNames[0] ?? "openai",
+                      model_id: "",
+                      temperature: 0,
+                      max_tokens: null,
+                    },
                     tools: [],
                     skills: [],
                   },
@@ -197,17 +154,20 @@ function InlineAgentEditor({ config, toolNames, skillNames, providerNames, onCha
     });
   }
 
-  function updateModel(field: string, value: unknown) {
-    updateAgent("model", { ...model, [field]: value });
-  }
-
   return (
     <div className="typed-editor">
       <p className="field-help">This inline AgentSpec is executed by LangChain and may call its allowed tools.</p>
       <label>Name<input value={asString(agent.name)} onChange={(event) => updateAgent("name", event.target.value)} /></label>
       <label>Goal<textarea value={asString(agent.goal)} onChange={(event) => updateAgent("goal", event.target.value)} /></label>
       <label>Instructions<textarea value={asString(agent.instructions)} onChange={(event) => updateAgent("instructions", event.target.value)} /></label>
-      <ModelEditor model={model} providerNames={providerNames} onChange={updateModel} />
+      <ModelEditor
+        model={model}
+        providerNames={providerNames}
+        requiresTools={selectedTools.length > 0}
+        requiresStructuredOutput={config.response_schema !== null
+          && config.response_schema !== undefined}
+        onChange={(nextModel) => updateAgent("model", nextModel)}
+      />
       <fieldset>
         <legend>Allowed tools</legend>
         <p className="field-help">The model chooses among these tools during its agent loop.</p>

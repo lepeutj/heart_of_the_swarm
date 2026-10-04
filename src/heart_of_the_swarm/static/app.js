@@ -33,9 +33,17 @@ async function loadModels() {
   const provider = $("provider").value;
   if (!provider) return;
   const models = await api(`/api/v1/models?provider=${encodeURIComponent(provider)}`);
+  const isFree = (model) => model.prompt_price !== null
+    && model.completion_price !== null
+    && Number(model.prompt_price) === 0
+    && Number(model.completion_price) === 0;
+  models.sort((left, right) => Number(isFree(right)) - Number(isFree(left))
+    || left.name.localeCompare(right.name));
   $("model").replaceChildren(...models.map((model) => {
-    const capabilities = model.supports_tools ? " · tools" : "";
-    return new Option(`${model.name}${capabilities}`, model.model_id);
+    const capabilities = [isFree(model) ? "free" : null, model.supports_tools ? "tools" : null]
+      .filter(Boolean);
+    const suffix = capabilities.length ? ` · ${capabilities.join(" · ")}` : "";
+    return new Option(`${model.name}${suffix}`, model.model_id);
   }));
 }
 
