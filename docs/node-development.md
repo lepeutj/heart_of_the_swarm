@@ -36,7 +36,7 @@ traversal and routing.
 | `connector` | Registered capability plus mappings | One direct capability invocation |
 | `transform` | Restricted state assignments | Small deterministic product adapter |
 | `condition` | Conditions stored on ordered outgoing edges | LangGraph conditional edges |
-| `output` | Output state path | LangGraph terminal node; validates output |
+| `output` | Named state projection or legacy output path | LangGraph terminal node; validates output |
 
 Agent tools belong to `AgentSpec.tools`. A connector reuses the same registered implementation but
 invokes it exactly once without model choice.

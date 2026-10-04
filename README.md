@@ -1,8 +1,11 @@
 # Heart of the Swarm
 
-Heart of the Swarm designs, validates, saves, versions, and runs configurable LangGraph agents.
-It includes a small web interface, OpenAI and OpenRouter providers, PostgreSQL persistence,
-structured audit logs, model-usage aggregation, and optional MLflow traces.
+Heart of the Swarm designs, validates, versions, and runs LangChain agents and LangGraph workflows.
+It includes a visual editor, OpenAI and OpenRouter providers, PostgreSQL persistence, structured
+audit logs, model-usage aggregation, portable Docker runtimes, and optional MLflow traces.
+
+For the frozen V1 architecture, its boundaries, and a reproducible five-minute demonstration, see
+[`docs/v1-demo.md`](docs/v1-demo.md).
 
 ## Docker pack
 
@@ -81,6 +84,8 @@ to the server-side registry:
 - `web_search`
 - `calculator`
 - `document_reader`
+- `http_get_json`
+- `database_query`
 
 ## Standalone workflow runtime
 
@@ -123,6 +128,12 @@ MLflow identifier is omitted.
 GET  /api/v1/providers
 GET  /api/v1/models?provider=openrouter
 GET  /api/v1/tools
+GET  /api/v1/skills
+POST /api/v1/skills
+GET  /api/v1/mcp/servers
+POST /api/v1/mcp/servers
+POST /api/v1/mcp/servers/{id}/test
+POST /api/v1/mcp/servers/{id}/refresh
 GET  /api/v1/workflows/capabilities
 GET  /api/v1/workflows
 GET  /api/v1/workflows/{id}
@@ -192,9 +203,10 @@ payloads can contain prompts, user data, and retrieved documents and must be pro
 
 ## Workflow foundation
 
-The workflow contract defines input, inline tool-enabled LLM, saved agent, transform, condition,
-and output nodes. Inline LLM configuration is an `AgentSpec` executed through `create_agent`; saved
-agent nodes reference immutable versions. LangGraph remains the only orchestration engine.
+The workflow contract defines input, agent, connector, transform, condition, and output nodes. One
+`AGENT` node either embeds an `AgentSpec` or references an immutable agent version; both execute
+through `create_agent`. A `CONNECTOR` invokes one registered capability exactly once without model
+choice. LangGraph remains the only orchestration engine.
 Workflow drafts store executable specifications separately from React Flow layout and publish into
 immutable validated versions. Published versions can be queued from the editor, bounded by timeout
 and LangGraph recursion limits, followed through ordered workflow/node business events, and read
@@ -301,3 +313,6 @@ hard timeout but do not yet support cancellation, checkpoints, resume, or human 
 Authentication, role-based access, prompt redaction, retention policies, and production network
 controls remain future work. Do not expose the current stack publicly without authentication and
 rate limits.
+
+The schedule trigger contract can be stored, but no scheduler claims due triggers in V1. Parallel
+branches, durable checkpoints, retries, streaming, and human approval are also intentionally V2.

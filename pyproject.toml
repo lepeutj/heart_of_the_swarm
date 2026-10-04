@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "heart-of-the-swarm"
 version = "0.2.0"
-description = "A portable runtime that designs, validates, builds, and runs task-specific agents."
+description = "Build, version, run, trace, and export LangChain agents and LangGraph workflows."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

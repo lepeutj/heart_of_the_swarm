@@ -61,3 +61,6 @@ jobs:
 
       - name: Build standalone agent runtime image
         run: docker build --file docker/agent-runtime.Dockerfile --tag heart-of-the-swarm-agent-runtime:ci .
+
+      - name: Build standalone workflow runtime image
+        run: docker build --file docker/workflow-runtime.Dockerfile --tag heart-of-the-swarm-workflow-runtime:ci .
