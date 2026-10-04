@@ -112,6 +112,11 @@ The runtime reconstructs LangGraph from the declaration and uses the same portab
 worker. It does not connect to PostgreSQL. V1 supports built-in capabilities and inline agents;
 MCP capabilities, saved-agent references, and external Skill files are rejected during export.
 
+Set `MLFLOW_ENABLED=true`, `MLFLOW_TRACKING_URI`, and `MLFLOW_EXPERIMENT` when starting either
+standalone runtime to enable LangChain/LangGraph autotracing. `/invoke` then returns both the
+product `trace_id` and `mlflow_trace_id`. If MLflow is unavailable, execution continues and the
+MLflow identifier is omitted.
+
 ## API
 
 ```text

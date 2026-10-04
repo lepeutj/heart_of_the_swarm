@@ -73,6 +73,10 @@ class StandaloneWorkflowRuntime:
                     contract.capability_id for contract in artifact.workflow.capability_contracts
                 ],
             },
+            observability={
+                "mlflow": self.telemetry.enabled,
+                "langchain_autolog": self.telemetry.langchain_autolog_enabled,
+            },
         )
 
     async def invoke(self, workflow_input: dict[str, Any]) -> InvokeResponse:
@@ -81,6 +85,7 @@ class StandaloneWorkflowRuntime:
         artifact = self._artifact()
         run_id = str(uuid4())
         trace_id = str(uuid4())
+        mlflow_trace_id = None
         with (
             trace_context(trace_id),
             self.telemetry.span(
@@ -94,6 +99,7 @@ class StandaloneWorkflowRuntime:
                 },
             ) as span,
         ):
+            mlflow_trace_id = self.telemetry.trace_id(span)
             self.telemetry.set_inputs(span, workflow_input)
             result = await self.runner.run(
                 self._snapshot(artifact),
@@ -105,7 +111,12 @@ class StandaloneWorkflowRuntime:
                 execution_id=run_id,
             )
             self.telemetry.set_outputs(span, {"output": result.output})
-        return InvokeResponse(run_id=run_id, trace_id=trace_id, output=result.output)
+        return InvokeResponse(
+            run_id=run_id,
+            trace_id=trace_id,
+            mlflow_trace_id=mlflow_trace_id,
+            output=result.output,
+        )
 
     def _artifact(self) -> WorkflowArtifact:
         if self.artifact is None:

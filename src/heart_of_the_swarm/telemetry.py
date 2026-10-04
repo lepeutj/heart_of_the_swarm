@@ -9,6 +9,7 @@ from heart_of_the_swarm.observability import audit_event
 class Telemetry:
     def __init__(self, settings: Settings) -> None:
         self.enabled = settings.mlflow_enabled
+        self.langchain_autolog_enabled = False
         self._mlflow = None
         if not self.enabled:
             return
@@ -21,6 +22,16 @@ class Telemetry:
         except Exception as exc:
             self.enabled = False
             audit_event("mlflow.unavailable", error_type=type(exc).__name__, error_message=str(exc))
+            return
+        try:
+            mlflow.langchain.autolog()
+            self.langchain_autolog_enabled = True
+        except Exception as exc:
+            audit_event(
+                "mlflow.langchain_autolog.unavailable",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
 
     @contextmanager
     def span(self, name: str, attributes: dict[str, Any]):
@@ -69,3 +80,9 @@ class Telemetry:
                 span.set_outputs(outputs)
         except Exception as exc:
             audit_event("mlflow.span.failed", error_type=type(exc).__name__, error_message=str(exc))
+
+    @staticmethod
+    def trace_id(span: Any) -> str | None:
+        """Return the MLflow trace identifier for an active span when available."""
+        trace_id = getattr(span, "trace_id", None)
+        return trace_id if isinstance(trace_id, str) else None

@@ -58,11 +58,11 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/metadata", response_model=RuntimeMetadata)
+    @app.get("/metadata", response_model=RuntimeMetadata, response_model_exclude_none=True)
     async def metadata(request: Request) -> RuntimeMetadata:
         return request.app.state.runtime.metadata()
 
-    @app.post("/invoke", response_model=InvokeResponse)
+    @app.post("/invoke", response_model=InvokeResponse, response_model_exclude_none=True)
     async def invoke(request: InvokeRequest, http_request: Request) -> InvokeResponse:
         try:
             return await http_request.app.state.runtime.invoke(request.input)

@@ -53,6 +53,10 @@ class StandaloneAgentRuntime:
                 "model": artifact.agent.spec.model.model_dump(mode="json"),
                 "tools": artifact.agent.spec.tools,
             },
+            observability={
+                "mlflow": self.telemetry.enabled,
+                "langchain_autolog": self.telemetry.langchain_autolog_enabled,
+            },
         )
 
     async def invoke(self, agent_input: str) -> InvokeResponse:
@@ -61,6 +65,7 @@ class StandaloneAgentRuntime:
         artifact = self._artifact()
         run_id = str(uuid4())
         trace_id = str(uuid4())
+        mlflow_trace_id = None
         callback = RuntimeCallbackHandler(
             "deployed_agent",
             artifact.agent.spec.model.provider,
@@ -79,6 +84,7 @@ class StandaloneAgentRuntime:
                 },
             ) as span,
         ):
+            mlflow_trace_id = self.telemetry.trace_id(span)
             self.telemetry.set_inputs(span, {"input": agent_input})
             output = await self.runner.invoke(
                 artifact.agent.spec,
@@ -92,7 +98,12 @@ class StandaloneAgentRuntime:
                 },
             )
             self.telemetry.set_outputs(span, {"output": output})
-        return InvokeResponse(run_id=run_id, trace_id=trace_id, output=output)
+        return InvokeResponse(
+            run_id=run_id,
+            trace_id=trace_id,
+            mlflow_trace_id=mlflow_trace_id,
+            output=output,
+        )
 
     def _artifact(self) -> AgentArtifact:
         if self.artifact is None:
