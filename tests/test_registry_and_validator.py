@@ -27,8 +27,15 @@ def make_spec(**overrides: object) -> AgentSpec:
     return AgentSpec.model_validate(values)
 
 
-def test_registry_contains_exactly_three_tools() -> None:
-    assert create_default_registry().names == ("web_search", "calculator", "document_reader")
+def test_registry_contains_registered_agent_and_connector_capabilities() -> None:
+    assert create_default_registry().names == (
+        "web_search",
+        "calculator",
+        "document_reader",
+        "http_get_json",
+        "rss_reader",
+        "database_query",
+    )
 
 
 async def test_validator_accepts_registered_tools_and_model() -> None:
@@ -55,6 +62,12 @@ def test_settings_parse_comma_separated_allowed_models(monkeypatch: pytest.Monke
     monkeypatch.setenv("ALLOWED_AGENT_MODELS", "openai:small,openrouter:vendor/large")
     parsed = Settings()
     assert parsed.allowed_agent_models == ["openai:small", "openrouter:vendor/large"]
+
+
+def test_settings_parse_mcp_server_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_SERVERS", '{"weather":"https://weather.example.com/mcp"}')
+
+    assert Settings().mcp_servers == {"weather": "https://weather.example.com/mcp"}
 
 
 def test_settings_reject_unsafe_worker_timing() -> None:

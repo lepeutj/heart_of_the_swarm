@@ -34,7 +34,7 @@ class WorkflowSpec(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1_000)
     input_schema: dict[str, Any]
-    output_schema: dict[str, Any]
+    output_schema: dict[str, Any] | None = None
     nodes: list[WorkflowNode] = Field(min_length=1, max_length=200)
     edges: list[WorkflowEdge] = Field(default_factory=list, max_length=500)
     entrypoint: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$", max_length=64)
@@ -57,7 +57,7 @@ class ValidatedWorkflowSpec(BaseModel):
     name: str
     description: str
     input_schema: dict[str, Any]
-    output_schema: dict[str, Any]
+    output_schema: dict[str, Any] | None
     nodes: list[ValidatedWorkflowNode]
     edges: list[WorkflowEdge]
     entrypoint: str

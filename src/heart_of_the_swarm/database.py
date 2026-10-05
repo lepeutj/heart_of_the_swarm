@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from heart_of_the_swarm.models import Base
 
-SCHEMA_REVISION = "0004_trajectory_steps"
+SCHEMA_REVISION = "0009_workflow_run_origins"
 REQUIRED_TABLES = {
     "agents",
     "agent_versions",
@@ -14,6 +14,12 @@ REQUIRED_TABLES = {
     "run_events",
     "trajectory_steps",
     "model_usage",
+    "workflows",
+    "workflow_versions",
+    "mcp_servers",
+    "workflow_runs",
+    "workflow_run_events",
+    "triggers",
 }
 
 

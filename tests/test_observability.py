@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
-import heart_of_the_swarm.observability as observability
+import heart_of_the_swarm.observability.audit as audit_module
 from heart_of_the_swarm.observability import (
     RuntimeCallbackHandler,
     audit_event,
@@ -18,22 +18,22 @@ from heart_of_the_swarm.observability import (
 
 @pytest.fixture
 def audit_file():
-    for handler in observability._logger.handlers:
+    for handler in audit_module._logger.handlers:
         handler.close()
-    observability._logger.handlers.clear()
-    observability._configured_target = None
+    audit_module._logger.handlers.clear()
+    audit_module._configured_target = None
     target = Path("logs") / f"test-audit-{uuid4()}.jsonl"
     configure_audit_logging(str(target))
     yield target
-    for handler in observability._logger.handlers:
+    for handler in audit_module._logger.handlers:
         handler.close()
-    observability._logger.handlers.clear()
-    observability._configured_target = None
+    audit_module._logger.handlers.clear()
+    audit_module._configured_target = None
     target.unlink(missing_ok=True)
 
 
 def flush_handlers() -> None:
-    for handler in observability._logger.handlers:
+    for handler in audit_module._logger.handlers:
         handler.flush()
 
 

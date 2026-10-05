@@ -3,69 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Heart of the Swarm</title>
+  <title>Heart of the Swarm · Overview</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header>
     <div>
-      <p class="eyebrow">Agent workspace</p>
-      <h1>Heart of the Swarm</h1>
+      <p class="eyebrow">Heart of the Swarm</p>
+      <h1>Overview</h1>
+      <p class="subtitle">Observe published definitions, executions, failures, and model usage.</p>
     </div>
-    <span id="status">Ready</span>
+    <div class="header-actions">
+      <span id="status">Loading…</span>
+      <button id="refresh" type="button">Refresh</button>
+      <a class="primary-link" href="/workflow-editor/">Open builder</a>
+    </div>
   </header>
 
   <main>
-    <section class="panel builder-panel">
-      <h2>Builder assistant</h2>
-      <label for="task">Describe the agent</label>
-      <textarea id="task" rows="8" placeholder="Create an agent that researches AI papers..."></textarea>
-      <div class="grid two">
-        <label>Provider<select id="provider"></select></label>
-        <label>Model<select id="model"></select></label>
-      </div>
-      <button id="design" class="primary">Generate draft</button>
+    <section id="metrics" class="metrics" aria-label="Platform summary"></section>
 
-      <h2>Saved agents</h2>
-      <div id="agents" class="list empty">No saved agents</div>
+    <section class="dashboard-grid">
+      <article class="panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">Definitions</p><h2>Reusable agents</h2></div>
+          <span id="agent-count" class="badge"></span>
+        </div>
+        <p class="hint">Agents are immutable versions used directly or referenced by workflows.</p>
+        <div id="agents" class="definition-list empty">No saved agents</div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">Definitions</p><h2>Workflows</h2></div>
+          <span id="workflow-count" class="badge"></span>
+        </div>
+        <p class="hint">Open a workflow in the graph builder to modify and publish it.</p>
+        <div id="workflows" class="definition-list empty">No saved workflows</div>
+      </article>
     </section>
 
-    <section class="panel editor-panel">
-      <h2>Agent configuration</h2>
-      <div class="grid two">
-        <label>Name<input id="name" autocomplete="off"></label>
-        <label>Temperature<input id="temperature" type="number" min="0" max="2" step="0.1" value="0"></label>
-      </div>
-      <label>Goal<textarea id="goal" rows="3"></textarea></label>
-      <fieldset>
-        <legend>Tools</legend>
-        <div id="tools" class="checks"></div>
-      </fieldset>
-      <label>Instructions<textarea id="instructions" rows="12"></textarea></label>
-      <label>Saved system prompt<textarea id="system-prompt" rows="8" readonly
-        placeholder="Generated when an agent version is saved."></textarea></label>
-      <div class="actions">
-        <button id="validate">Validate</button>
-        <button id="save" class="primary">Save agent</button>
-      </div>
-      <div id="validation" class="message"></div>
+    <section class="dashboard-grid wide-left">
+      <article class="panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">Operations</p><h2>Recent agent runs</h2></div>
+        </div>
+        <p class="hint">Select a run to inspect its result and captured trajectory.</p>
+        <div id="runs" class="run-list empty">No runs recorded</div>
+      </article>
+
+      <article class="panel run-detail">
+        <div class="panel-heading">
+          <div><p class="eyebrow">Inspection</p><h2>Selected run</h2></div>
+        </div>
+        <div id="run-detail" class="empty-state">Select a run to see its output and trace steps.</div>
+      </article>
     </section>
 
-    <section class="panel run-panel">
-      <h2>Test agent</h2>
-      <p id="selected-agent">Save or select an agent first.</p>
-      <label for="run-input">Input</label>
-      <textarea id="run-input" rows="6" placeholder="Ask the configured agent something..."></textarea>
-      <div class="actions">
-        <button id="run" class="primary" disabled>Run</button>
-        <button id="cancel-run" disabled>Cancel run</button>
+    <section class="panel usage-panel">
+      <div class="panel-heading">
+        <div><p class="eyebrow">Observability</p><h2>Model usage</h2></div>
+        <a href="http://localhost:5000" target="_blank" rel="noreferrer">Open MLflow ↗</a>
       </div>
-      <pre id="output">No result yet.</pre>
-
-      <h2>Observable trajectory</h2>
-      <pre id="trajectory">Run an agent to inspect its model and tool steps.</pre>
-
-      <h2>Model usage</h2>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Provider</th><th>Model</th><th>Stage</th><th>Calls</th><th>Failures</th><th>Tokens</th><th>Cost</th><th>Latency</th></tr></thead>

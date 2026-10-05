@@ -1,25 +1,24 @@
 from copy import deepcopy
+from typing import Any
 from uuid import UUID
 
 import pytest
 
 from heart_of_the_swarm.workflows import (
     NodeType,
-    WorkflowCompiler,
     WorkflowExecutionError,
-    WorkflowExecutor,
+    WorkflowGraphFactory,
     WorkflowSpec,
     WorkflowValidator,
 )
 
 
-def compile_workflow(data: dict):
+def validate_workflow(data: dict[str, Any]):
     spec = WorkflowSpec.model_validate(data)
-    validated = WorkflowValidator(tool_names=[], provider_names=[]).validate(spec)
-    return WorkflowCompiler().compile(validated)
+    return WorkflowValidator(tool_names=[], provider_names=[]).validate(spec)
 
 
-def sequential_data() -> dict:
+def sequential_data() -> dict[str, Any]:
     return {
         "schema_version": "1",
         "id": "4fc4fba0-f38c-4b03-95a4-d478f4636273",
@@ -54,7 +53,7 @@ def sequential_data() -> dict:
     }
 
 
-def conditional_data() -> dict:
+def conditional_data() -> dict[str, Any]:
     return {
         "schema_version": "1",
         "id": "44d9df8d-08b1-4e41-81c0-c104b84e0679",
@@ -102,12 +101,16 @@ def conditional_data() -> dict:
     }
 
 
-def test_executes_sequential_plan_without_mutating_input() -> None:
-    plan = compile_workflow(sequential_data())
+async def execute(data: dict[str, Any], workflow_input: dict[str, Any]):
+    workflow = validate_workflow(data)
+    return await WorkflowGraphFactory().create(workflow).ainvoke(workflow_input)
+
+
+async def test_executes_sequential_workflow_without_mutating_input() -> None:
     workflow_input = {"request": "hello"}
     original = deepcopy(workflow_input)
 
-    result = WorkflowExecutor().execute(plan, workflow_input)
+    result = await execute(sequential_data(), workflow_input)
 
     assert result.workflow_id == UUID("4fc4fba0-f38c-4b03-95a4-d478f4636273")
     assert result.output == "hello"
@@ -116,7 +119,7 @@ def test_executes_sequential_plan_without_mutating_input() -> None:
     assert workflow_input == original
 
 
-def test_transform_assignments_resolve_from_one_state_snapshot() -> None:
+async def test_transform_assignments_resolve_from_one_state_snapshot() -> None:
     data = sequential_data()
     data["input_schema"] = {
         "type": "object",
@@ -132,17 +135,15 @@ def test_transform_assignments_resolve_from_one_state_snapshot() -> None:
     data["nodes"][2]["config"] = {"output_path": "$.left"}
     data["output_schema"] = {"type": "integer"}
 
-    result = WorkflowExecutor().execute(compile_workflow(data), {"left": 1, "right": 2})
+    result = await execute(data, {"left": 1, "right": 2})
 
     assert result.output == 2
     assert result.state == {"left": 2, "right": 1}
 
 
-def test_condition_uses_first_matching_route() -> None:
-    plan = compile_workflow(conditional_data())
-
-    result = WorkflowExecutor().execute(
-        plan,
+async def test_condition_uses_first_matching_route() -> None:
+    result = await execute(
+        conditional_data(),
         {"score": 5, "first": "first", "second": "second", "fallback": "fallback"},
     )
 
@@ -150,13 +151,13 @@ def test_condition_uses_first_matching_route() -> None:
     assert result.executed_nodes == ("input", "route", "first")
 
 
-def test_condition_uses_fallback_when_no_route_matches() -> None:
+async def test_condition_uses_fallback_when_no_route_matches() -> None:
     data = conditional_data()
     data["edges"][1]["condition"]["value"] = 100
     data["edges"][2]["condition"]["value"] = 0
 
-    result = WorkflowExecutor().execute(
-        compile_workflow(data),
+    result = await execute(
+        data,
         {"score": 5, "first": "first", "second": "second", "fallback": "fallback"},
     )
 
@@ -164,7 +165,7 @@ def test_condition_uses_fallback_when_no_route_matches() -> None:
     assert result.executed_nodes == ("input", "route", "fallback")
 
 
-def test_unselected_branch_is_not_executed() -> None:
+async def test_unselected_branch_is_not_executed() -> None:
     data = conditional_data()
     data["nodes"][3] = {
         "id": "second",
@@ -174,8 +175,8 @@ def test_unselected_branch_is_not_executed() -> None:
     }
     data["edges"].append({"source": "second", "target": "fallback"})
 
-    result = WorkflowExecutor().execute(
-        compile_workflow(data),
+    result = await execute(
+        data,
         {"score": 5, "first": "selected", "fallback": "fallback"},
     )
 
@@ -183,12 +184,10 @@ def test_unselected_branch_is_not_executed() -> None:
     assert "second" not in result.executed_nodes
 
 
-def test_input_and_output_schema_failures_have_node_context() -> None:
-    plan = compile_workflow(sequential_data())
-    executor = WorkflowExecutor()
-
+async def test_input_and_output_schema_failures_have_node_context() -> None:
+    graph = WorkflowGraphFactory().create(validate_workflow(sequential_data()))
     with pytest.raises(WorkflowExecutionError) as invalid_input:
-        executor.execute(plan, {"request": 3})
+        await graph.ainvoke({"request": 3})
     assert invalid_input.value.issue.code == "workflow.execution.invalid_input"
     assert invalid_input.value.issue.node_id == "input"
     assert invalid_input.value.issue.node_type == NodeType.INPUT
@@ -196,19 +195,19 @@ def test_input_and_output_schema_failures_have_node_context() -> None:
     data = sequential_data()
     data["output_schema"] = {"type": "integer"}
     with pytest.raises(WorkflowExecutionError) as invalid_output:
-        executor.execute(compile_workflow(data), {"request": "not an integer"})
+        await execute(data, {"request": "not an integer"})
     assert invalid_output.value.issue.code == "workflow.execution.invalid_output"
     assert invalid_output.value.issue.node_id == "output"
     assert invalid_output.value.issue.node_type == NodeType.OUTPUT
 
 
-def test_transform_failure_does_not_mutate_external_input() -> None:
+async def test_transform_failure_does_not_mutate_external_input() -> None:
     data = sequential_data()
     data["nodes"][1]["config"] = {"assign": {"$.result": {"from_state": "$.missing"}}}
     workflow_input = {"request": "hello"}
 
     with pytest.raises(WorkflowExecutionError) as caught:
-        WorkflowExecutor().execute(compile_workflow(data), workflow_input)
+        await execute(data, workflow_input)
 
     assert caught.value.issue.code == "workflow.execution.transform_failed"
     assert caught.value.issue.node_id == "copy"
@@ -216,10 +215,10 @@ def test_transform_failure_does_not_mutate_external_input() -> None:
     assert workflow_input == {"request": "hello"}
 
 
-def test_condition_and_output_path_failures_have_node_context() -> None:
+async def test_condition_and_output_path_failures_have_node_context() -> None:
     with pytest.raises(WorkflowExecutionError) as condition_failure:
-        WorkflowExecutor().execute(
-            compile_workflow(conditional_data()),
+        await execute(
+            conditional_data(),
             {"first": "first", "second": "second", "fallback": "fallback"},
         )
     assert condition_failure.value.issue.code == "workflow.execution.condition_failed"
@@ -229,12 +228,7 @@ def test_condition_and_output_path_failures_have_node_context() -> None:
     data = sequential_data()
     data["nodes"][1]["config"] = {"assign": {"$.other": "value"}}
     with pytest.raises(WorkflowExecutionError) as output_failure:
-        WorkflowExecutor().execute(compile_workflow(data), {"request": "hello"})
+        await execute(data, {"request": "hello"})
     assert output_failure.value.issue.code == "workflow.execution.output_missing"
     assert output_failure.value.issue.node_id == "output"
     assert output_failure.value.issue.node_type == NodeType.OUTPUT
-
-
-def test_executor_rejects_uncompiled_input() -> None:
-    with pytest.raises(TypeError, match="requires an ExecutionPlan"):
-        WorkflowExecutor().execute({}, {})  # type: ignore[arg-type]

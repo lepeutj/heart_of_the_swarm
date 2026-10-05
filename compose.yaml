@@ -23,7 +23,7 @@ services:
     command:
       - sh
       - -c
-      - mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri "$${MLFLOW_BACKEND_STORE_URI}" --default-artifact-root /mlflow/artifacts
+      - mlflow server --host 0.0.0.0 --port 5000 --allowed-hosts "localhost:*,127.0.0.1:*,mlflow:*,host.docker.internal:*" --backend-store-uri "$${MLFLOW_BACKEND_STORE_URI}" --default-artifact-root /mlflow/artifacts
     ports:
       - "5000:5000"
     volumes:
@@ -57,6 +57,7 @@ services:
       - "8000:8000"
     volumes:
       - ./logs:/app/logs
+      - ./skills:/app/skills
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -77,6 +78,7 @@ services:
     command: ["python", "-m", "heart_of_the_swarm.worker"]
     volumes:
       - ./logs:/app/logs
+      - ./skills:/app/skills
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -8,7 +8,7 @@ from heart_of_the_swarm.workflows.state import (
     StatePathError,
     get_path,
     path_exists,
-    resolve_arguments,
+    resolve_value,
     set_path,
 )
 
@@ -38,16 +38,16 @@ def test_state_access_rejects_traversing_a_scalar() -> None:
         path_exists({}, "research.summary")
 
 
-def test_argument_resolution_supports_literals_and_state_references() -> None:
+def test_value_resolution_supports_literals_and_state_references() -> None:
     state = {"request": {"url": "https://example.com"}, "limit": 3}
-    arguments = resolve_arguments(
+    value = resolve_value(
         {
             "url": {"from_state": "$.request.url"},
             "options": {"limit": {"from_state": "$.limit"}, "language": "en"},
         },
         state,
     )
-    assert arguments == {
+    assert value == {
         "url": "https://example.com",
         "options": {"limit": 3, "language": "en"},
     }

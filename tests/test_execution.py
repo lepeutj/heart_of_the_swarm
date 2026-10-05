@@ -3,11 +3,12 @@ from typing import Any
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
+from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.execution import AgentExecutor
 from heart_of_the_swarm.factory import AgentFactory
-from heart_of_the_swarm.repository import Repository
+from heart_of_the_swarm.repositories import AgentRepository, ObservabilityRepository, RunRepository
 from heart_of_the_swarm.spec import AgentSpec, ModelConfig
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import create_default_registry
@@ -54,18 +55,15 @@ async def execute_model(
         model={"provider": "test", "model_id": "fake"},
     )
     async with database.session() as session:
-        repository = Repository(session)
-        agent = await repository.create_agent(spec, "1", "System prompt")
-        queued = await repository.queue_run(agent, trace_id, "Test input")
-        claimed = await repository.claim_next_run("worker-1", 60)
+        agent = await AgentRepository(session).create(spec, "1", "System prompt")
+        queued = await RunRepository(session).queue(agent, trace_id, "Test input")
+        claimed = await RunRepository(session).claim_next("worker-1", 60)
     assert claimed == queued.run_id
 
     executor = AgentExecutor(
         settings,
         database,
-        FakeProviders(model),
-        AcceptingValidator(),
-        AgentFactory(registry),
+        AgentRunner(FakeProviders(model), AcceptingValidator(), AgentFactory(registry)),
         Telemetry(settings),
     )
     await executor.execute(queued.run_id, "worker-1")
@@ -85,7 +83,7 @@ async def test_direct_model_response_trajectory() -> None:
     )
     try:
         async with database.session() as session:
-            trajectory = await Repository(session).list_trajectory_steps(run_id)
+            trajectory = await ObservabilityRepository(session).list_trajectory(run_id)
         assert [step.event_type for step in trajectory] == ["model.started", "model.completed"]
         assert trajectory[0].payload["messages"][0][-1]["content"] == "Test input"
         message = trajectory[1].payload["generations"][0][0]["message"]
@@ -121,9 +119,8 @@ async def test_executor_completes_a_claimed_run() -> None:
     )
     try:
         async with database.session() as session:
-            repository = Repository(session)
-            completed = await repository.get_run(run_id)
-            trajectory = await repository.list_trajectory_steps(run_id)
+            completed = await RunRepository(session).get(run_id)
+            trajectory = await ObservabilityRepository(session).list_trajectory(run_id)
         assert completed is not None
         assert completed.status == "completed"
         assert completed.output == "Done"
@@ -153,10 +150,9 @@ async def test_executor_failure_is_persisted_with_an_event() -> None:
     )
     try:
         async with database.session() as session:
-            repository = Repository(session)
-            failed = await repository.get_run(run_id)
-            events = await repository.list_run_events(run_id)
-            trajectory = await repository.list_trajectory_steps(run_id)
+            failed = await RunRepository(session).get(run_id)
+            events = await RunRepository(session).list_events(run_id)
+            trajectory = await ObservabilityRepository(session).list_trajectory(run_id)
         assert failed is not None
         assert failed.status == "failed"
         assert "model unavailable" in (failed.error or "")
@@ -189,7 +185,7 @@ async def test_failed_tool_call_is_captured() -> None:
     )
     try:
         async with database.session() as session:
-            trajectory = await Repository(session).list_trajectory_steps(run_id)
+            trajectory = await ObservabilityRepository(session).list_trajectory(run_id)
         failed = next(step for step in trajectory if step.event_type == "tool.failed")
         assert failed.component == "calculator"
         assert failed.payload["error_type"] == "ValueError"

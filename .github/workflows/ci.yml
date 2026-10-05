@@ -25,6 +25,22 @@ jobs:
       - name: Synchronize dependencies
         run: uv sync --locked
 
+      - name: Install Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+
+      - name: Build and test workflow editor
+        working-directory: frontend
+        env:
+          CI: true
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.19.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+
       - name: Check code quality
         run: |
           uv run --locked ruff check .
@@ -42,3 +58,9 @@ jobs:
 
       - name: Build package
         run: uv build
+
+      - name: Build standalone agent runtime image
+        run: docker build --file docker/agent-runtime.Dockerfile --tag heart-of-the-swarm-agent-runtime:ci .
+
+      - name: Build standalone workflow runtime image
+        run: docker build --file docker/workflow-runtime.Dockerfile --tag heart-of-the-swarm-workflow-runtime:ci .

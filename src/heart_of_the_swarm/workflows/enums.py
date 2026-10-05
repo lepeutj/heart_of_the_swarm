@@ -5,7 +5,7 @@ class NodeType(StrEnum):
     INPUT = "input"
     AGENT = "agent"
     LLM = "llm"
-    TOOL = "tool"
+    CONNECTOR = "connector"
     CONDITION = "condition"
     TRANSFORM = "transform"
     OUTPUT = "output"

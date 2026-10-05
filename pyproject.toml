@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "heart-of-the-swarm"
 version = "0.2.0"
-description = "A portable runtime that designs, validates, builds, and runs task-specific agents."
+description = "Build, version, run, trace, and export LangChain agents and LangGraph workflows."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "jinja2>=3.1,<4",
-  "langchain>=1.0,<2",
+  "langchain[mcp]>=1.4,<2",
   "langchain-openai>=0.3,<2",
   "mlflow-tracing>=3.5,<4",
   "pydantic-settings>=2.7,<3",
@@ -24,6 +24,10 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1",
   "jsonschema>=4.23,<5",
 ]
+
+[project.scripts]
+swarm-export-agent = "heart_of_the_swarm.artifacts.cli:main"
+swarm-export-workflow = "heart_of_the_swarm.artifacts.workflow_cli:main"
 
 [dependency-groups]
 dev = [
@@ -35,6 +39,9 @@ mlflow-server = [
   "mlflow>=3.5,<4",
   "psycopg2-binary>=2.9,<3",
 ]
+
+[tool.hatch.build]
+artifacts = ["/src/heart_of_the_swarm/static/workflow-editor/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/heart_of_the_swarm"]
@@ -49,4 +56,7 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]

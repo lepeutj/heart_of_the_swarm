@@ -2,13 +2,14 @@ import logging
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
-from uuid import uuid4
+from typing import Annotated, Any
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 
 from heart_of_the_swarm import __version__
 from heart_of_the_swarm.application import Application
@@ -18,6 +19,8 @@ from heart_of_the_swarm.observability import (
     get_trace_id,
     trace_context,
 )
+from heart_of_the_swarm.repositories import WorkflowRevisionConflict
+from heart_of_the_swarm.skills import SkillDocument
 from heart_of_the_swarm.spec import (
     AgentDetail,
     AgentRunAccepted,
@@ -33,7 +36,41 @@ from heart_of_the_swarm.spec import (
     UsageSummary,
     ValidationResponse,
 )
+from heart_of_the_swarm.tools import (
+    MCPServerCreate,
+    MCPServerDetail,
+    MCPServerStatus,
+    MCPServerTestResult,
+    MCPServerView,
+    ToolCatalogueResponse,
+)
+from heart_of_the_swarm.triggers import (
+    TriggerDetail,
+    TriggerDisabledError,
+    TriggerInvocationError,
+    TriggerNotFoundError,
+    TriggerSpec,
+)
 from heart_of_the_swarm.validator import SpecValidationError
+from heart_of_the_swarm.workflows import (
+    WorkflowCapabilities,
+    WorkflowSpec,
+    WorkflowValidationError,
+    WorkflowValidationResponse,
+    workflow_capabilities,
+)
+from heart_of_the_swarm.workflows.documents import (
+    WorkflowDraftDetail,
+    WorkflowDraftSave,
+    WorkflowSummary,
+    WorkflowVersionDetail,
+)
+from heart_of_the_swarm.workflows.runs import (
+    WorkflowRunAccepted,
+    WorkflowRunDetail,
+    WorkflowRunEvent,
+    WorkflowRunRequest,
+)
 
 PACKAGE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -59,6 +96,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=PACKAGE_DIR / "static"), name="static")
+app.mount(
+    "/workflow-editor",
+    StaticFiles(directory=PACKAGE_DIR / "static" / "workflow-editor", html=True, check_dir=False),
+    name="workflow-editor",
+)
 
 
 @app.middleware("http")
@@ -141,9 +183,277 @@ async def models(runtime: Runtime, provider: str = Query(...)) -> list[ModelDesc
         raise api_error(exc) from exc
 
 
-@app.get("/api/v1/tools")
-async def tools(runtime: Runtime) -> dict[str, tuple[str, ...]]:
-    return {"tools": runtime.tools.names}
+@app.get("/api/v1/tools", response_model=ToolCatalogueResponse)
+async def tools(runtime: Runtime) -> ToolCatalogueResponse:
+    return ToolCatalogueResponse(
+        tools=runtime.tools.names,
+        capabilities=tuple(capability.descriptor() for capability in runtime.tools.capabilities),
+        mcp_servers=runtime.mcp_tools.statuses,
+    )
+
+
+def _mcp_server_view(
+    server: MCPServerDetail,
+    statuses: tuple[MCPServerStatus, ...],
+) -> MCPServerView:
+    status = next(
+        (item for item in statuses if item.name == server.name),
+        MCPServerStatus(name=server.name, state="not_loaded"),
+    )
+    return MCPServerView(**server.model_dump(), status=status)
+
+
+@app.get("/api/v1/mcp/servers", response_model=list[MCPServerView])
+async def list_mcp_servers(runtime: Runtime) -> list[MCPServerView]:
+    return [
+        _mcp_server_view(server, runtime.mcp_tools.statuses)
+        for server in await runtime.mcp_servers.list()
+    ]
+
+
+@app.post("/api/v1/mcp/servers", response_model=MCPServerView, status_code=201)
+async def create_mcp_server(source: MCPServerCreate, runtime: Runtime) -> MCPServerView:
+    try:
+        server = await runtime.mcp_servers.create(source)
+        await runtime.sync_mcp_tools()
+    except ValueError as exc:
+        raise api_error(exc, 409) from exc
+    return _mcp_server_view(server, runtime.mcp_tools.statuses)
+
+
+@app.post("/api/v1/mcp/servers/{server_id}/test", response_model=MCPServerTestResult)
+async def test_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerTestResult:
+    server = await runtime.mcp_servers.get(str(server_id))
+    if server is None:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    try:
+        names = await runtime.mcp_tools.test(server.name, server.url)
+    except Exception as exc:
+        return MCPServerTestResult(
+            name=server.name,
+            reachable=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    return MCPServerTestResult(name=server.name, reachable=True, tools=names)
+
+
+@app.post("/api/v1/mcp/servers/{server_id}/refresh", response_model=MCPServerView)
+async def refresh_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerView:
+    server = await runtime.mcp_servers.get(str(server_id))
+    if server is None:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    if not server.enabled:
+        raise HTTPException(status_code=409, detail="MCP server is disabled")
+    await runtime.mcp_tools.refresh(server.name)
+    return _mcp_server_view(server, runtime.mcp_tools.statuses)
+
+
+@app.get("/api/v1/skills")
+async def skills(runtime: Runtime) -> dict[str, tuple[str, ...]]:
+    return {"skills": runtime.skills.names}
+
+
+@app.post("/api/v1/skills", status_code=201)
+async def upload_skill(skill: SkillDocument, runtime: Runtime) -> SkillDocument:
+    try:
+        runtime.skills.save(skill)
+    except ValueError as exc:
+        raise api_error(exc, 409) from exc
+    return skill
+
+
+@app.get("/api/v1/workflows/capabilities", response_model=WorkflowCapabilities)
+async def workflow_capability_catalogue() -> WorkflowCapabilities:
+    return workflow_capabilities()
+
+
+@app.post("/api/v1/workflows/validate", response_model=WorkflowValidationResponse)
+async def validate_workflow(
+    payload: dict[str, Any], runtime: Runtime
+) -> WorkflowValidationResponse:
+    try:
+        spec = WorkflowSpec.model_validate(payload)
+    except ValidationError as exc:
+        issues = []
+        nodes = payload.get("nodes")
+        for error in exc.errors(include_url=False, include_context=False, include_input=False):
+            location = error["loc"]
+            node_id = None
+            if (
+                len(location) > 1
+                and location[0] == "nodes"
+                and isinstance(location[1], int)
+                and isinstance(nodes, list)
+                and location[1] < len(nodes)
+                and isinstance(nodes[location[1]], dict)
+            ):
+                candidate = nodes[location[1]].get("id")
+                node_id = candidate if isinstance(candidate, str) else None
+            issues.append(
+                {
+                    "code": "workflow.schema.invalid",
+                    "message": error["msg"],
+                    "node_id": node_id,
+                    "field": ".".join(str(part) for part in location),
+                }
+            )
+        return WorkflowValidationResponse(valid=False, issues=issues)
+
+    try:
+        runtime.workflow_validator.validate(spec)
+    except WorkflowValidationError as exc:
+        return WorkflowValidationResponse(valid=False, issues=exc.issues)
+    return WorkflowValidationResponse(valid=True, issues=[])
+
+
+@app.get("/api/v1/workflows", response_model=list[WorkflowSummary])
+async def list_workflows(runtime: Runtime) -> list[WorkflowSummary]:
+    return await runtime.workflows.list()
+
+
+@app.put("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
+async def save_workflow(
+    workflow_id: UUID,
+    draft: WorkflowDraftSave,
+    runtime: Runtime,
+) -> WorkflowDraftDetail:
+    try:
+        return await runtime.workflows.save(workflow_id, draft)
+    except WorkflowRevisionConflict as exc:
+        raise api_error(exc, 409) from exc
+    except ValueError as exc:
+        raise api_error(exc, 422) from exc
+
+
+@app.get("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
+async def get_workflow(workflow_id: UUID, runtime: Runtime) -> WorkflowDraftDetail:
+    workflow = await runtime.workflows.get(workflow_id)
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    return workflow
+
+
+@app.post(
+    "/api/v1/workflows/{workflow_id}/versions",
+    response_model=WorkflowVersionDetail,
+    status_code=201,
+)
+async def create_workflow_version(
+    workflow_id: UUID,
+    runtime: Runtime,
+) -> WorkflowVersionDetail:
+    try:
+        version = await runtime.workflows.create_version(workflow_id)
+    except WorkflowRevisionConflict as exc:
+        raise api_error(exc, 409) from exc
+    except (WorkflowValidationError, SpecValidationError, ValueError) as exc:
+        raise api_error(exc, 422) from exc
+    if version is None:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    return version
+
+
+@app.get(
+    "/api/v1/workflows/{workflow_id}/versions/latest",
+    response_model=WorkflowVersionDetail | None,
+)
+async def get_latest_workflow_version(
+    workflow_id: UUID,
+    runtime: Runtime,
+) -> WorkflowVersionDetail | None:
+    return await runtime.workflows.latest_version(workflow_id)
+
+
+@app.post(
+    "/api/v1/workflow-versions/{version_id}/runs",
+    response_model=WorkflowRunAccepted,
+    status_code=202,
+)
+async def run_workflow_version(
+    version_id: UUID,
+    request: WorkflowRunRequest,
+    runtime: Runtime,
+) -> WorkflowRunAccepted:
+    try:
+        return await runtime.workflow_runs.queue(
+            version_id,
+            request.input,
+            get_trace_id() or str(uuid4()),
+        )
+    except ValueError as exc:
+        status_code = 404 if str(exc) == "workflow version not found" else 422
+        raise api_error(exc, status_code) from exc
+    except (WorkflowValidationError, SpecValidationError) as exc:
+        raise api_error(exc, 422) from exc
+
+
+@app.get("/api/v1/workflow-runs/{run_id}", response_model=WorkflowRunDetail)
+async def get_workflow_run(run_id: UUID, runtime: Runtime) -> WorkflowRunDetail:
+    run = await runtime.workflow_runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="workflow run not found")
+    return run
+
+
+@app.get(
+    "/api/v1/workflow-runs/{run_id}/events",
+    response_model=list[WorkflowRunEvent],
+)
+async def list_workflow_run_events(
+    run_id: UUID,
+    runtime: Runtime,
+) -> list[WorkflowRunEvent]:
+    events = await runtime.workflow_runs.events(run_id)
+    if events is None:
+        raise HTTPException(status_code=404, detail="workflow run not found")
+    return events
+
+
+@app.post("/api/v1/triggers", response_model=TriggerDetail, status_code=201)
+async def create_trigger(spec: TriggerSpec, runtime: Runtime) -> TriggerDetail:
+    try:
+        return await runtime.triggers.create(spec)
+    except ValueError as exc:
+        raise api_error(exc, 422) from exc
+
+
+@app.get("/api/v1/triggers", response_model=list[TriggerDetail])
+async def list_triggers(runtime: Runtime) -> list[TriggerDetail]:
+    return await runtime.triggers.list()
+
+
+@app.get("/api/v1/triggers/{trigger_id}", response_model=TriggerDetail)
+async def get_trigger(trigger_id: UUID, runtime: Runtime) -> TriggerDetail:
+    trigger = await runtime.triggers.get(trigger_id)
+    if trigger is None:
+        raise HTTPException(status_code=404, detail="trigger not found")
+    return trigger
+
+
+@app.post(
+    "/api/v1/hooks/{trigger_id}",
+    response_model=WorkflowRunAccepted,
+    status_code=202,
+)
+async def invoke_webhook(
+    trigger_id: UUID,
+    payload: dict[str, Any],
+    runtime: Runtime,
+) -> WorkflowRunAccepted:
+    try:
+        return await runtime.webhook_triggers.invoke(
+            trigger_id,
+            payload,
+            get_trace_id() or str(uuid4()),
+        )
+    except TriggerNotFoundError as exc:
+        raise api_error(exc, 404) from exc
+    except TriggerDisabledError as exc:
+        raise api_error(exc, 409) from exc
+    except (TriggerInvocationError, WorkflowValidationError, SpecValidationError) as exc:
+        raise api_error(exc, 422) from exc
+    except ValueError as exc:
+        raise api_error(exc, 422) from exc
 
 
 @app.post("/api/v1/agents/design", response_model=DesignResponse)

@@ -8,7 +8,6 @@ from heart_of_the_swarm.workflows.state.paths import (
 )
 from heart_of_the_swarm.workflows.state.resolver import (
     StateReference,
-    resolve_arguments,
     resolve_value,
 )
 
@@ -19,7 +18,6 @@ __all__ = [
     "WorkflowState",
     "get_path",
     "path_exists",
-    "resolve_arguments",
     "resolve_value",
     "set_path",
 ]

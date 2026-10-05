@@ -1,12 +1,7 @@
 const $ = (id) => document.getElementById(id);
-let currentAgentId = null;
-let currentRunId = null;
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+async function api(path) {
+  const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail?.message || body.detail || response.statusText);
@@ -16,203 +11,148 @@ async function api(path, options = {}) {
 
 function setStatus(message, error = false) {
   $("status").textContent = message;
-  $("status").style.color = error ? "#ffb4b4" : "#b8d4c2";
+  $("status").className = error ? "error" : "";
 }
 
-async function loadProviders() {
-  const providers = await api("/api/v1/providers");
-  $("provider").replaceChildren(...providers.map((provider) => {
-    const option = new Option(provider.configured ? provider.id : `${provider.id} (not configured)`, provider.id);
-    option.disabled = !provider.configured;
-    return option;
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function metric(label, value, detail) {
+  const card = element("article", "metric");
+  card.append(element("span", "metric-label", label), element("strong", "metric-value", value));
+  if (detail) card.append(element("small", "metric-detail", detail));
+  return card;
+}
+
+function renderDefinitions(agents, workflows) {
+  $("agent-count").textContent = agents.length;
+  $("workflow-count").textContent = workflows.length;
+
+  const agentList = $("agents");
+  agentList.className = agents.length ? "definition-list" : "definition-list empty";
+  agentList.replaceChildren(...agents.map((agent) => {
+    const item = element("article", "definition");
+    const heading = element("div", "definition-heading");
+    heading.append(element("strong", "", agent.name), element("span", "badge", `v${agent.version}`));
+    item.append(heading, element("p", "", agent.goal));
+    return item;
   }));
-  await loadModels();
-}
+  if (!agents.length) agentList.textContent = "No saved agents";
 
-async function loadModels() {
-  const provider = $("provider").value;
-  if (!provider) return;
-  const models = await api(`/api/v1/models?provider=${encodeURIComponent(provider)}`);
-  $("model").replaceChildren(...models.map((model) => {
-    const capabilities = model.supports_tools ? " · tools" : "";
-    return new Option(`${model.name}${capabilities}`, model.model_id);
+  const workflowList = $("workflows");
+  workflowList.className = workflows.length ? "definition-list" : "definition-list empty";
+  workflowList.replaceChildren(...workflows.map((workflow) => {
+    const item = element("a", "definition");
+    item.href = "/workflow-editor/";
+    const heading = element("div", "definition-heading");
+    heading.append(
+      element("strong", "", workflow.name),
+      element("span", "badge", workflow.latest_version ? `v${workflow.latest_version}` : "draft"),
+    );
+    item.append(heading, element("p", "", workflow.description || "No description"));
+    return item;
   }));
+  if (!workflows.length) workflowList.textContent = "No saved workflows";
 }
 
-async function loadTools() {
-  const { tools } = await api("/api/v1/tools");
-  $("tools").replaceChildren(...tools.map((tool) => {
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = tool;
-    label.append(input, tool);
-    return label;
-  }));
-}
-
-function readSpec() {
-  return {
-    name: $("name").value,
-    goal: $("goal").value,
-    tools: [...$("tools").querySelectorAll("input:checked")].map((input) => input.value),
-    instructions: $("instructions").value,
-    model: {
-      provider: $("provider").value,
-      model_id: $("model").value,
-      temperature: Number($("temperature").value),
-      max_tokens: null,
-    },
-  };
-}
-
-async function fillSpec(spec, systemPrompt = "") {
-  $("name").value = spec.name;
-  $("goal").value = spec.goal;
-  $("instructions").value = spec.instructions;
-  $("system-prompt").value = systemPrompt;
-  $("temperature").value = spec.model.temperature;
-  $("provider").value = spec.model.provider;
-  await loadModels();
-  $("model").value = spec.model.model_id;
-  $("tools").querySelectorAll("input").forEach((input) => {
-    input.checked = spec.tools.includes(input.value);
-  });
-}
-
-async function design() {
-  setStatus("Designing…");
-  try {
-    const result = await api("/api/v1/agents/design", {
-      method: "POST",
-      body: JSON.stringify({
-        task: $("task").value,
-        provider: $("provider").value,
-        model_id: $("model").value,
-      }),
-    });
-    await fillSpec(result.spec);
-    currentAgentId = null;
-    $("selected-agent").textContent = "Unsaved draft";
-    $("run").disabled = true;
-    setStatus(`Draft ready · ${result.trace_id.slice(0, 8)}`);
-  } catch (error) {
-    setStatus(error.message, true);
-  }
-}
-
-async function validate() {
-  const result = await api("/api/v1/agents/validate", {
-    method: "POST",
-    body: JSON.stringify(readSpec()),
-  });
-  $("validation").className = `message ${result.valid ? "success" : "error"}`;
-  $("validation").textContent = result.valid ? "Configuration is valid." : result.errors.join(" · ");
-  return result.valid;
-}
-
-async function save() {
-  if (!(await validate())) return;
-  const path = currentAgentId ? `/api/v1/agents/${currentAgentId}/versions` : "/api/v1/agents";
-  const agent = await api(path, { method: "POST", body: JSON.stringify(readSpec()) });
-  selectAgent(agent);
-  await loadAgents();
-  setStatus("Agent saved");
-}
-
-function selectAgent(agent) {
-  currentAgentId = agent.id;
-  $("selected-agent").textContent = `${agent.name} · version ${agent.version}`;
-  $("run").disabled = false;
-  if (agent.spec) fillSpec(agent.spec, agent.system_prompt);
-}
-
-async function loadAgents() {
-  const agents = await api("/api/v1/agents");
-  const container = $("agents");
-  container.className = agents.length ? "list" : "list empty";
-  container.replaceChildren(...agents.map((agent) => {
-    const button = document.createElement("button");
-    button.textContent = `${agent.name} · v${agent.version}`;
-    button.onclick = async () => selectAgent(await api(`/api/v1/agents/${agent.id}`));
+function renderRuns(runs, agentsById) {
+  const container = $("runs");
+  container.className = runs.length ? "run-list" : "run-list empty";
+  container.replaceChildren(...runs.slice(0, 20).map((run) => {
+    const button = element("button", "run-row");
+    const identity = element("span", "run-identity");
+    identity.append(
+      element("strong", "", agentsById.get(run.agent_id)?.name || "Agent"),
+      element("small", "", new Date(run.queued_at).toLocaleString()),
+    );
+    button.append(identity, element("span", `run-status ${run.status}`, run.status));
+    button.addEventListener("click", () => inspectRun(run, agentsById.get(run.agent_id)));
     return button;
   }));
-  if (!agents.length) container.textContent = "No saved agents";
+  if (!runs.length) container.textContent = "No runs recorded";
 }
 
-async function run() {
-  if (!currentAgentId) return;
-  setStatus("Queuing run…");
-  $("output").textContent = "Waiting for a worker…";
+async function inspectRun(run, agent) {
+  const container = $("run-detail");
+  container.className = "empty-state";
+  container.textContent = "Loading trajectory…";
   try {
-    const result = await api(`/api/v1/agents/${currentAgentId}/runs`, {
-      method: "POST",
-      body: JSON.stringify({ input: $("run-input").value }),
-    });
-    currentRunId = result.run_id;
-    $("cancel-run").disabled = false;
-    $("trajectory").textContent = "Capturing trajectory…";
-    await waitForRun(result.run_id);
-    await loadUsage();
+    const trajectory = await api(`/api/v1/runs/${run.run_id}/trajectory`);
+    container.className = "run-inspection";
+    container.replaceChildren();
+
+    const metadata = element("dl", "run-metadata");
+    for (const [label, value] of [
+      ["Agent", agent?.name || run.agent_id],
+      ["Status", run.status],
+      ["Attempt", String(run.attempt)],
+      ["Trace", run.trace_id],
+    ]) {
+      const row = element("div");
+      row.append(element("dt", "", label), element("dd", "", value));
+      metadata.append(row);
+    }
+    container.append(metadata);
+    if (run.error) container.append(element("p", "error-message", run.error));
+    container.append(
+      element("h3", "", "Output"),
+      element("pre", "", run.output || "No output recorded."),
+      element("h3", "", `Trajectory · ${trajectory.length} steps`),
+      element("pre", "", trajectory.length
+        ? JSON.stringify(trajectory, null, 2)
+        : "No model or tool steps were captured."),
+    );
   } catch (error) {
-    $("output").textContent = error.message;
-    setStatus(error.message, true);
-  } finally {
-    currentRunId = null;
-    $("cancel-run").disabled = true;
+    container.className = "error-message";
+    container.textContent = error.message;
   }
 }
 
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function waitForRun(runId) {
-  while (true) {
-    const result = await api(`/api/v1/runs/${runId}`);
-    setStatus(`Run ${result.status} · attempt ${result.attempt}`);
-    if (result.status === "completed") {
-      await loadTrajectory(runId);
-      $("output").textContent = `${result.output}\n\nTrace: ${result.trace_id}`;
-      setStatus("Run complete");
-      return;
-    }
-    if (["failed", "cancelled", "timed_out"].includes(result.status)) {
-      await loadTrajectory(runId);
-      throw new Error(result.error || `Run ${result.status}`);
-    }
-    await sleep(1000);
-  }
-}
-
-async function loadTrajectory(runId) {
-  const steps = await api(`/api/v1/runs/${runId}/trajectory`);
-  $("trajectory").textContent = steps.length
-    ? JSON.stringify(steps, null, 2)
-    : "No observable model or tool steps were captured.";
-}
-
-async function cancelRun() {
-  if (!currentRunId) return;
-  await api(`/api/v1/runs/${currentRunId}/cancel`, { method: "POST" });
-  setStatus("Cancellation requested");
-}
-
-async function loadUsage() {
-  const rows = await api("/api/v1/usage/summary");
+function renderUsage(rows) {
   $("usage").replaceChildren(...rows.map((row) => {
     const tr = document.createElement("tr");
     [row.provider, row.model_id, row.stage, row.calls, row.failures, row.total_tokens,
       row.cost.toFixed(6), `${row.average_latency_ms.toFixed(0)} ms`]
-      .forEach((value) => { const td = document.createElement("td"); td.textContent = value; tr.append(td); });
+      .forEach((value) => tr.append(element("td", "", value)));
     return tr;
   }));
 }
 
-$("provider").addEventListener("change", () => loadModels().catch((error) => setStatus(error.message, true)));
-$("design").addEventListener("click", design);
-$("validate").addEventListener("click", () => validate().catch((error) => setStatus(error.message, true)));
-$("save").addEventListener("click", () => save().catch((error) => setStatus(error.message, true)));
-$("run").addEventListener("click", run);
-$("cancel-run").addEventListener("click", () => cancelRun().catch((error) => setStatus(error.message, true)));
+async function loadDashboard() {
+  setStatus("Refreshing…");
+  try {
+    const [agents, workflows, usage] = await Promise.all([
+      api("/api/v1/agents"),
+      api("/api/v1/workflows"),
+      api("/api/v1/usage/summary"),
+    ]);
+    const runs = (await Promise.all(
+      agents.map((agent) => api(`/api/v1/agents/${agent.id}/runs`)),
+    )).flat().sort((left, right) => new Date(right.queued_at) - new Date(left.queued_at));
+    const completed = runs.filter((run) => run.status === "completed").length;
+    const failed = runs.filter((run) => ["failed", "timed_out", "cancelled"].includes(run.status)).length;
+    const tokens = usage.reduce((total, row) => total + row.total_tokens, 0);
+    const cost = usage.reduce((total, row) => total + row.cost, 0);
 
-Promise.all([loadProviders(), loadTools(), loadAgents(), loadUsage()])
-  .catch((error) => setStatus(error.message, true));
+    $("metrics").replaceChildren(
+      metric("Agents", agents.length, "latest immutable versions"),
+      metric("Workflows", workflows.length, "drafts and published graphs"),
+      metric("Successful runs", completed, `${runs.length} total recorded`),
+      metric("Failed runs", failed, failed ? "inspection recommended" : "no recorded failures"),
+      metric("Model usage", tokens.toLocaleString(), `$${cost.toFixed(4)} tracked cost`),
+    );
+    renderDefinitions(agents, workflows);
+    renderRuns(runs, new Map(agents.map((agent) => [agent.id, agent])));
+    renderUsage(usage);
+    setStatus(`Updated ${new Date().toLocaleTimeString()}`);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+$("refresh").addEventListener("click", loadDashboard);
+loadDashboard();

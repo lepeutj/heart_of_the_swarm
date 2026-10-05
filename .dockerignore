@@ -3,7 +3,14 @@
 __pycache__
 .pytest_cache
 .ruff_cache
+.uv-cache
+.test-tmp
 .env
 tests
 data
 logs
+dist
+build
+*.egg-info
+frontend/node_modules
+src/heart_of_the_swarm/static/workflow-editor
