@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -36,36 +37,62 @@ class WorkflowGraph:
         workflow: ValidatedWorkflowSpec,
         graph: CompiledStateGraph,
         runner: WorkflowNodeRunner,
+        checkpointing: bool,
     ) -> None:
         self.workflow = workflow
         self.graph = graph
         self.runner = runner
+        self.checkpointing = checkpointing
 
     async def ainvoke(
         self,
-        workflow_input: WorkflowState,
+        workflow_input: WorkflowState | None,
         *,
         recursion_limit: int | None = None,
+        thread_id: str | None = None,
+        checkpoint_id: str | None = None,
+        interrupt_after: tuple[str, ...] = (),
     ) -> ExecutionResult:
         """Run the StateGraph and return the stable workflow result model."""
-        if not isinstance(workflow_input, dict):
+        if workflow_input is not None and not isinstance(workflow_input, dict):
             entrypoint = next(
                 node for node in self.workflow.nodes if node.id == self.workflow.entrypoint
             )
             self.runner.reject_non_object_input(entrypoint)
-        config = {"recursion_limit": recursion_limit} if recursion_limit is not None else None
-        result = await self.graph.ainvoke(
-            {
+        configurable: dict[str, Any] = {}
+        if thread_id is not None:
+            configurable["thread_id"] = thread_id
+        if checkpoint_id is not None:
+            configurable["checkpoint_id"] = checkpoint_id
+        config: dict[str, Any] = {"configurable": configurable}
+        if recursion_limit is not None:
+            config["recursion_limit"] = recursion_limit
+        graph_input = None
+        if workflow_input is not None:
+            graph_input = {
                 "data": deepcopy(workflow_input),
                 "executed_nodes": (),
-            },
+            }
+        result = await self.graph.ainvoke(
+            graph_input,
             config=config,
+            interrupt_after=[f"workflow_node__{node_id}" for node_id in interrupt_after],
         )
+        snapshot_config = {"configurable": {"thread_id": thread_id}}
+        snapshot = (
+            await self.graph.aget_state(snapshot_config)
+            if thread_id is not None and self.checkpointing
+            else None
+        )
+        values = snapshot.values if snapshot is not None else result
+        saved_config = snapshot.config.get("configurable", {}) if snapshot is not None else {}
         return ExecutionResult(
             workflow_id=self.workflow.id,
-            output=deepcopy(result["output"]),
-            state=deepcopy(result["data"]),
-            executed_nodes=tuple(result["executed_nodes"]),
+            output=deepcopy(values.get("output")),
+            state=deepcopy(values["data"]),
+            executed_nodes=tuple(values["executed_nodes"]),
+            interrupted=bool(snapshot and snapshot.next),
+            checkpoint_id=saved_config.get("checkpoint_id"),
         )
 
 
@@ -89,6 +116,7 @@ class WorkflowGraphFactory:
         *,
         callback: RuntimeCallbackHandler | None = None,
         workflow_run_id: str | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
         event_sink: Callable[[str, ValidatedWorkflowNode, dict[str, Any]], Awaitable[None]]
         | None = None,
     ) -> WorkflowGraph:
@@ -122,7 +150,12 @@ class WorkflowGraphFactory:
                 builder.add_edge(graph_node_id, graph_node_ids[edges[0].target])
 
         builder.add_edge(START, graph_node_ids[workflow.entrypoint])
-        return WorkflowGraph(workflow, builder.compile(), runner)
+        return WorkflowGraph(
+            workflow,
+            builder.compile(checkpointer=checkpointer),
+            runner,
+            checkpointer is not None,
+        )
 
     @staticmethod
     def _outgoing_edges(workflow: ValidatedWorkflowSpec) -> dict[str, list[WorkflowEdge]]:

@@ -66,6 +66,7 @@ from heart_of_the_swarm.workflows.documents import (
     WorkflowVersionDetail,
 )
 from heart_of_the_swarm.workflows.runs import (
+    WorkflowResumeRequest,
     WorkflowRunAccepted,
     WorkflowRunDetail,
     WorkflowRunEvent,
@@ -393,6 +394,27 @@ async def get_workflow_run(run_id: UUID, runtime: Runtime) -> WorkflowRunDetail:
     if run is None:
         raise HTTPException(status_code=404, detail="workflow run not found")
     return run
+
+
+@app.post(
+    "/api/v1/workflow-runs/{run_id}/resume",
+    response_model=WorkflowRunAccepted,
+    status_code=202,
+)
+async def resume_workflow_run(
+    run_id: UUID,
+    request: WorkflowResumeRequest,
+    runtime: Runtime,
+) -> WorkflowRunAccepted:
+    try:
+        return await runtime.workflow_runs.resume(
+            run_id,
+            request.checkpoint_id,
+            get_trace_id() or str(uuid4()),
+        )
+    except ValueError as exc:
+        status_code = 404 if str(exc) == "workflow run not found" else 409
+        raise api_error(exc, status_code) from exc
 
 
 @app.get(

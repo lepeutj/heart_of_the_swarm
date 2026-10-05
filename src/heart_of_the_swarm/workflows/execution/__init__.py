@@ -13,15 +13,16 @@ from heart_of_the_swarm.workflows.execution.graph_factory import (
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
 from heart_of_the_swarm.workflows.execution.validation import validate_workflow_input
 from heart_of_the_swarm.workflows.execution.version_runner import (
+    ExecutionPolicy,
     WorkflowEventSink,
     WorkflowExecutionEvent,
-    WorkflowRuntimePolicy,
     WorkflowVersionRunner,
 )
 
 __all__ = [
     "AgentVersionResolver",
     "ExecutionResult",
+    "ExecutionPolicy",
     "ResolvedAgentVersion",
     "WorkflowExecutionError",
     "WorkflowExecutionIssue",
@@ -29,7 +30,6 @@ __all__ = [
     "WorkflowGraphFactory",
     "WorkflowEventSink",
     "WorkflowExecutionEvent",
-    "WorkflowRuntimePolicy",
     "WorkflowVersionRunner",
     "validate_workflow_input",
 ]

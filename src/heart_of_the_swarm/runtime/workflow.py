@@ -13,8 +13,8 @@ from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import create_default_registry
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflows import (
+    ExecutionPolicy,
     WorkflowGraphFactory,
-    WorkflowRuntimePolicy,
     WorkflowValidator,
     WorkflowVersionRunner,
 )
@@ -104,7 +104,7 @@ class StandaloneWorkflowRuntime:
             result = await self.runner.run(
                 self._snapshot(artifact),
                 workflow_input,
-                WorkflowRuntimePolicy(
+                ExecutionPolicy(
                     timeout_seconds=self.settings.workflow_timeout_seconds,
                     recursion_limit=self.settings.workflow_recursion_limit,
                 ),

@@ -18,6 +18,7 @@ from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflow_execution import WorkflowExecutor, WorkflowRunService
 from heart_of_the_swarm.workflow_service import WorkflowService
 from heart_of_the_swarm.workflows import WorkflowValidator
+from heart_of_the_swarm.workflows.execution.checkpoints import DurableWorkflowCheckpoints
 
 
 class Application:
@@ -38,6 +39,7 @@ class Application:
         self.providers = ProviderRegistry(self.settings)
         self.validator = AgentSpecValidator(self.tools, self.providers, self.skills)
         self.database = Database(self.settings.database_url)
+        self.workflow_checkpoints = DurableWorkflowCheckpoints(self.settings.database_url)
         self.mcp_servers = MCPServerService(self.database)
         self.telemetry = Telemetry(self.settings)
         self.factory = AgentFactory(self.tools, self.skills)
@@ -63,6 +65,7 @@ class Application:
             self.database,
             self.workflow_validator,
             self.tools,
+            self.workflow_checkpoints,
         )
         self.webhook_triggers = WebhookTriggerService(self.triggers, self.workflow_runs)
         self.executor = AgentExecutor(
@@ -78,10 +81,12 @@ class Application:
             self.tools,
             self.agent_runner,
             self.telemetry,
+            self.workflow_checkpoints,
         )
 
     async def initialize(self) -> None:
         await self.database.initialize()
+        await self.workflow_checkpoints.start()
         await self.mcp_servers.seed(self.settings.mcp_servers)
         await self.sync_mcp_tools()
 
@@ -91,4 +96,5 @@ class Application:
 
     async def close(self) -> None:
         await self.mcp_tools.close()
+        await self.workflow_checkpoints.close()
         await self.database.close()

@@ -70,6 +70,16 @@ class WorkflowVersionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ExecutionThreadRecord(Base):
+    __tablename__ = "execution_threads"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class MCPServerRecord(Base):
     __tablename__ = "mcp_servers"
 
@@ -111,9 +121,18 @@ class TriggerRecord(Base):
 
 class WorkflowRunRecord(Base):
     __tablename__ = "workflow_runs"
+    __table_args__ = (UniqueConstraint("thread_id", "attempt_index"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
+    thread_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_threads.id"), nullable=True, index=True
+    )
+    attempt_index: Mapped[int] = mapped_column(Integer, default=1)
+    resumed_from_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_runs.id"), nullable=True
+    )
+    resume_checkpoint_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(64), index=True)
     trigger_id: Mapped[str | None] = mapped_column(
         ForeignKey("triggers.id"), nullable=True, index=True

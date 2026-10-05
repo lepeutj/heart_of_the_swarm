@@ -3,6 +3,11 @@
 `WorkflowSpec` is the portable executable graph edited by React and interpreted by LangGraph.
 It contains no layout, database records, framework objects, credentials, or executable source.
 
+Schema v1 remains frozen and acyclic. Proposed V2 thread, checkpoint, loop, subworkflow, reducer,
+handoff, and streaming contracts are documented separately in
+[`v2-runtime-semantics.md`](v2-runtime-semantics.md). Implementations must not reinterpret existing
+v1 documents with new execution semantics.
+
 ## Nodes
 
 | Type | Contract | Runtime |

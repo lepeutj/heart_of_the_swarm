@@ -7,6 +7,10 @@ audit logs, model-usage aggregation, portable Docker runtimes, and optional MLfl
 For the frozen V1 architecture, its boundaries, and a reproducible five-minute demonstration, see
 [`docs/v1-demo.md`](docs/v1-demo.md).
 
+The ordered V2 milestones are in [`docs/roadmap.md`](docs/roadmap.md). Runtime contracts for
+threads, checkpoints, controlled cycles, subworkflows, reducers, handoffs, and streaming are in
+[`docs/v2-runtime-semantics.md`](docs/v2-runtime-semantics.md).
+
 ## Docker pack
 
 Copy the environment file, add at least one provider key, and start the stack:

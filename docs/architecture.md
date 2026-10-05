@@ -153,6 +153,11 @@ node, and translates declared routes into framework edges. `WorkflowNodeRunner` 
 product-specific operation performed inside each node. Graph traversal, scheduling, and advanced
 orchestration belong exclusively to LangGraph.
 
+V1 remains acyclic. V2 adds execution threads and durable checkpoints before controlled cycles,
+subworkflows, reducers, handoffs, and interrupts. These target contracts are defined in
+[`v2-runtime-semantics.md`](v2-runtime-semantics.md); they must not be implemented as custom graph
+traversal or retroactively change existing V1 workflow meaning.
+
 An agent node can contain an inline `AgentSpec` while it is designed or point to an immutable saved
 agent version. The runtime resolves either form and delegates to the same `AgentRunner`; React Flow
 must not expose the internal LangChain agent loop as workflow nodes.

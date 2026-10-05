@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel, ConfigDict, Field
 
 from heart_of_the_swarm.tools import ToolRegistry
@@ -13,7 +14,7 @@ from heart_of_the_swarm.workflows.spec import ValidatedWorkflowNode
 from heart_of_the_swarm.workflows.validation import WorkflowValidator
 
 
-class WorkflowRuntimePolicy(BaseModel):
+class ExecutionPolicy(BaseModel):
     """Portable execution bounds applied to one workflow invocation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -53,10 +54,14 @@ class WorkflowVersionRunner:
         self,
         version: WorkflowVersionSnapshot,
         input_data: dict[str, Any],
-        policy: WorkflowRuntimePolicy,
+        policy: ExecutionPolicy,
         event_sink: WorkflowEventSink | None = None,
         *,
         execution_id: str | None = None,
+        thread_id: str | None = None,
+        checkpoint_id: str | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
+        interrupt_after: tuple[str, ...] = (),
     ) -> ExecutionResult:
         """Validate, build, and invoke one LangGraph workflow version."""
         self.capabilities.verify_contracts(version.capability_contracts)
@@ -66,10 +71,28 @@ class WorkflowVersionRunner:
             workflow,
             workflow_run_id=execution_id,
             event_sink=self._event_adapter(event_sink),
+            checkpointer=checkpointer,
         )
 
         async with asyncio.timeout(policy.timeout_seconds):
-            return await graph.ainvoke(input_data, recursion_limit=policy.recursion_limit)
+            result = await graph.ainvoke(
+                None if checkpoint_id else input_data,
+                recursion_limit=policy.recursion_limit,
+                thread_id=thread_id,
+                checkpoint_id=checkpoint_id,
+                interrupt_after=interrupt_after,
+            )
+        if result.checkpoint_id and event_sink is not None:
+            await event_sink.emit(
+                WorkflowExecutionEvent(
+                    event_type="checkpoint.created",
+                    data={
+                        "checkpoint_id": result.checkpoint_id,
+                        "thread_id": thread_id,
+                    },
+                )
+            )
+        return result
 
     @staticmethod
     def _event_adapter(

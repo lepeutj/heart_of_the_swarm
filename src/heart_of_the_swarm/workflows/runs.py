@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -25,6 +26,18 @@ class WorkflowRunOrigin(BaseModel):
     trigger_event_id: UUID
 
 
+class ExecutionThreadStatus(StrEnum):
+    ACTIVE = "active"
+    INTERRUPTED = "interrupted"
+    CLOSED = "closed"
+
+
+class WorkflowResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checkpoint_id: str = Field(min_length=1, max_length=100)
+
+
 class WorkflowRunAccepted(BaseModel):
     run_id: UUID
     trace_id: str
@@ -32,6 +45,10 @@ class WorkflowRunAccepted(BaseModel):
     workflow_version_id: UUID
     workflow_version: int
     status: RunStatus
+    thread_id: UUID | None = None
+    attempt_index: int = 1
+    resumed_from_run_id: UUID | None = None
+    resume_checkpoint_id: str | None = None
     trigger_id: UUID | None = None
     trigger_type: str | None = None
     trigger_event_id: UUID | None = None

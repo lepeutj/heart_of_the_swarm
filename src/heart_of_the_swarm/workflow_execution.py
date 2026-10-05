@@ -3,6 +3,8 @@ import time
 from typing import Any
 from uuid import UUID
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
@@ -12,13 +14,14 @@ from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflow_agent_versions import DatabaseAgentVersionResolver
 from heart_of_the_swarm.workflows import (
+    ExecutionPolicy,
     WorkflowExecutionEvent,
     WorkflowGraphFactory,
-    WorkflowRuntimePolicy,
     WorkflowValidator,
     WorkflowVersionRunner,
     validate_workflow_input,
 )
+from heart_of_the_swarm.workflows.execution.checkpoints import WorkflowCheckpointProvider
 from heart_of_the_swarm.workflows.runs import (
     WorkflowRunAccepted,
     WorkflowRunDetail,
@@ -35,10 +38,12 @@ class WorkflowRunService:
         database: Database,
         validator: WorkflowValidator,
         tools: ToolRegistry,
+        checkpoints: WorkflowCheckpointProvider | None = None,
     ) -> None:
         self.database = database
         self.validator = validator
         self.tools = tools
+        self.checkpoints = checkpoints
 
     async def queue(
         self,
@@ -61,6 +66,39 @@ class WorkflowRunService:
                 workflow_input,
                 origin,
             )
+
+    async def resume(
+        self,
+        run_id: UUID,
+        checkpoint_id: str,
+        trace_id: str,
+    ) -> WorkflowRunAccepted:
+        saver = self._checkpointer()
+        async with self.database.session() as session:
+            previous = await WorkflowRunRepository(session).get(str(run_id))
+        if previous is None:
+            raise ValueError("workflow run not found")
+        if previous.thread_id is None:
+            raise ValueError("workflow run does not belong to a resumable thread")
+        config = {
+            "configurable": {
+                "thread_id": str(previous.thread_id),
+                "checkpoint_id": checkpoint_id,
+            }
+        }
+        if await saver.aget_tuple(config) is None:
+            raise ValueError("checkpoint not found for execution thread")
+        async with self.database.session() as session:
+            return await WorkflowRunRepository(session).resume(
+                str(run_id),
+                checkpoint_id,
+                trace_id,
+            )
+
+    def _checkpointer(self) -> BaseCheckpointSaver:
+        if self.checkpoints is None or self.checkpoints.saver is None:
+            raise RuntimeError("durable workflow checkpointing is not initialized")
+        return self.checkpoints.saver
 
     async def get(self, run_id: UUID) -> WorkflowRunDetail | None:
         async with self.database.session() as session:
@@ -101,10 +139,12 @@ class WorkflowExecutor:
         tools: ToolRegistry,
         agent_runner: AgentRunner,
         telemetry: Telemetry,
+        checkpoints: WorkflowCheckpointProvider | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
         self.telemetry = telemetry
+        self.checkpoints = checkpoints
         self.runner = WorkflowVersionRunner(
             validator,
             tools,
@@ -114,12 +154,18 @@ class WorkflowExecutor:
                 capabilities=tools,
             ),
         )
-        self.policy = WorkflowRuntimePolicy(
+        self.policy = ExecutionPolicy(
             timeout_seconds=settings.workflow_timeout_seconds,
             recursion_limit=settings.workflow_recursion_limit,
         )
 
-    async def execute(self, run_id: str, worker_id: str) -> None:
+    async def execute(
+        self,
+        run_id: str,
+        worker_id: str,
+        *,
+        interrupt_after: tuple[str, ...] = (),
+    ) -> None:
         async with self.database.session() as session:
             context = await WorkflowRunRepository(session).get_execution_context(run_id)
         if context is None:
@@ -139,6 +185,8 @@ class WorkflowExecutor:
                     "workflow.version": context.version.version,
                     "workflow.version_id": str(context.version.id),
                     "run.id": run_id,
+                    "execution.thread_id": context.thread_id,
+                    "execution.attempt_index": context.attempt_index,
                 },
             ) as span,
         ):
@@ -162,16 +210,32 @@ class WorkflowExecutor:
                     self.policy,
                     _DatabaseWorkflowEventSink(self.database, run_id),
                     execution_id=run_id,
+                    thread_id=context.thread_id,
+                    checkpoint_id=context.resume_checkpoint_id,
+                    checkpointer=self._checkpointer(),
+                    interrupt_after=interrupt_after,
                 )
                 async with self.database.session() as session:
-                    await WorkflowRunRepository(session).finish(
-                        run_id,
-                        result.output,
-                        result.executed_nodes,
-                    )
+                    repository = WorkflowRunRepository(session)
+                    if result.interrupted:
+                        if result.checkpoint_id is None:
+                            raise RuntimeError("interrupted workflow has no durable checkpoint")
+                        await repository.interrupt(
+                            run_id,
+                            result.checkpoint_id,
+                            result.executed_nodes,
+                        )
+                    else:
+                        await repository.finish(
+                            run_id,
+                            result.output,
+                            result.executed_nodes,
+                        )
                 self.telemetry.set_outputs(span, {"output": result.output})
                 audit_event(
-                    "workflow.execution.completed",
+                    "workflow.execution.interrupted"
+                    if result.interrupted
+                    else "workflow.execution.completed",
                     run_id=run_id,
                     duration_ms=round((time.perf_counter() - started) * 1000, 2),
                     node_count=len(result.executed_nodes),
@@ -202,3 +266,6 @@ class WorkflowExecutor:
                     )
                 if not active:
                     return
+
+    def _checkpointer(self) -> BaseCheckpointSaver | None:
+        return self.checkpoints.saver if self.checkpoints is not None else None

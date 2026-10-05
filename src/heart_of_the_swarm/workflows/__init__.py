@@ -8,6 +8,7 @@ from heart_of_the_swarm.workflows.conditions import ConditionSpec, evaluate_cond
 from heart_of_the_swarm.workflows.enums import ConditionOperator, NodeType
 from heart_of_the_swarm.workflows.execution import (
     AgentVersionResolver,
+    ExecutionPolicy,
     ExecutionResult,
     ResolvedAgentVersion,
     WorkflowEventSink,
@@ -16,7 +17,6 @@ from heart_of_the_swarm.workflows.execution import (
     WorkflowExecutionIssue,
     WorkflowGraph,
     WorkflowGraphFactory,
-    WorkflowRuntimePolicy,
     WorkflowVersionRunner,
     validate_workflow_input,
 )
@@ -37,6 +37,7 @@ __all__ = [
     "ConditionOperator",
     "ConditionSpec",
     "ExecutionResult",
+    "ExecutionPolicy",
     "NodeType",
     "ResolvedAgentVersion",
     "ValidatedWorkflowSpec",
@@ -48,7 +49,6 @@ __all__ = [
     "WorkflowGraphFactory",
     "WorkflowEventSink",
     "WorkflowExecutionEvent",
-    "WorkflowRuntimePolicy",
     "WorkflowVersionRunner",
     "WorkflowNodeCapability",
     "WorkflowNode",

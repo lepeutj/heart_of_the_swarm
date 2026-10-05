@@ -74,9 +74,10 @@ autotracing, expose the MLflow trace ID in invocation responses, and keep runnin
 unavailable.
 
 The workflow runtime image has been built and invoked with a real read-only artifact. Its
-database-independent result and nested MLflow trace were verified through Docker. V1 is now
-feature-frozen for consolidation; deployment lifecycle management, scheduling, checkpoints,
-parallelism, human approval, and richer credentials remain V2 concerns.
+database-independent result and nested MLflow trace were verified through Docker. V1 is frozen.
+V2 first introduces execution policies, threads, durable LangGraph checkpoints, controlled cycles,
+subworkflows, and reducers. Multi-agent handoffs and interaction build on those primitives; secure
+remote execution and deployment lifecycle management follow after the runtime semantics are stable.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow

@@ -40,13 +40,18 @@ ValidatedWorkflowSpec → WorkflowGraphFactory → LangGraph StateGraph
 
 - `WorkflowRecord`: mutable draft JSON, layout, and revision; it may be incomplete.
 - `WorkflowVersionRecord`: immutable specification, layout, and referenced capability contracts.
+- `ExecutionThreadRecord`: logical continuity for one immutable workflow version across resumptions;
+  it contains no LangGraph state.
+- `WorkflowRunRecord`: one bounded execution period in a thread, with an attempt index and optional
+  resume lineage.
 - `MCPServerRecord`: persisted HTTP discovery source shared by API and worker processes.
 - `WorkflowEditorDocument`: node positions and viewport; never affects execution.
 - `RunRecord`: lifecycle for one immutable agent or workflow version.
 - `run_id ↔ mlflow_trace_id`: link between product lifecycle and technical trace.
 
-PostgreSQL stores product state and audit information. MLflow owns detailed framework tracing and
-evaluation. Executable LangChain/LangGraph objects are always rebuilt from declarations.
+PostgreSQL stores product state and audit information. The injected LangGraph checkpointer stores
+technical execution state under the product thread ID. MLflow owns one detailed technical trace per
+run. Executable LangChain/LangGraph objects are always rebuilt from declarations.
 
 ## Agent artifacts
 

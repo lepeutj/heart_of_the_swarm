@@ -36,17 +36,97 @@ Build visually or with the Builder LLM
 - Optional MLflow LangChain/LangGraph autotracing with runtime trace-ID correlation.
 - Real Docker verification of an exported workflow artifact and its nested MLflow trace.
 
-## Immediate order
+## V2 objective
 
-1. Complete the V1 demonstration and final verification.
-2. Freeze the release boundary and avoid new product capabilities.
+Express and deploy stateful, durable, and composable agent graphs while continuing to delegate
+agent loops to LangChain and orchestration to LangGraph. The normative runtime contracts are in
+[`v2-runtime-semantics.md`](v2-runtime-semantics.md).
 
-## Later
+## V2.1 — Runtime semantics
 
-- LangGraph checkpoints, interrupts, retries, streaming, parallel branches, and bounded loops.
-- Schedule claiming, payload mapping, agent trigger targets, and trigger UI.
-- Deployment lifecycle, local Docker instances, then one Docker/VPS target.
-- Authentication, permissions, quotas, retention, and additional deployment providers.
+1. Introduce `ExecutionPolicy` independently from future deployment limits.
+2. Persist `ExecutionThread` separately from `WorkflowRun`.
+3. Add an injected durable LangGraph checkpointer.
+4. Create a new run for each initial invocation or resume in the same thread.
+5. Keep checkpoint state, product lifecycle, and MLflow traces separate.
+
+Exit criterion: a sequential workflow can stop after a checkpoint and resume in a new run without
+repeating completed nodes. The original run remains terminal, the new run references it and the
+selected checkpoint, and both traces share the product thread identifier.
+
+## V2.2 — Controlled composition
+
+1. Support one bounded conditional back edge without adding a `LOOP` node.
+2. Add immutable `SUBWORKFLOW` references with typed input/output mappings.
+3. Reject recursive subworkflow dependencies and bound nesting depth.
+4. Preserve execution counters, traces, and events across nested workflows.
+
+Exit criterion: the reference research/review workflow can loop at most three times and compose one
+versioned child workflow.
+
+## V2.3 — Parallel state
+
+1. Add explicit unconditional fan-out and `all` joins.
+2. Add closed reducer strategies for concurrent state paths.
+3. Reject conflicting writes without reducers.
+4. Make business event ordering safe under concurrent completion.
+
+Exit criterion: two agents can work concurrently, append typed results, and feed one synthesis node
+with deterministic state and events.
+
+## V2.4 — Multi-agent routing
+
+1. Add validated `allowed_targets` for agent-directed routing.
+2. Translate valid selections to LangGraph `Command` internally.
+3. Add supervisor/router and delegation patterns without a public `HANDOFF` node.
+4. Evaluate agent-as-subgraph only after opaque agent execution remains stable with checkpoints.
+
+Exit criterion: one router agent can hand work to one declared agent and return to an explicit
+workflow route without selecting arbitrary nodes.
+
+## V2.5 — Interaction
+
+1. Add durable interrupts and resume payload validation.
+2. Add human approval over the same checkpoint contract.
+3. Adapt LangGraph streaming to SSE for messages, updates, interrupts, and subgraphs.
+4. Extend React run observation without creating UI-only execution concepts.
+
+Exit criterion: an operator can observe, approve, and resume a long-running workflow without
+restarting it.
+
+## V2.6 — Security and remote execution
+
+1. Add API/runtime identity and authorization.
+2. Apply execution, request, concurrency, network, and state-size limits.
+3. Add credential references for MCP and providers without storing secrets in specs.
+4. Secure remote result, heartbeat, and MLflow trace transport.
+5. Prefer outbound runtime communication when the remote host is behind NAT.
+
+Basic secret handling, allow-lists, safe errors, SSRF protection, and execution bounds are
+cross-cutting requirements and must not wait for this milestone.
+
+Exit criterion: one authenticated remote runtime can receive work, report lifecycle and results,
+and emit correlated traces without exposing an unauthenticated administration port.
+
+## V2.7 — Deployment control plane
+
+1. Define deployment and deployment-revision contracts.
+2. Publish one generic hardened runtime image.
+3. Transfer and verify immutable artifacts.
+4. support one local Docker target, then one Docker/VPS or Raspberry Pi target;
+5. add health, start, stop, restart, and rollback lifecycle.
+
+Exit criterion: a selected immutable version can be deployed, invoked, observed, and rolled back on
+one remote Docker host.
+
+## Deferred until demanded by a completed path
+
+- long-term memory and vector stores;
+- arbitrary reducer plugins;
+- arbitrary Python or shell tools;
+- Kubernetes and additional cloud providers;
+- generic OAuth providers and multi-tenant billing;
+- automatic retries of non-idempotent external side effects.
 
 Do not add UI-only execution concepts, custom agent loops, custom workflow traversal, or duplicate
 tracing/evaluation platforms.

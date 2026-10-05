@@ -421,3 +421,77 @@ Those capabilities form a deployment control plane and are a V2 subsystem, not i
 runtime work. V1 consolidation prioritizes a reproducible demonstration, accurate architecture
 documentation, removal of genuinely superseded code, and explicit known limits. Existing legacy
 workflow readers remain only where they migrate tested saved-document formats.
+
+## ADR-036 — Separate execution threads, runs, and checkpoints
+
+**Status:** Accepted
+
+V2 introduces `ExecutionThread` as the durable identity of resumable workflow state. A
+`WorkflowRun` remains one invocation attempt and references exactly one thread. Initial invocation,
+resume, and operator retry create separate runs instead of mutating one run across multiple
+execution periods.
+
+LangGraph's checkpointer owns technical state snapshots under the product thread identifier.
+PostgreSQL product records own thread/run lifecycle and audit events; MLflow owns technical traces.
+Checkpoint payloads are not copied into workflow-run records. The first V2 thread contract pins one
+immutable `WorkflowVersion`.
+
+`RunCreationService` generates and persists the product thread ID during the initial atomic
+thread/run creation. A resume always creates a new run in the same thread and records the previous
+run in `resumed_from_run_id`, the selected checkpoint in `resume_checkpoint_id`, and its position in
+`attempt_index`. The existing run is never reopened. Each run receives its own product trace and
+MLflow trace; shared thread metadata links them into one history.
+
+Explicit interruption marks the run and thread interrupted. A worker crash marks the run failed
+while preserving the last committed checkpoint. Neither case starts a new run automatically.
+Resume requires an explicit request or a future recovery policy that has proven side-effect safety.
+A resume continues from the selected LangGraph checkpoint; it is not a new invocation from the
+workflow entrypoint and must not replay a connector completed before that checkpoint.
+
+The portable runner receives thread identity and a checkpointer adapter from its caller. It does
+not create product threads or import a PostgreSQL repository.
+
+## ADR-037 — Separate execution and deployment policies
+
+**Status:** Accepted
+
+`ExecutionPolicy` bounds runtime behavior: time, graph steps, iterations, model calls, and tool
+calls. `DeploymentPolicy` later bounds infrastructure: CPU, memory, concurrency, filesystem,
+network, and allowed hosts. One universal runtime policy would mix incompatible ownership and make
+portable execution difficult to validate.
+
+Application and deployment ceilings may tighten a version's execution policy but never loosen it.
+Nested agents and subworkflows share the parent's counters.
+
+## ADR-038 — Map advanced workflow declarations to LangGraph primitives
+
+**Status:** Accepted
+
+V2 does not introduce public `LOOP`, `PARALLEL`, or `HANDOFF` node types. Bounded back edges express
+controlled cycles, multiple validated edges express parallel branches, declarative reducers resolve
+concurrent state writes, and allow-listed agent targets translate internally to LangGraph
+`Command`.
+
+`Command`, reducer callables, checkpoint objects, and compiled subgraphs remain runtime details.
+Public specifications contain only closed identifiers and validated configuration. `AGENT` remains
+opaque until a later use case proves that embedding its internal graph is necessary.
+
+## ADR-039 — Compose workflows through immutable subworkflow versions
+
+**Status:** Accepted
+
+A V2 `SUBWORKFLOW` node references one immutable `WorkflowVersion` and declares named input/output
+mappings. Publication validates the child schemas and rejects recursive dependency graphs. Runtime
+resolution is injected into the portable runner; the runner never loads persistence itself.
+
+Standalone artifacts must either bundle the complete transitive workflow dependency set or reject
+export explicitly. They never serialize a compiled LangGraph graph.
+
+## ADR-040 — Treat security as a cross-cutting V2 constraint
+
+**Status:** Accepted
+
+Remote identity and deployment control are later V2 milestones, but new runtime features must
+preserve external secret injection, capability allow-lists, safe errors, bounded inputs/state,
+explicit side-effect idempotency, and restricted network access. Public-network deployment is
+forbidden until API/runtime authentication and transport security exist.
