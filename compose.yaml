@@ -57,6 +57,7 @@ services:
       - "8000:8000"
     volumes:
       - ./logs:/app/logs
+      - ./skills:/app/skills
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -77,6 +78,7 @@ services:
     command: ["python", "-m", "heart_of_the_swarm.worker"]
     volumes:
       - ./logs:/app/logs
+      - ./skills:/app/skills
     depends_on:
       migrate:
         condition: service_completed_successfully
