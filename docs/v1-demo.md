@@ -68,45 +68,60 @@ Open:
 - workflow editor: <http://localhost:8000/workflow-editor/>;
 - MLflow: <http://localhost:5000/>.
 
-### 2. Build and run a deterministic workflow
+### 2. Ask one agent to create an RSS agent
 
-In the workflow editor, create this graph:
+Run the public factory demonstration against the running control plane:
 
-```text
-INPUT → CONNECTOR calculator → OUTPUT
+```powershell
+uv run --locked python examples/workflow_factory_demo.py
 ```
 
-Use the following contract:
+The first agent receives the public `WorkflowSpec` schema and the workflow-authoring Skill. It must
+produce configuration rather than Python code. Its request is to create this second workflow:
 
-- input schema: object with required string `expression`;
-- connector input `expression`: `from_state = $.expression`;
-- connector output `value`: `to_state = $.calculation`;
-- output field `result`: `from_state = $.calculation`;
-- output schema: object with required string `result`.
+```text
+INPUT(feed_url, request) → AGENT(tools=[rss_reader]) → OUTPUT(result)
+```
 
-Save the draft, create an immutable version, enter `{"expression":"2 + 3 * 4"}`, and select
-**Run**. The editor should show ordered node events and return `{"result":"14"}`.
+The generated inline agent must call `rss_reader` once with at most five entries, identify the main
+themes, and answer the user's request in French. The demonstration then:
 
-### 3. Add the agentic path
+1. validates the generated `WorkflowSpec`;
+2. saves a mutable workflow draft;
+3. publishes an immutable `WorkflowVersion`;
+4. queues a durable run;
+5. lets LangChain select and invoke `rss_reader`;
+6. prints the final French thematic summary and all persisted identifiers.
 
-Insert an inline `AGENT` between the connector and output. Select a provider/model, give it an
-instruction to explain the calculation, map `$.calculation` into its input, and map its answer into
-`$.summary`. Publish a new version and run it. This demonstrates that deterministic capability
-invocation and the LangChain agent loop are separate operations in one LangGraph workflow.
+Pass `--model-id <openrouter-model-id>` to select another OpenRouter model that supports both
+structured output and tool calling. Pass `--feed-url <rss-or-atom-url>` to use another public feed.
 
-An MCP capability can replace the built-in connector for a live integration demonstration. Add the
-HTTP server in the MCP panel, test and refresh it, then select the discovered namespaced capability
-in the connector inspector.
+### 3. Inspect the generated execution
+
+Open the workflow editor and select the generated workflow. Its graph, inline `AgentSpec`, mappings,
+immutable version, run status, node events, and final result should all be visible.
+
+Open MLflow and inspect the nested technical path:
+
+```text
+workflow.run
+└── LangGraph
+    └── RSS agent
+        ├── model call
+        ├── rss_reader
+        └── model call
+```
+
+This demonstrates the product distinction directly: the designer agent creates a declaration,
+LangGraph orchestrates the declared workflow, and LangChain owns the generated agent's model/tool
+loop.
 
 ### 4. Export the immutable workflow version
 
-Resolve the version UUID through the API after selecting the workflow by name:
+Copy the `generated_version_id` printed by the demonstration:
 
 ```powershell
-$workflows = Invoke-RestMethod http://localhost:8000/api/v1/workflows
-$workflow = $workflows | Where-Object name -eq "V1 calculator demo" | Select-Object -First 1
-$version = Invoke-RestMethod "http://localhost:8000/api/v1/workflows/$($workflow.id)/versions/latest"
-$versionId = $version.id
+$versionId = "<generated-version-uuid>"
 ```
 
 Export from the API container, which already has access to PostgreSQL, then copy the portable files
@@ -119,9 +134,9 @@ docker cp "${apiContainer}:/tmp/workflow-artifact" .\workflow-artifact
 Get-ChildItem .\workflow-artifact
 ```
 
-The directory must contain only `manifest.json` and `workflow.json`. Export the deterministic
-calculator version for this step: standalone workflow V1 deliberately rejects MCP capabilities,
-saved-agent references, and external Skill files.
+The directory must contain only `manifest.json` and `workflow.json`. This generated workflow is
+portable because it contains an inline agent and the built-in `rss_reader`. Standalone workflow V1
+still rejects MCP capabilities, saved-agent references, and external Skill files.
 
 ### 5. Invoke the standalone Docker runtime
 
@@ -130,6 +145,7 @@ docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflo
 $artifact = (Resolve-Path .\workflow-artifact).Path
 docker run --rm --name swarm-v1-demo -p 8080:8000 `
   --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
+  -e OPENROUTER_API_KEY=$env:OPENROUTER_API_KEY `
   -e MLFLOW_ENABLED=true `
   -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 `
   -e MLFLOW_EXPERIMENT=heart-of-the-swarm-demo `
@@ -141,23 +157,29 @@ In another terminal:
 ```powershell
 Invoke-RestMethod http://localhost:8080/health
 Invoke-RestMethod http://localhost:8080/metadata
-$body = @{ input = @{ expression = "40 + 2" } } | ConvertTo-Json -Depth 5
+$body = @{
+  input = @{
+    feed_url = "https://feeds.bbci.co.uk/news/technology/rss.xml"
+    request = "Résume en français les principaux thèmes des cinq dernières publications."
+  }
+} | ConvertTo-Json -Depth 5
 Invoke-RestMethod http://localhost:8080/invoke -Method Post -ContentType application/json -Body $body
 ```
 
-The invocation returns `run_id`, product `trace_id`, optional `mlflow_trace_id`, and output `42`.
-Open MLflow and inspect the nested runtime, LangGraph node, and calculator spans.
+The invocation returns `run_id`, product `trace_id`, optional `mlflow_trace_id`, and the French
+summary. Open MLflow and inspect the nested runtime, LangGraph, model, and `rss_reader` spans.
 
 ## Five-minute portfolio path
 
-1. Show the graph and explain that edges carry control while shared state mappings carry data.
-2. Publish and run `INPUT → CONNECTOR → AGENT → OUTPUT`.
-3. Show ordered business events and the structured result.
-4. Export the immutable deterministic version and start its generic Docker runtime.
-5. Invoke it without the control-plane API or worker and open the correlated MLflow trace.
+1. Run the designer agent and show the generated RSS workflow in React Flow.
+2. Explain that the generated `AgentSpec` grants only `rss_reader` to the inline agent.
+3. Show the durable run, ordered business events, French summary, and nested MLflow trace.
+4. Export the same immutable generated version and start its generic Docker runtime.
+5. Invoke it without the control-plane API or worker and compare the result and trace.
 
-The point is not the calculator. The demonstration proves that the same versioned declaration can
-run durably in the product and independently through the portable runtime.
+The demonstration proves that one governed agent can create another useful tool-using agent as a
+portable declaration, and that the same immutable workflow can run durably in the product or
+independently through the standalone runtime.
 
 ## Critical review
 

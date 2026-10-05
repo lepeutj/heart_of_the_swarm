@@ -122,7 +122,7 @@ to the server-side registry:
 - `database_query`
 - `rss_reader`
 
-## Agent-creates-an-agent demonstration
+## V1 reference demonstration: an agent creates an RSS agent
 
 With the Docker stack running and `OPENROUTER_API_KEY` configured, run:
 
@@ -135,17 +135,30 @@ asks that agent to generate a second workflow containing an inline RSS agent, va
 versions the generated declaration, then runs it against a public technology feed. The final agent
 autonomously calls `rss_reader` through LangChain before returning a French thematic summary.
 
+```text
+Designer agent
+    ↓ generates a validated WorkflowSpec
+INPUT(feed_url, request)
+    ↓
+Generated inline agent(tools=[rss_reader])
+    ↓ reads and groups the latest entries
+OUTPUT(result: French thematic summary)
+```
+
 The command prints every workflow, version, and run identifier. Open the workflow editor to inspect
 the generated graph and MLflow at <http://localhost:5000> to verify the nested model → tool → model
 trace. Free OpenRouter pools can return temporary HTTP 429 errors; the demonstration uses a small,
 bounded number of separate factory and execution runs and keeps every durable run record for
 inspection. This is demo-level resilience, not an implicit runtime retry of a workflow node.
 Pass `--model-id <openrouter-model-id>` to test another model that supports both structured output
-and tool calling.
+and tool calling. The deterministic regression version of this scenario is
+`test_agent_can_generate_and_execute_another_rss_agent` in
+`tests/test_workflow_end_to_end.py`; it uses a local RSS response and fake model messages while
+exercising the real LangChain agent, tool registry, `rss_reader`, and LangGraph workflow runtime.
 
 ## Standalone workflow runtime
 
-Export one immutable workflow version:
+Export the immutable generated RSS workflow version printed by the reference demonstration:
 
 ```bash
 uv run --locked swarm-export-workflow <workflow-version-uuid> ./workflow-artifact
@@ -159,7 +172,7 @@ The output contains `manifest.json` and `workflow.json`. Build and run the gener
 docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflow-runtime .
 docker run --rm -p 8080:8000 \
   --mount type=bind,source="$(pwd)/workflow-artifact",target=/app/artifact,readonly \
-  -e OPENAI_API_KEY \
+  -e OPENROUTER_API_KEY \
   heart-of-the-swarm-workflow-runtime
 ```
 
@@ -170,7 +183,7 @@ docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflo
 $artifact = (Resolve-Path .\workflow-artifact).Path
 docker run --rm -p 8080:8000 `
   --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
-  -e "OPENAI_API_KEY=$env:OPENAI_API_KEY" `
+  -e "OPENROUTER_API_KEY=$env:OPENROUTER_API_KEY" `
   heart-of-the-swarm-workflow-runtime
 ```
 
@@ -181,7 +194,7 @@ Invoke it with the workflow's declared object input:
 ```bash
 curl -X POST http://localhost:8080/invoke \
   -H "Content-Type: application/json" \
-  -d '{"input":{"expression":"2 + 3 * 4"}}'
+  -d '{"input":{"feed_url":"https://feeds.bbci.co.uk/news/technology/rss.xml","request":"Résume en français les principaux thèmes des cinq dernières publications."}}'
 ```
 
 ### Windows PowerShell
@@ -189,7 +202,12 @@ curl -X POST http://localhost:8080/invoke \
 ```powershell
 Invoke-RestMethod -Method Post http://localhost:8080/invoke `
   -ContentType 'application/json' `
-  -Body (@{ input = @{ expression = '2 + 3 * 4' } } | ConvertTo-Json -Depth 3)
+  -Body (@{
+    input = @{
+      feed_url = 'https://feeds.bbci.co.uk/news/technology/rss.xml'
+      request = 'Résume en français les principaux thèmes des cinq dernières publications.'
+    }
+  } | ConvertTo-Json -Depth 3)
 ```
 
 The runtime reconstructs LangGraph from the declaration and uses the same portable runner as the
