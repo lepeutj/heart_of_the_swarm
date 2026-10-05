@@ -33,6 +33,7 @@ def test_registry_contains_registered_agent_and_connector_capabilities() -> None
         "calculator",
         "document_reader",
         "http_get_json",
+        "rss_reader",
         "database_query",
     )
 

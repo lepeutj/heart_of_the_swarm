@@ -7,6 +7,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.spec import AgentSpec
 
+_MISSING = object()
+
 
 def make_spec() -> AgentSpec:
     return AgentSpec(
@@ -38,7 +40,7 @@ class RecordingProviders:
 
 
 class FakeGraph:
-    def __init__(self, messages: list[object], structured_response: object | None = None) -> None:
+    def __init__(self, messages: list[object], structured_response: object = _MISSING) -> None:
         self.messages = messages
         self.structured_response = structured_response
         self.input: dict[str, Any] | None = None
@@ -48,7 +50,7 @@ class FakeGraph:
         self.input = value
         self.config = config
         result = {"messages": self.messages}
-        if self.structured_response is not None:
+        if self.structured_response is not _MISSING:
             result["structured_response"] = self.structured_response
         return result
 
@@ -132,3 +134,15 @@ async def test_runner_returns_langchain_structured_response() -> None:
     assert output == {"answer": "Structured answer"}
     assert factory.call is not None
     assert factory.call[3] == schema
+
+
+async def test_runner_rejects_null_structured_response() -> None:
+    graph = FakeGraph([], structured_response=None)
+    runner = AgentRunner(  # type: ignore[arg-type]
+        RecordingProviders(object()),
+        RecordingValidator(),
+        RecordingFactory(graph),
+    )
+
+    with pytest.raises(RuntimeError, match="agent returned no structured response"):
+        await runner.invoke(make_spec(), "Question", response_schema={"type": "object"})

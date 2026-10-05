@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 import httpx
+import pytest
 
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.tools import builtin as builtin_tools
@@ -109,3 +110,97 @@ async def test_http_json_connector_uses_real_json_decoder(monkeypatch) -> None:
     result = await builtin_tools.http_get_json.ainvoke({"url": "https://example.com/data"})
 
     assert result == {"status": "ok"}
+
+
+@pytest.mark.parametrize("content_type", ["application/atom+xml; charset=utf-8", "application/xml"])
+async def test_document_reader_accepts_xml_feeds_as_text(monkeypatch, content_type: str) -> None:
+    feed = "<feed><entry><title>Agent research</title></entry></feed>"
+
+    async def response(url: str) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=feed,
+            headers={"Content-Type": content_type},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(builtin_tools, "_fetch_public_url", response)
+
+    result = await builtin_tools.document_reader.ainvoke(
+        {"url": "https://export.arxiv.org/api/query?search_query=cat:cs.AI"}
+    )
+
+    assert result == feed
+
+
+@pytest.mark.parametrize(
+    ("feed", "expected"),
+    [
+        (
+            """<rss><channel><item><title>First story</title><link>https://example.com/1</link>
+            <pubDate>Mon, 05 Oct 2026 08:00:00 GMT</pubDate>
+            <description><![CDATA[<p>RSS summary</p>]]></description></item></channel></rss>""",
+            {
+                "title": "First story",
+                "url": "https://example.com/1",
+                "published_at": "Mon, 05 Oct 2026 08:00:00 GMT",
+                "summary": "RSS summary",
+            },
+        ),
+        (
+            """<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Atom story</title>
+            <link href="https://example.com/atom"/><updated>2026-10-05T08:00:00Z</updated>
+            <summary>Atom summary</summary></entry></feed>""",
+            {
+                "title": "Atom story",
+                "url": "https://example.com/atom",
+                "published_at": "2026-10-05T08:00:00Z",
+                "summary": "Atom summary",
+            },
+        ),
+    ],
+)
+async def test_rss_reader_normalizes_real_feed_formats(monkeypatch, feed, expected) -> None:
+    async def response(url: str) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=feed.encode(),
+            headers={"Content-Type": "application/xml"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(builtin_tools, "_fetch_public_url", response)
+
+    result = await builtin_tools.rss_reader.ainvoke(
+        {"url": "https://example.com/feed.xml", "max_items": 1}
+    )
+
+    assert result == {"feed_url": "https://example.com/feed.xml", "items": [expected]}
+
+
+async def test_rss_reader_rejects_malformed_feed(monkeypatch) -> None:
+    async def response(url: str) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"<rss><broken>",
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(builtin_tools, "_fetch_public_url", response)
+
+    with pytest.raises(ValueError, match="valid RSS or Atom"):
+        await builtin_tools.rss_reader.ainvoke({"url": "https://example.com/feed.xml"})
+
+
+async def test_rss_reader_rejects_entity_declarations(monkeypatch) -> None:
+    async def response(url: str) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b'<!DOCTYPE rss [<!ENTITY payload "unsafe">]><rss>&payload;</rss>',
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(builtin_tools, "_fetch_public_url", response)
+
+    with pytest.raises(ValueError, match="DTD or entity"):
+        await builtin_tools.rss_reader.ainvoke({"url": "https://example.com/feed.xml"})

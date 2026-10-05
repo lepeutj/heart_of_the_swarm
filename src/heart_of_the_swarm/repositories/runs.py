@@ -40,6 +40,7 @@ class RunRepository(RepositoryBase):
             queued_at=datetime.now(UTC),
         )
         self.session.add(run)
+        await self.session.flush()
         self._add_event(run.id, RunStatus.QUEUED.value, {"agent_version": agent.version})
         await self.session.commit()
         return self._accepted(run)

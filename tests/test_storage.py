@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.mcp_service import MCPServerService
@@ -149,6 +150,24 @@ async def test_repository_persists_versions_runs_and_usage() -> None:
         assert summary[0].calls == 1
         assert summary[0].total_tokens == 15
         assert summary[0].cost == 0.01
+    finally:
+        await database.close()
+
+
+async def test_queue_persists_agent_run_before_its_foreign_keyed_event() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    async with database.engine.begin() as connection:
+        await connection.execute(text("PRAGMA foreign_keys = ON"))
+    try:
+        async with database.session() as session:
+            agent = await AgentRepository(session).create(make_spec(), "1", "System prompt")
+            queued = await RunRepository(session).queue(agent, "trace-foreign-key", "Research this")
+
+        async with database.session() as session:
+            events = await RunRepository(session).list_events(queued.run_id)
+
+        assert [event.event_type for event in events] == ["queued"]
     finally:
         await database.close()
 

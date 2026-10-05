@@ -3,6 +3,7 @@ import ipaddress
 import operator
 import socket
 import time
+import xml.etree.ElementTree as ET
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -153,15 +154,21 @@ async def web_search(query: str) -> str:
 
 @tool
 async def document_reader(url: str) -> str:
-    """Read text from a public HTML or plain-text URL."""
+    """Read text from a public HTML, plain-text, or XML URL."""
     response = await _fetch_public_url(url)
     content_type = response.headers.get("content-type", "").lower()
-    if "text/html" in content_type:
+    media_type = content_type.partition(";")[0].strip()
+    if media_type == "text/html":
         soup = BeautifulSoup(response.text, "html.parser")
         for element in soup(["script", "style", "noscript"]):
             element.decompose()
         text = soup.get_text(" ", strip=True)
-    elif content_type.startswith("text/") or not content_type:
+    elif (
+        media_type.startswith("text/")
+        or media_type == "application/xml"
+        or media_type.endswith("+xml")
+        or not media_type
+    ):
         text = response.text
     else:
         raise ValueError(f"unsupported content type: {content_type}")
@@ -173,6 +180,63 @@ async def document_reader(url: str) -> str:
         output_characters=len(output),
     )
     return output
+
+
+def _xml_text(element: ET.Element, names: tuple[str, ...]) -> str:
+    for child in element.iter():
+        if child.tag.rsplit("}", 1)[-1] in names and child.text:
+            return child.text.strip()
+    return ""
+
+
+def _feed_link(element: ET.Element) -> str:
+    for child in element.iter():
+        if child.tag.rsplit("}", 1)[-1] != "link":
+            continue
+        href = child.get("href")
+        if href and child.get("rel", "alternate") == "alternate":
+            return href.strip()
+        if child.text:
+            return child.text.strip()
+    return ""
+
+
+@tool
+async def rss_reader(url: str, max_items: int = 5) -> dict:
+    """Read a public RSS or Atom feed and return a limited list of normalized entries."""
+    if not 1 <= max_items <= 20:
+        raise ValueError("max_items must be between 1 and 20")
+    response = await _fetch_public_url(url)
+    xml_content = response.content
+    normalized_xml = xml_content.upper()
+    if b"<!DOCTYPE" in normalized_xml or b"<!ENTITY" in normalized_xml:
+        raise ValueError("RSS and Atom feeds cannot contain DTD or entity declarations")
+    try:
+        # The bounded response is parsed only after DTD and entity declarations are rejected.
+        root = ET.fromstring(xml_content)  # noqa: S314
+    except ET.ParseError as exc:
+        raise ValueError("response is not a valid RSS or Atom feed") from exc
+
+    entries = [
+        element for element in root.iter() if element.tag.rsplit("}", 1)[-1] in {"item", "entry"}
+    ][:max_items]
+    items = []
+    for entry in entries:
+        summary = _xml_text(entry, ("description", "summary", "content"))
+        items.append(
+            {
+                "title": _xml_text(entry, ("title",)),
+                "url": _feed_link(entry),
+                "published_at": _xml_text(entry, ("pubDate", "published", "updated", "date")),
+                "summary": BeautifulSoup(summary, "html.parser").get_text(" ", strip=True)[:1_000],
+            }
+        )
+    audit_event(
+        "rss_reader.completed",
+        host=urlparse(url).hostname,
+        item_count=len(items),
+    )
+    return {"feed_url": str(response.url), "items": items}
 
 
 @tool

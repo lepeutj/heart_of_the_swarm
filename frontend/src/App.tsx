@@ -32,7 +32,6 @@ import {
   type WorkflowVersion,
 } from "./api";
 import { EdgeInspector } from "./components/EdgeInspector";
-import { JsonEditor } from "./components/JsonEditor";
 import { NodeInspector } from "./components/NodeInspector";
 import { MCPServerPanel } from "./components/mcp/MCPServerPanel";
 import { WorkflowRunPanel } from "./components/runs/WorkflowRunPanel";
@@ -106,6 +105,7 @@ export default function App() {
     properties: { result: { type: "string" } },
     required: ["result"],
   });
+  const [showRunPanel, setShowRunPanel] = useState(false);
   const workflowId = useRef<string>(crypto.randomUUID());
   const sequence = useRef(1);
 
@@ -412,7 +412,12 @@ export default function App() {
       properties: { request: { type: "string" } },
       required: ["request"],
     });
-    setOutputSchema({ type: "string" });
+    setOutputSchema({
+      type: "object",
+      properties: { result: { type: "string" } },
+      required: ["result"],
+      additionalProperties: false,
+    });
     setNodes(initialNodes);
     setEdges(initialEdges);
     setRevision(null);
@@ -447,16 +452,19 @@ export default function App() {
           <h1>Workflow editor</h1>
         </div>
         <div className="topbar-actions">
-          <a href="/">Agent workspace</a>
+          <a href="/">Overview</a>
+          <button type="button" onClick={validate}>Validate</button>
           <button type="button" onClick={saveDraft}>Save draft</button>
           <button type="button" onClick={publishVersion}>Create version</button>
-          <button type="button" className="primary" onClick={validate}>Validate workflow</button>
+          <button type="button" className="primary" onClick={() => setShowRunPanel((open) => !open)}>
+            {showRunPanel ? "Close run panel" : "Run workflow"}
+          </button>
         </div>
       </header>
 
       <main className="workspace">
         <aside className="sidebar palette">
-          <h2>Workflow</h2>
+          <h2>Workflows</h2>
           <label>
             Saved workflows
             <select
@@ -473,45 +481,8 @@ export default function App() {
               ))}
             </select>
           </label>
-          <label>Name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-          <label>
-            Entrypoint
-            <select value={entrypoint} onChange={(event) => setEntrypoint(event.target.value)}>
-              <option value="">Select a node</option>
-              {nodes.map((node) => <option key={node.id} value={node.id}>{node.id}</option>)}
-            </select>
-          </label>
-          <JsonEditor label="Input schema" value={inputSchema} onApply={(value) => value && setInputSchema(value)} />
-          <JsonEditor
-            label="Output schema (optional)"
-            value={outputSchema ?? {}}
-            onApply={(value) => value && setOutputSchema(value)}
-          />
-          <button type="button" onClick={() => setOutputSchema(null)}>Use untyped outputs</button>
-          <label>
-            Upload Skill (.md)
-            <input
-              type="file"
-              accept=".md,text/markdown"
-              onChange={async (event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                const name = file.name.replace(/\.md$/i, "");
-                try {
-                  await uploadSkill(name, await file.text());
-                  setSkillNames(await loadSkillNames());
-                  setStatus(`Skill ${name} uploaded`);
-                } catch (error) {
-                  setStatus(error instanceof Error ? error.message : "Skill upload failed");
-                }
-              }}
-            />
-          </label>
-
-          <MCPServerPanel onCatalogueChanged={reloadTools} />
-
           <h2>Nodes</h2>
+          <p className="field-help">Add a node, then select it on the canvas to configure it.</p>
           <div className="node-palette">
             {capabilities?.nodes.map((capability) => (
               <button
@@ -526,6 +497,31 @@ export default function App() {
               </button>
             ))}
           </div>
+
+          <details className="resource-library">
+            <summary>Skills and MCP resources</summary>
+            <p className="field-help">Resources become available to agents and connectors in this builder.</p>
+            <label>
+              Upload Skill (.md)
+              <input
+                type="file"
+                accept=".md,text/markdown"
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  const skillName = file.name.replace(/\.md$/i, "");
+                  try {
+                    await uploadSkill(skillName, await file.text());
+                    setSkillNames(await loadSkillNames());
+                    setStatus(`Skill ${skillName} uploaded`);
+                  } catch (error) {
+                    setStatus(error instanceof Error ? error.message : "Skill upload failed");
+                  }
+                }}
+              />
+            </label>
+            <MCPServerPanel onCatalogueChanged={reloadTools} />
+          </details>
         </aside>
 
         <section className="canvas" aria-label="Workflow graph editor">
@@ -576,6 +572,10 @@ export default function App() {
               onDetach={detachSelectedNode}
               onDelete={deleteSelectedNode}
               onSaveAsAgent={saveSelectedInlineAgent}
+              inputSchema={inputSchema}
+              outputSchema={outputSchema}
+              onInputSchemaChange={setInputSchema}
+              onOutputSchemaChange={setOutputSchema}
             />
           )}
           {selectedEdge && (
@@ -591,7 +591,30 @@ export default function App() {
             />
           )}
           {!selectedNode && !selectedEdge && (
-            <p className="muted">Select a node or edge to edit its declarative configuration.</p>
+            <section className="workflow-overview">
+              <p className="selection-kind">Workflow overview</p>
+              <label>
+                Name
+                <input value={name} onChange={(event) => setName(event.target.value)} />
+              </label>
+              <label>
+                Description
+                <textarea
+                  value={description}
+                  placeholder="Explain what this workflow accomplishes."
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </label>
+              <p className="field-help">
+                Select INPUT to define the values received by the workflow. Select OUTPUT to choose the final results.
+              </p>
+              <dl className="workflow-facts">
+                <div><dt>Nodes</dt><dd>{nodes.length}</dd></div>
+                <div><dt>Entrypoint</dt><dd>{entrypoint || "Not set"}</dd></div>
+                <div><dt>Draft</dt><dd>{revision === null ? "Unsaved" : `Revision ${revision}`}</dd></div>
+                <div><dt>Published</dt><dd>{publishedVersion ? `Version ${publishedVersion.version}` : "No version"}</dd></div>
+              </dl>
+            </section>
           )}
 
           <div className="validation-summary">
@@ -606,17 +629,20 @@ export default function App() {
             ))}
           </div>
 
-          <WorkflowRunPanel
-            version={publishedVersion}
-            onEvents={updateRunNodeStates}
-          />
-
           <details>
             <summary>WorkflowSpec JSON</summary>
             <pre>{JSON.stringify(spec, null, 2)}</pre>
           </details>
         </aside>
       </main>
+      {showRunPanel && (
+        <aside className="run-drawer">
+          <WorkflowRunPanel
+            version={publishedVersion}
+            onEvents={updateRunNodeStates}
+          />
+        </aside>
+      )}
     </div>
   );
 }

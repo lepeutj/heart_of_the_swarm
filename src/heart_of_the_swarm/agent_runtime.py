@@ -48,9 +48,9 @@ class AgentRunner:
             config={"callbacks": list(callbacks), "metadata": dict(metadata or {})},
         )
         if response_schema is not None:
-            if "structured_response" not in result:
+            structured = result.get("structured_response")
+            if structured is None:
                 raise RuntimeError("agent returned no structured response")
-            structured = result["structured_response"]
             if isinstance(structured, BaseModel):
                 return structured.model_dump(mode="json")
             return structured

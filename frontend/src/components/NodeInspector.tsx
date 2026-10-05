@@ -5,6 +5,7 @@ import type { EditorNode, JsonObject } from "../workflow";
 import { AgentDataFlowEditor, WorkflowOutputEditor } from "./DataFlowEditor";
 import { JsonEditor } from "./JsonEditor";
 import { ModelEditor } from "./ModelEditor";
+import { WorkflowSchemaEditor } from "./WorkflowSchemaEditor";
 
 interface NodeInspectorProps {
   node: EditorNode;
@@ -18,6 +19,10 @@ interface NodeInspectorProps {
   onDetach: () => void;
   onDelete: () => void;
   onSaveAsAgent: () => void;
+  inputSchema: JsonObject;
+  outputSchema: JsonObject | null;
+  onInputSchemaChange: (schema: JsonObject) => void;
+  onOutputSchemaChange: (schema: JsonObject | null) => void;
 }
 
 function asObject(value: unknown): JsonObject {
@@ -474,13 +479,16 @@ export function NodeInspector({
   onDetach,
   onDelete,
   onSaveAsAgent,
+  inputSchema,
+  outputSchema,
+  onInputSchemaChange,
+  onOutputSchemaChange,
 }: NodeInspectorProps) {
   const config = node.data.config;
 
   return (
     <div>
       <p className="selection-kind">Node · {node.data.nodeType}</p>
-      <label>ID<input value={node.id} readOnly /></label>
       <label>Name<input value={node.data.label} onChange={(event) => onChange({ label: event.target.value })} /></label>
 
       {node.data.nodeType === "agent" && (
@@ -504,31 +512,46 @@ export function NodeInspector({
         <TransformEditor config={config} onChange={(next) => onChange({ config: next })} />
       )}
       {node.data.nodeType === "output" && (
-        <WorkflowOutputEditor config={config} onChange={(next) => onChange({ config: next })} />
+        <WorkflowOutputEditor
+          config={config}
+          outputSchema={outputSchema}
+          onChange={(next) => onChange({ config: next })}
+          onOutputSchemaChange={onOutputSchemaChange}
+        />
       )}
       {node.data.nodeType === "condition" && (
         <p className="field-help">Select an outgoing edge to configure its condition. One outgoing edge must remain the fallback.</p>
       )}
       {node.data.nodeType === "input" && (
-        <p className="field-help">The input node validates the initial state against the workflow input schema.</p>
+        <WorkflowSchemaEditor
+          title="Workflow inputs"
+          help="Define the values a user, webhook, or scheduler must provide when starting this workflow."
+          schema={inputSchema}
+          onChange={onInputSchemaChange}
+        />
       )}
       <details>
-        <summary>Advanced configuration JSON</summary>
-        <JsonEditor
-          key={node.id}
-          label="Configuration"
-          value={config}
-          onApply={(value) => value && onChange({ config: value })}
-        />
+        <summary>Advanced node settings</summary>
+        <label>Node ID<input value={node.id} readOnly /></label>
+        {node.data.nodeType !== "input" && (
+          <JsonEditor
+            key={node.id}
+            label="Configuration JSON"
+            value={config}
+            onApply={(value) => value && onChange({ config: value })}
+          />
+        )}
       </details>
 
-      <div className="node-actions">
-        {node.data.nodeType === "agent" && asObject(config.source).type === "inline" && (
-          <button type="button" onClick={onSaveAsAgent}>Save as agent</button>
-        )}
-        <button type="button" disabled={!canDetach} onClick={onDetach}>Detach and reconnect</button>
-        <button type="button" className="danger" onClick={onDelete}>Delete node</button>
-      </div>
+      {!["input", "output"].includes(node.data.nodeType) && (
+        <div className="node-actions">
+          {node.data.nodeType === "agent" && asObject(config.source).type === "inline" && (
+            <button type="button" onClick={onSaveAsAgent}>Save as reusable agent</button>
+          )}
+          <button type="button" disabled={!canDetach} onClick={onDetach}>Detach and reconnect</button>
+          <button type="button" className="danger" onClick={onDelete}>Delete node</button>
+        </div>
+      )}
       {!canDetach && !["input", "output"].includes(node.data.nodeType) && (
         <small className="field-help">Detaching is available only for a simple node with one incoming and one outgoing edge.</small>
       )}

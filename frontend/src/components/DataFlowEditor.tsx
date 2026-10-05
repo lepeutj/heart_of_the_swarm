@@ -45,6 +45,10 @@ function BindingRow({
   onRename,
   onPathChange,
   onRemove,
+  fieldSchema,
+  required,
+  onFieldSchemaChange,
+  onRequiredChange,
 }: {
   name: string;
   path: string;
@@ -52,6 +56,10 @@ function BindingRow({
   onRename: (name: string) => void;
   onPathChange: (path: string) => void;
   onRemove: () => void;
+  fieldSchema?: JsonObject;
+  required?: boolean;
+  onFieldSchemaChange?: (schema: JsonObject) => void;
+  onRequiredChange?: (required: boolean) => void;
 }) {
   const [nameDraft, setNameDraft] = useState(name);
   useEffect(() => setNameDraft(name), [name]);
@@ -69,6 +77,33 @@ function BindingRow({
         {pathLabel}
         <input value={path} onChange={(event) => onPathChange(event.target.value)} />
       </label>
+      {fieldSchema && onFieldSchemaChange && (
+        <label>
+          Result type
+          <select
+            value={asString(fieldSchema.type, "string")}
+            onChange={(event) => onFieldSchemaChange({
+              ...fieldSchema,
+              type: event.target.value,
+              ...(event.target.value === "array" ? { items: { type: "string" } } : {}),
+            })}
+          >
+            {["string", "number", "integer", "boolean", "array", "object"].map((type) => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      {fieldSchema && onRequiredChange && (
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={required ?? false}
+            onChange={(event) => onRequiredChange(event.target.checked)}
+          />
+          Required in final response
+        </label>
+      )}
       <button type="button" onClick={onRemove}>Remove field</button>
     </div>
   );
@@ -111,10 +146,12 @@ export function AgentDataFlowEditor({ config, onChange }: {
   }
 
   return (
-    <>
+    <details className="data-mapping">
+      <summary>Data mapping</summary>
+      <p className="field-help">Choose what this agent receives and where its response is stored. Most simple agents need only the default request and answer fields.</p>
       <fieldset>
-        <legend>Inputs</legend>
-        <p className="field-help">Named values read from the shared LangGraph state.</p>
+        <legend>Data received by this node</legend>
+        <p className="field-help">Each field becomes context for the agent. Source paths refer to values produced earlier in the graph.</p>
         {Object.entries(inputs).map(([name, binding]) => {
           const value = asObject(binding);
           return (
@@ -137,12 +174,12 @@ export function AgentDataFlowEditor({ config, onChange }: {
           let index = Object.keys(inputs).length + 1;
           while (`input_${index}` in inputs) index += 1;
           replaceInputs({ ...inputs, [`input_${index}`]: { from_state: "$.request" } });
-        }}>Add input</button>
+        }}>Add received value</button>
       </fieldset>
 
       <fieldset>
-        <legend>Outputs</legend>
-        <p className="field-help">Map one text result or named structured fields into shared state.</p>
+        <legend>Response fields</legend>
+        <p className="field-help">Store the answer so downstream nodes and the workflow output can reuse it.</p>
         {Object.entries(outputs).map(([name, binding]) => {
           const value = asObject(binding);
           return (
@@ -165,7 +202,7 @@ export function AgentDataFlowEditor({ config, onChange }: {
           let index = Object.keys(outputs).length + 1;
           while (`output_${index}` in outputs) index += 1;
           replaceOutputs({ ...outputs, [`output_${index}`]: { to_state: `$.output_${index}` } });
-        }}>Add output</button>
+        }}>Add response field</button>
       </fieldset>
 
       {config.response_schema !== undefined && (
@@ -187,18 +224,48 @@ export function AgentDataFlowEditor({ config, onChange }: {
           onClick={() => onChange(without(config, "response_schema"))}
         >Use text output</button>
       )}
-    </>
+    </details>
   );
 }
 
-export function WorkflowOutputEditor({ config, onChange }: {
+export function WorkflowOutputEditor({ config, outputSchema, onChange, onOutputSchemaChange }: {
   config: JsonObject;
+  outputSchema: JsonObject | null;
   onChange: (config: JsonObject) => void;
+  onOutputSchemaChange: (schema: JsonObject | null) => void;
 }) {
   const outputs = namedBindings(config, "outputs", "output_path", "from_state");
+  const schemaProperties = asObject(outputSchema?.properties);
+  const required = Array.isArray(outputSchema?.required)
+    ? outputSchema.required.filter((name): name is string => typeof name === "string")
+    : [];
 
   function replace(nextOutputs: JsonObject) {
     onChange({ ...without(config, "output_path"), outputs: nextOutputs });
+  }
+
+  function replaceSchema(properties: JsonObject, requiredFields = required) {
+    onOutputSchemaChange({
+      ...outputSchema,
+      type: "object",
+      properties,
+      required: requiredFields.filter((name) => name in properties),
+      additionalProperties: false,
+    });
+  }
+
+  function rename(previous: string, nextName: string) {
+    if (!nextName || (nextName !== previous && nextName in outputs)) return;
+    replace(renameBinding(outputs, previous, nextName));
+    if (outputSchema) {
+      replaceSchema(
+        Object.fromEntries(Object.entries(schemaProperties).map(([name, value]) => [
+          name === previous ? nextName : name,
+          value,
+        ])),
+        required.map((name) => name === previous ? nextName : name),
+      );
+    }
   }
 
   return (
@@ -212,12 +279,27 @@ export function WorkflowOutputEditor({ config, onChange }: {
             name={name}
             path={asString(value.from_state)}
             pathLabel="Source state path"
-            onRename={(nextName) => replace(renameBinding(outputs, name, nextName))}
+            onRename={(nextName) => rename(name, nextName)}
             onPathChange={(path) => replace({ ...outputs, [name]: { from_state: path } })}
+            fieldSchema={outputSchema ? asObject(schemaProperties[name] ?? { type: "string" }) : undefined}
+            required={required.includes(name)}
+            onFieldSchemaChange={outputSchema ? (fieldSchema) => replaceSchema({
+              ...schemaProperties,
+              [name]: fieldSchema,
+            }) : undefined}
+            onRequiredChange={outputSchema ? (isRequired) => replaceSchema(
+              schemaProperties,
+              isRequired ? [...required, name] : required.filter((field) => field !== name),
+            ) : undefined}
             onRemove={() => {
               const next = { ...outputs };
               delete next[name];
               replace(next);
+              if (outputSchema) {
+                const nextProperties = { ...schemaProperties };
+                delete nextProperties[name];
+                replaceSchema(nextProperties, required.filter((field) => field !== name));
+              }
             }}
           />
         );
@@ -225,8 +307,30 @@ export function WorkflowOutputEditor({ config, onChange }: {
       <button type="button" onClick={() => {
         let index = Object.keys(outputs).length + 1;
         while (`result_${index}` in outputs) index += 1;
-        replace({ ...outputs, [`result_${index}`]: { from_state: `$.result_${index}` } });
+        const name = `result_${index}`;
+        replace({ ...outputs, [name]: { from_state: `$.${name}` } });
+        if (outputSchema) replaceSchema({ ...schemaProperties, [name]: { type: "string" } });
       }}>Add workflow output</button>
+      {outputSchema ? (
+        <>
+          <button type="button" onClick={() => onOutputSchemaChange(null)}>Allow untyped results</button>
+          <details>
+            <summary>Advanced result schema</summary>
+            <JsonEditor
+              label="Output JSON Schema"
+              value={outputSchema}
+              onApply={(value) => value && onOutputSchemaChange(value)}
+            />
+          </details>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => replaceSchema(Object.fromEntries(
+            Object.keys(outputs).map((name) => [name, { type: "string" }]),
+          ), Object.keys(outputs))}
+        >Validate result types</button>
+      )}
     </div>
   );
 }
