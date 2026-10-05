@@ -1,6 +1,8 @@
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 from langchain_core.tools import tool
 
@@ -15,6 +17,23 @@ from heart_of_the_swarm.workflows import (
     WorkflowValidator,
 )
 from heart_of_the_swarm.workflows.runs import WorkflowRunAccepted
+
+
+@asynccontextmanager
+async def isolated_lifespan(_app):
+    """Exercise API routes without starting PostgreSQL, MCP, or MLflow adapters."""
+    yield
+
+
+@pytest.fixture(autouse=True)
+def isolate_application_lifespan():
+    original = app.router.lifespan_context
+    app.router.lifespan_context = isolated_lifespan
+    try:
+        yield
+    finally:
+        app.router.lifespan_context = original
+        app.dependency_overrides.clear()
 
 
 @tool
