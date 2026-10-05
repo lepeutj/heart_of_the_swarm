@@ -50,6 +50,7 @@ class WorkflowRunRepository(RepositoryBase):
             queued_at=datetime.now(UTC),
         )
         self.session.add(run)
+        await self.session.flush()
         self._add_event(
             run,
             "workflow.queued",

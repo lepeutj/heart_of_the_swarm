@@ -23,7 +23,7 @@ services:
     command:
       - sh
       - -c
-      - mlflow server --host 0.0.0.0 --port 5000 --allowed-hosts "localhost,127.0.0.1,mlflow:5000,host.docker.internal:5000" --backend-store-uri "$${MLFLOW_BACKEND_STORE_URI}" --default-artifact-root /mlflow/artifacts
+      - mlflow server --host 0.0.0.0 --port 5000 --allowed-hosts "localhost:*,127.0.0.1:*,mlflow:*,host.docker.internal:*" --backend-store-uri "$${MLFLOW_BACKEND_STORE_URI}" --default-artifact-root /mlflow/artifacts
     ports:
       - "5000:5000"
     volumes:

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from langchain_core.tools import tool
+from sqlalchemy import text
 
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
@@ -182,6 +183,29 @@ async def test_invalid_input_is_rejected_before_a_run_is_queued() -> None:
 
         async with database.session() as session:
             assert await WorkflowRunRepository(session).claim_next("worker-1", 60) is None
+    finally:
+        await database.close()
+
+
+async def test_queue_persists_run_before_its_foreign_keyed_event() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    async with database.engine.begin() as connection:
+        await connection.execute(text("PRAGMA foreign_keys = ON"))
+    tools = ToolRegistry()
+    validator = WorkflowValidator(lambda: tools.names, [])
+    try:
+        version = await published_version(database, tools)
+        queued = await WorkflowRunService(database, validator, tools).queue(
+            version.id,
+            {"request": "hello"},
+            "trace-foreign-key",
+        )
+
+        async with database.session() as session:
+            events = await WorkflowRunRepository(session).list_events(str(queued.run_id))
+
+        assert [event.event_type for event in events] == ["workflow.queued"]
     finally:
         await database.close()
 

@@ -8,6 +8,7 @@ import {
   type WorkflowRunEvent,
   type WorkflowVersion,
 } from "../../api";
+import { buildRunInput } from "../../runInput";
 
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "timed_out"]);
@@ -31,6 +32,7 @@ export function WorkflowRunPanel({
   onEventsRef.current = onEvents;
 
   useEffect(() => {
+    setInput(JSON.stringify(buildRunInput(version?.spec.input_schema), null, 2));
     setRunId(null);
     setRun(null);
     setEvents([]);

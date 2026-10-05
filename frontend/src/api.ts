@@ -109,6 +109,7 @@ export interface WorkflowVersion {
   id: string;
   workflow_id: string;
   version: number;
+  spec: WorkflowSpec;
 }
 
 export type WorkflowRunStatus =
@@ -152,16 +153,38 @@ export interface WorkflowRunEvent {
   created_at: string;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+function errorMessage(response: Response, body: unknown): string {
+  if (typeof body === "string" && body.trim()) return body;
+  if (typeof body === "object" && body !== null && "detail" in body) {
+    const detail = (body as { detail: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    if (typeof detail === "object" && detail !== null && "message" in detail) {
+      const message = (detail as { message: unknown }).message;
+      if (typeof message === "string") return message;
+    }
+  }
+  const status = [response.status, response.statusText].filter(Boolean).join(" ");
+  return `Request failed${status ? ` with HTTP ${status}` : ""}`;
+}
+
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail ?? response.statusText);
+  const text = await response.text();
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
   }
-  return response.json() as Promise<T>;
+  if (!response.ok) {
+    throw new Error(errorMessage(response, body));
+  }
+  return body as T;
 }
 
 export function loadCapabilities(): Promise<WorkflowCapabilities> {
