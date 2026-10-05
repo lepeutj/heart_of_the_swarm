@@ -39,7 +39,7 @@ An inline agent node uses:
       "instructions": "Operational instructions.",
       "model": {
         "provider": "openrouter",
-        "model_id": "qwen/qwen3.8-27b:free",
+        "model_id": "nvidia/nemotron-3-super-120b-a12b:free",
         "temperature": 0,
         "max_tokens": 3000
       },
@@ -64,8 +64,9 @@ Use only these built-in capability identifiers when they are necessary:
 - `rss_reader`: bounded normalized RSS or Atom entries.
 - `web_search`: public web search.
 
-Use only the `openrouter` provider and `qwen/qwen3.8-27b:free` model in generated examples.
-Do not invent tools, Skills, providers, models, version IDs, credentials, or API keys.
+Use the exact OpenRouter model explicitly requested by the user when one is supplied. Otherwise,
+use `nvidia/nemotron-3-super-120b-a12b:free` in generated examples. Do not invent tools, Skills,
+providers, models, version IDs, credentials, or API keys.
 
 One textual agent result needs no `response_schema`. Multiple named outputs require an object JSON
 Schema whose properties are required. Map each returned property to shared state with `to_state`.
@@ -106,7 +107,7 @@ Schema whose properties are required. Map each returned property to shared state
             "instructions": "Return a concise, factual summary using only supplied text.",
             "model": {
               "provider": "openrouter",
-              "model_id": "qwen/qwen3.8-27b:free",
+              "model_id": "nvidia/nemotron-3-super-120b-a12b:free",
               "temperature": 0,
               "max_tokens": 1000
             },

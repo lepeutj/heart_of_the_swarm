@@ -87,6 +87,27 @@ to the server-side registry:
 - `http_get_json`
 - `database_query`
 
+## Agent-creates-an-agent demonstration
+
+With the Docker stack running and `OPENROUTER_API_KEY` configured, run:
+
+```bash
+uv run --locked python examples/workflow_factory_demo.py
+```
+
+This demonstration uses only the public API. It creates and versions a workflow-designer agent,
+asks that agent to generate a second workflow containing an inline RSS agent, validates and
+versions the generated declaration, then runs it against a public technology feed. The final agent
+autonomously calls `rss_reader` through LangChain before returning a French thematic summary.
+
+The command prints every workflow, version, and run identifier. Open the workflow editor to inspect
+the generated graph and MLflow at <http://localhost:5000> to verify the nested model → tool → model
+trace. Free OpenRouter pools can return temporary HTTP 429 errors; the demonstration uses a small,
+bounded number of separate factory and execution runs and keeps every durable run record for
+inspection. This is demo-level resilience, not an implicit runtime retry of a workflow node.
+Pass `--model-id <openrouter-model-id>` to test another model that supports both structured output
+and tool calling.
+
 ## Standalone workflow runtime
 
 Export one immutable workflow version:
