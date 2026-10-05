@@ -10,13 +10,22 @@ For the frozen V1 architecture, its boundaries, and a reproducible five-minute d
 ## Docker pack
 
 Copy the environment file, add at least one provider key, and start the stack:
+Commands that differ are shown for Linux/macOS first and Windows PowerShell second. Commands not
+split by platform use the same syntax on both.
+
+### Linux / macOS
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-On Windows PowerShell, use `Copy-Item .env.example .env`.
+### Windows PowerShell
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build
+```
 
 | Service | URL | Purpose |
 | --- | --- | --- |
@@ -50,7 +59,9 @@ artifact/
 └── agent.json
 ```
 
-Build and run the generic runtime image with the artifact mounted read-only:
+Build and run the generic runtime image with the artifact mounted read-only.
+
+### Linux / macOS
 
 ```bash
 docker build -f docker/agent-runtime.Dockerfile -t heart-of-the-swarm-agent-runtime .
@@ -60,9 +71,22 @@ docker run --rm -p 8080:8000 \
   heart-of-the-swarm-agent-runtime
 ```
 
+### Windows PowerShell
+
+```powershell
+docker build -f docker/agent-runtime.Dockerfile -t heart-of-the-swarm-agent-runtime .
+$artifact = (Resolve-Path .\artifact).Path
+docker run --rm -p 8080:8000 `
+  --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
+  -e "OPENAI_API_KEY=$env:OPENAI_API_KEY" `
+  heart-of-the-swarm-agent-runtime
+```
+
 Use `OPENROUTER_API_KEY` instead for an OpenRouter artifact. The running container exposes only
 `GET /health`, `GET /metadata`, and `POST /invoke`. It does not connect to PostgreSQL, the control
 plane API, or the worker.
+
+### Linux / macOS
 
 ```bash
 curl http://localhost:8080/health
@@ -70,6 +94,16 @@ curl http://localhost:8080/metadata
 curl -X POST http://localhost:8080/invoke \
   -H "Content-Type: application/json" \
   -d '{"input":"Complete the assigned task."}'
+```
+
+### Windows PowerShell
+
+```powershell
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:8080/metadata
+Invoke-RestMethod -Method Post http://localhost:8080/invoke `
+  -ContentType 'application/json' `
+  -Body (@{ input = 'Complete the assigned task.' } | ConvertTo-Json)
 ```
 
 ## Agent workflow
@@ -86,6 +120,7 @@ to the server-side registry:
 - `document_reader`
 - `http_get_json`
 - `database_query`
+- `rss_reader`
 
 ## Agent-creates-an-agent demonstration
 
@@ -116,7 +151,9 @@ Export one immutable workflow version:
 uv run --locked swarm-export-workflow <workflow-version-uuid> ./workflow-artifact
 ```
 
-The output contains `manifest.json` and `workflow.json`. Build and run the generic image:
+The output contains `manifest.json` and `workflow.json`. Build and run the generic image.
+
+### Linux / macOS
 
 ```bash
 docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflow-runtime .
@@ -126,12 +163,33 @@ docker run --rm -p 8080:8000 \
   heart-of-the-swarm-workflow-runtime
 ```
 
+### Windows PowerShell
+
+```powershell
+docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflow-runtime .
+$artifact = (Resolve-Path .\workflow-artifact).Path
+docker run --rm -p 8080:8000 `
+  --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
+  -e "OPENAI_API_KEY=$env:OPENAI_API_KEY" `
+  heart-of-the-swarm-workflow-runtime
+```
+
 Invoke it with the workflow's declared object input:
+
+### Linux / macOS
 
 ```bash
 curl -X POST http://localhost:8080/invoke \
   -H "Content-Type: application/json" \
   -d '{"input":{"expression":"2 + 3 * 4"}}'
+```
+
+### Windows PowerShell
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8080/invoke `
+  -ContentType 'application/json' `
+  -Body (@{ input = @{ expression = '2 + 3 * 4' } } | ConvertTo-Json -Depth 3)
 ```
 
 The runtime reconstructs LangGraph from the declaration and uses the same portable runner as the
@@ -261,9 +319,19 @@ Every request receives an `X-Trace-ID` header. The API and worker use separate s
 Lines files so their rotating writers cannot conflict. Both rotate at 10 MB with five backups by
 default.
 
+### Linux / macOS
+
+```bash
+tail -f logs/api.jsonl logs/worker.jsonl
+# In another terminal:
+grep -F '<trace-id>' logs/*.jsonl
+```
+
+### Windows PowerShell
+
 ```powershell
-Get-Content .\logs\api.jsonl -Wait
-Get-Content .\logs\worker.jsonl -Wait
+Get-Content .\logs\api.jsonl, .\logs\worker.jsonl -Wait
+# In another terminal:
 Select-String -Path .\logs\*.jsonl -Pattern '<trace-id>'
 ```
 
@@ -276,9 +344,18 @@ Python 3.11+ and [uv](https://docs.astral.sh/uv/) are required. SQLite is used w
 `DATABASE_URL` is not set. `uv sync` creates the project environment and installs the locked
 application and development dependencies.
 
+### Linux / macOS
+
 ```bash
 uv sync --locked
 cp .env.example .env
+```
+
+### Windows PowerShell
+
+```powershell
+uv sync --locked
+Copy-Item .env.example .env
 ```
 
 For local SQLite development, change the environment file to:
