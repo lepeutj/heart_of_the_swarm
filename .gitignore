@@ -3,14 +3,6 @@ __pycache__/
 .pytest_cache/
 
 # Local project knowledge
-/AGENTS.md
-/PROJECT.md
-/docs/architecture.md
-/docs/decisions.md
-/docs/domain-model.md
-/docs/evaluation.md
-/docs/roadmap.md
-/docs/workflow-spec.md
 /docs/workflow-spec-v1.md
 /tasks/
 /reports/
