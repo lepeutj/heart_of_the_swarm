@@ -198,6 +198,10 @@ async def test_worker_persists_pending_approval_and_releases_run() -> None:
         assert interruption.status == "pending"
         assert interruption.node_id == "approve"
         assert len(persisted) == 1
+        approvals = WorkflowApprovalService(database, checkpoints)
+        pending = await approvals.list()
+        assert [item.id for item in pending] == [UUID(interruption.id)]
+        assert await approvals.get(UUID(interruption.id)) == pending[0]
         assert events is not None
         assert [event.event_type for event in events][-3:] == [
             "checkpoint.created",

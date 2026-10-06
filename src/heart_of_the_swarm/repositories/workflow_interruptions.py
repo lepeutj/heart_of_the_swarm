@@ -108,6 +108,21 @@ class WorkflowInterruptionRepository(RepositoryBase):
         record = await self.session.get(WorkflowInterruptionRecord, interruption_id)
         return self._detail(record) if record else None
 
+    async def list(
+        self,
+        status: WorkflowInterruptionStatus | None = None,
+    ) -> list[WorkflowInterruptionDetail]:
+        """List human interruptions in newest-first product order."""
+        statement = select(WorkflowInterruptionRecord)
+        if status is not None:
+            statement = statement.where(WorkflowInterruptionRecord.status == status)
+        records = (
+            await self.session.execute(
+                statement.order_by(WorkflowInterruptionRecord.created_at.desc())
+            )
+        ).scalars()
+        return [self._detail(record) for record in records]
+
     async def pending_for_run(self, run_id: str) -> WorkflowInterruptionDetail | None:
         """Return the pending human interruption that owns a run's next resume."""
         record = (

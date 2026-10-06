@@ -65,6 +65,11 @@ from heart_of_the_swarm.workflows.documents import (
     WorkflowSummary,
     WorkflowVersionDetail,
 )
+from heart_of_the_swarm.workflows.interruptions import (
+    ApprovalResponse,
+    WorkflowInterruptionDetail,
+    WorkflowInterruptionStatus,
+)
 from heart_of_the_swarm.workflows.runs import (
     WorkflowResumeRequest,
     WorkflowRunAccepted,
@@ -429,6 +434,52 @@ async def list_workflow_run_events(
     if events is None:
         raise HTTPException(status_code=404, detail="workflow run not found")
     return events
+
+
+@app.get(
+    "/api/v1/workflow-interruptions",
+    response_model=list[WorkflowInterruptionDetail],
+)
+async def list_workflow_interruptions(
+    runtime: Runtime,
+    status: WorkflowInterruptionStatus | None = WorkflowInterruptionStatus.PENDING,
+) -> list[WorkflowInterruptionDetail]:
+    return await runtime.workflow_approvals.list(status)
+
+
+@app.get(
+    "/api/v1/workflow-interruptions/{interruption_id}",
+    response_model=WorkflowInterruptionDetail,
+)
+async def get_workflow_interruption(
+    interruption_id: UUID,
+    runtime: Runtime,
+) -> WorkflowInterruptionDetail:
+    interruption = await runtime.workflow_approvals.get(interruption_id)
+    if interruption is None:
+        raise HTTPException(status_code=404, detail="workflow interruption not found")
+    return interruption
+
+
+@app.post(
+    "/api/v1/workflow-interruptions/{interruption_id}/response",
+    response_model=WorkflowRunAccepted,
+    status_code=202,
+)
+async def respond_to_workflow_interruption(
+    interruption_id: UUID,
+    response: ApprovalResponse,
+    runtime: Runtime,
+) -> WorkflowRunAccepted:
+    try:
+        return await runtime.workflow_approvals.respond(
+            interruption_id,
+            response.model_dump(mode="json"),
+            get_trace_id() or str(uuid4()),
+        )
+    except ValueError as exc:
+        status_code = 404 if str(exc) == "workflow interruption not found" else 409
+        raise api_error(exc, status_code) from exc
 
 
 @app.post("/api/v1/triggers", response_model=TriggerDetail, status_code=201)

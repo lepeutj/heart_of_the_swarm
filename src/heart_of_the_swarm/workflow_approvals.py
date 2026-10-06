@@ -6,7 +6,10 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.repositories import WorkflowInterruptionRepository
 from heart_of_the_swarm.workflows.execution.checkpoints import WorkflowCheckpointProvider
-from heart_of_the_swarm.workflows.interruptions import WorkflowInterruptionStatus
+from heart_of_the_swarm.workflows.interruptions import (
+    WorkflowInterruptionDetail,
+    WorkflowInterruptionStatus,
+)
 from heart_of_the_swarm.workflows.runs import WorkflowRunAccepted
 
 
@@ -20,6 +23,19 @@ class WorkflowApprovalService:
     ) -> None:
         self.database = database
         self.checkpoints = checkpoints
+
+    async def get(self, interruption_id: UUID) -> WorkflowInterruptionDetail | None:
+        """Read one durable interruption without exposing persistence details."""
+        async with self.database.session() as session:
+            return await WorkflowInterruptionRepository(session).get(str(interruption_id))
+
+    async def list(
+        self,
+        status: WorkflowInterruptionStatus | None = WorkflowInterruptionStatus.PENDING,
+    ) -> list[WorkflowInterruptionDetail]:
+        """List interruptions, defaulting to pending operator work."""
+        async with self.database.session() as session:
+            return await WorkflowInterruptionRepository(session).list(status)
 
     async def respond(
         self,

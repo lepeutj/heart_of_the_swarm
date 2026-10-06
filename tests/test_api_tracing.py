@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -15,6 +16,10 @@ from heart_of_the_swarm.workflows import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
     WorkflowValidator,
+)
+from heart_of_the_swarm.workflows.interruptions import (
+    WorkflowInterruptionDetail,
+    WorkflowInterruptionStatus,
 )
 from heart_of_the_swarm.workflows.runs import WorkflowRunAccepted
 
@@ -144,6 +149,107 @@ def test_unknown_run_trajectory_returns_not_found() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "run not found"
+
+
+def interruption_detail(status: WorkflowInterruptionStatus) -> WorkflowInterruptionDetail:
+    return WorkflowInterruptionDetail(
+        id="94d6048e-6e4c-4a8a-9069-bd10148b90aa",
+        workflow_version_id="11850612-0402-418e-bee3-f4603a72d4eb",
+        thread_id="3f0f3f50-37c8-481b-bd78-c3c6757a1f11",
+        workflow_run_id="293ce849-ef4a-468b-ae41-21c92bcdd10e",
+        node_id="approve",
+        kind="approval",
+        prompt="Approve publication?",
+        response_schema={
+            "type": "object",
+            "properties": {"approved": {"type": "boolean"}},
+            "required": ["approved"],
+            "additionalProperties": False,
+        },
+        checkpoint_id="checkpoint-1",
+        status=status,
+        created_at=datetime(2026, 10, 6, tzinfo=UTC),
+    )
+
+
+def test_workflow_interruption_http_adapters_delegate_to_the_approval_service() -> None:
+    interruption = interruption_detail(WorkflowInterruptionStatus.PENDING)
+
+    class FakeApprovals:
+        async def list(self, status):
+            assert status == WorkflowInterruptionStatus.PENDING
+            return [interruption]
+
+        async def get(self, interruption_id):
+            assert interruption_id == interruption.id
+            return interruption
+
+        async def respond(self, interruption_id, response, trace_id):
+            assert interruption_id == interruption.id
+            assert response == {"approved": True}
+            assert trace_id
+            return WorkflowRunAccepted(
+                run_id="8f675d13-b826-407a-a82d-bcbe643756b4",
+                trace_id=trace_id,
+                workflow_id="cfdf2142-76c3-4bba-939c-b61a4cfd4932",
+                workflow_version_id=interruption.workflow_version_id,
+                workflow_version=2,
+                status="queued",
+                thread_id=interruption.thread_id,
+                attempt_index=2,
+                resumed_from_run_id=interruption.workflow_run_id,
+                resume_checkpoint_id=interruption.checkpoint_id,
+            )
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_approvals=FakeApprovals()
+    )
+    try:
+        with TestClient(app) as client:
+            listed = client.get("/api/v1/workflow-interruptions")
+            fetched = client.get(f"/api/v1/workflow-interruptions/{interruption.id}")
+            responded = client.post(
+                f"/api/v1/workflow-interruptions/{interruption.id}/response",
+                json={"approved": True},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["status"] == "pending"
+    assert fetched.status_code == 200
+    assert fetched.json()["prompt"] == "Approve publication?"
+    assert responded.status_code == 202
+    assert responded.json()["attempt_index"] == 2
+    assert responded.json()["trace_id"] == responded.headers["X-Trace-ID"]
+
+
+def test_workflow_interruption_http_errors_are_safe_and_structured() -> None:
+    class FakeApprovals:
+        async def get(self, _interruption_id):
+            return None
+
+        async def respond(self, _interruption_id, _response, _trace_id):
+            raise ValueError("workflow interruption is not pending")
+
+    interruption_id = "94d6048e-6e4c-4a8a-9069-bd10148b90aa"
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_approvals=FakeApprovals()
+    )
+    try:
+        with TestClient(app) as client:
+            missing = client.get(f"/api/v1/workflow-interruptions/{interruption_id}")
+            conflict = client.post(
+                f"/api/v1/workflow-interruptions/{interruption_id}/response",
+                json={"approved": False},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "workflow interruption not found"
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["message"] == "workflow interruption is not pending"
 
 
 def test_invalid_workflow_input_is_rejected_synchronously() -> None:
