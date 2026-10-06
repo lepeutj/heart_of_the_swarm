@@ -10,6 +10,11 @@ export type NodeType =
   | "output";
 
 export type JsonObject = Record<string, unknown>;
+export type StateReducer = "replace" | "append" | "merge_dict";
+export type WorkflowStateSchema = Record<
+  string,
+  { schema: JsonObject; reducer: StateReducer }
+>;
 
 export interface WorkflowNodeData extends Record<string, unknown> {
   label: string;
@@ -33,6 +38,7 @@ export interface WorkflowSpec {
   description: string;
   input_schema: JsonObject;
   output_schema: JsonObject | null;
+  state_schema: WorkflowStateSchema;
   nodes: Array<{
     id: string;
     type: NodeType;
@@ -55,6 +61,7 @@ export interface WorkflowDocument {
   description: string;
   inputSchema: JsonObject;
   outputSchema: JsonObject | null;
+  stateSchema?: WorkflowStateSchema;
   entrypoint: string;
 }
 
@@ -88,16 +95,28 @@ export function toWorkflowSpec(
   nodes: EditorNode[],
   edges: EditorEdge[],
 ): WorkflowSpec {
+  const outgoingCounts: Record<string, number> = {};
+  for (const edge of edges) {
+    outgoingCounts[edge.source] = (outgoingCounts[edge.source] ?? 0) + 1;
+  }
+  const nodeTypes = new Map(nodes.map((node) => [node.id, node.data.nodeType]));
+  const hasParallelFanOut = Object.entries(outgoingCounts).some(
+    ([source, count]) => count > 1 && nodeTypes.get(source) !== "condition",
+  );
+  const stateSchema = document.stateSchema ?? {};
   return {
     schema_version: (
       edges.some((edge) => edge.data?.loop)
       || nodes.some((node) => node.data.nodeType === "subworkflow")
+      || hasParallelFanOut
+      || Object.keys(stateSchema).length > 0
     ) ? "2" : "1",
     id: document.id,
     name: document.name,
     description: document.description,
     input_schema: document.inputSchema,
     output_schema: document.outputSchema,
+    state_schema: stateSchema,
     entrypoint: document.entrypoint,
     nodes: nodes.map((node) => ({
       id: node.id,

@@ -33,6 +33,7 @@ import {
 } from "./api";
 import { EdgeInspector } from "./components/EdgeInspector";
 import { NodeInspector } from "./components/NodeInspector";
+import { ParallelStateEditor } from "./components/ParallelStateEditor";
 import { MCPServerPanel } from "./components/mcp/MCPServerPanel";
 import { WorkflowRunPanel } from "./components/runs/WorkflowRunPanel";
 import {
@@ -50,6 +51,7 @@ import {
   type JsonObject,
   type NodeType,
   type WorkflowEditorDocument,
+  type WorkflowStateSchema,
 } from "./workflow";
 
 const initialNodes: EditorNode[] = [
@@ -106,6 +108,7 @@ export default function App() {
     properties: { result: { type: "string" } },
     required: ["result"],
   });
+  const [stateSchema, setStateSchema] = useState<WorkflowStateSchema>({});
   const [showRunPanel, setShowRunPanel] = useState(false);
   const workflowId = useRef<string>(crypto.randomUUID());
   const sequence = useRef(1);
@@ -179,12 +182,13 @@ export default function App() {
         description,
         inputSchema,
         outputSchema,
+        stateSchema,
         entrypoint,
       },
       nodes,
       edges,
     ),
-    [description, edges, entrypoint, inputSchema, name, nodes, outputSchema],
+    [description, edges, entrypoint, inputSchema, name, nodes, outputSchema, stateSchema],
   );
 
   function addNode(nodeType: NodeType) {
@@ -379,6 +383,7 @@ export default function App() {
       setEntrypoint(saved.spec.entrypoint);
       setInputSchema(saved.spec.input_schema);
       setOutputSchema(saved.spec.output_schema);
+      setStateSchema(saved.spec.state_schema ?? {});
       setNodes(saved.spec.nodes.map((node, index) => {
         const normalized = normalizeLoadedNode(node);
         return {
@@ -429,6 +434,7 @@ export default function App() {
       required: ["result"],
       additionalProperties: false,
     });
+    setStateSchema({});
     setNodes(initialNodes);
     setEdges(initialEdges);
     setRevision(null);
@@ -628,6 +634,7 @@ export default function App() {
                 <div><dt>Draft</dt><dd>{revision === null ? "Unsaved" : `Revision ${revision}`}</dd></div>
                 <div><dt>Published</dt><dd>{publishedVersion ? `Version ${publishedVersion.version}` : "No version"}</dd></div>
               </dl>
+              <ParallelStateEditor value={stateSchema} onChange={setStateSchema} />
             </section>
           )}
 

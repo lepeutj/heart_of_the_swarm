@@ -72,21 +72,23 @@ are rejected explicitly rather than producing incomplete runtimes.
 
 ## V2.3 — Parallel state
 
-Status: typed state declarations and static parallel validation implemented; runtime not implemented.
+Status: implemented; one non-nested parallel region is supported by the runtime and editor.
 
 1. Infer one non-nested fan-out/fan-in region from ordinary unconditional edges; add no public
    `PARALLEL` node. **Static analysis implemented.**
 2. Compile convergence from an unconditional fan-out as an `all` dependency; preserve `any selected
-   predecessor` convergence for exclusive condition routes.
+   predecessor` convergence for exclusive condition routes. **Implemented.**
 3. Add optional path-keyed `state_schema` declarations with the closed reducer set `replace`,
    `append`, and `merge_dict`. **Implemented.**
 4. Reject concurrent writes to the same or overlapping paths unless the exact shared path has a
    combinatory reducer. `replace` never resolves a concurrent conflict. **Implemented.**
 5. Keep merged state deterministic by declared branch order and reject duplicate `merge_dict` keys.
+   **Implemented.**
 6. Persist contextual branch identity and observation sequence without imposing a fake execution
-   order.
-7. Resume an interrupted branch without replaying a completed sibling.
+   order. **Implemented.**
+7. Resume an interrupted branch without replaying a completed sibling. **Implemented.**
 8. Add the React representation only after runtime and checkpoint behavior pass integration tests.
+   **Implemented.**
 
 Exit criterion: two agents can work concurrently, append typed results, and feed one synthesis node
 with deterministic state and events. V2.3 initially excludes nested or overlapping parallel regions,

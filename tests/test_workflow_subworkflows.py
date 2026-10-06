@@ -161,6 +161,27 @@ def parent_spec(*, child_version_id: UUID = CHILD_VERSION_ID) -> WorkflowSpec:
     )
 
 
+def parallel_parent_spec() -> WorkflowSpec:
+    data = parent_spec().model_dump(mode="json")
+    data["nodes"].insert(
+        2,
+        {
+            "id": "context",
+            "type": "transform",
+            "name": "Context",
+            "config": {"assign": {"$.context": "parallel"}},
+        },
+    )
+    data["edges"] = [
+        {"source": "input", "target": "research"},
+        {"source": "input", "target": "context"},
+        {"source": "research", "target": "finalize"},
+        {"source": "context", "target": "finalize"},
+        {"source": "finalize", "target": "output"},
+    ]
+    return WorkflowSpec.model_validate(data)
+
+
 def snapshot(
     version_id: UUID,
     workflow_id: UUID,
@@ -280,6 +301,99 @@ async def test_subworkflow_executes_with_isolated_mappings_and_hierarchical_even
         if str(event.data["execution_path"]).startswith("root/research/")
     ]
     assert {event.data["workflow_version_id"] for event in child_events} == {str(CHILD_VERSION_ID)}
+
+
+async def test_subworkflow_executes_as_a_native_parallel_branch() -> None:
+    connector_calls.clear()
+    tools = ToolRegistry([child_fetch])
+    child = snapshot(
+        CHILD_VERSION_ID,
+        CHILD_WORKFLOW_ID,
+        child_spec(),
+        tools,
+        with_connector=True,
+    )
+    resolver = MappingWorkflowVersionResolver({CHILD_VERSION_ID: child})
+    sink = RecordingSink()
+
+    result = await runner(tools, resolver, ProcessingAgentRunner()).run(
+        snapshot(PARENT_VERSION_ID, PARENT_WORKFLOW_ID, parallel_parent_spec(), tools),
+        {"request": "topic"},
+        ExecutionPolicy(timeout_seconds=2, recursion_limit=50),
+        sink,
+    )
+
+    assert result.output == {"result": "topic|connector|ChildReviewer|ParentWriter"}
+    assert result.state["context"] == "parallel"
+    research_event = next(
+        event
+        for event in sink.events
+        if event.event_type == "node.completed" and event.data["execution_path"] == "root/research"
+    )
+    assert research_event.data["branch_id"] == "input:0"
+    child_events = [
+        event
+        for event in sink.events
+        if str(event.data["execution_path"]).startswith("root/research/")
+    ]
+    assert child_events
+    assert {event.data["branch_id"] for event in child_events} == {"input:0"}
+
+
+async def test_parallel_resume_inside_subworkflow_does_not_replay_sibling() -> None:
+    connector_calls.clear()
+    tools = ToolRegistry([child_fetch])
+    child = snapshot(
+        CHILD_VERSION_ID,
+        CHILD_WORKFLOW_ID,
+        child_spec(),
+        tools,
+        with_connector=True,
+    )
+    resolver = MappingWorkflowVersionResolver({CHILD_VERSION_ID: child})
+    workflow_runner = runner(tools, resolver, ProcessingAgentRunner())
+    parent = snapshot(PARENT_VERSION_ID, PARENT_WORKFLOW_ID, parallel_parent_spec(), tools)
+    checkpointer = InMemorySaver()
+    sink = RecordingSink()
+    policy = ExecutionPolicy(timeout_seconds=2, recursion_limit=50)
+
+    interrupted = await workflow_runner.run(
+        parent,
+        {"request": "topic"},
+        policy,
+        sink,
+        thread_id="parallel-subworkflow-thread",
+        checkpointer=checkpointer,
+        interrupt_after=("research/fetch",),
+    )
+
+    assert interrupted.interrupted is True
+    assert connector_calls == ["topic"]
+    assert [
+        event.data["execution_path"]
+        for event in sink.events
+        if event.event_type == "node.completed" and event.data["execution_path"] == "root/context"
+    ] == ["root/context"]
+
+    resumed = await workflow_runner.run(
+        parent,
+        {"request": "ignored"},
+        policy,
+        sink,
+        thread_id="parallel-subworkflow-thread",
+        checkpoint_id=interrupted.checkpoint_id,
+        checkpointer=checkpointer,
+    )
+
+    assert resumed.output == {"result": "topic|connector|ChildReviewer|ParentWriter"}
+    assert connector_calls == ["topic"]
+    assert (
+        sum(
+            event.event_type == "node.completed" and event.data["execution_path"] == "root/context"
+            for event in sink.events
+        )
+        == 1
+    )
 
 
 async def test_resume_inside_subworkflow_does_not_replay_child_side_effects() -> None:

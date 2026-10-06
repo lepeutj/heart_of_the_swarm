@@ -125,9 +125,11 @@ class _DatabaseWorkflowEventSink:
     def __init__(self, database: Database, run_id: str) -> None:
         self.database = database
         self.run_id = run_id
+        self._write_lock = asyncio.Lock()
 
     async def emit(self, event: WorkflowExecutionEvent) -> None:
-        async with self.database.session() as session:
+        # Parallel nodes may emit concurrently, while the durable sequence counter is per run.
+        async with self._write_lock, self.database.session() as session:
             await WorkflowRunRepository(session).add_event(
                 self.run_id,
                 event.event_type,

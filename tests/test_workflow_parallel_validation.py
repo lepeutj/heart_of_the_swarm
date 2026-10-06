@@ -175,8 +175,7 @@ def test_concurrent_writes_to_distinct_paths_are_valid() -> None:
     workflow = validator().validate(WorkflowSpec.model_validate(parallel_workflow_data()))
 
     assert workflow.parallel_region is not None
-    with pytest.raises(RuntimeError, match="Parallel workflow execution is not implemented"):
-        WorkflowGraphFactory().create(workflow)
+    assert WorkflowGraphFactory().create(workflow)
 
 
 @pytest.mark.parametrize(

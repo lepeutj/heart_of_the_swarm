@@ -70,6 +70,7 @@ class WorkflowNodeRunner:
         | None = None,
         workflow_version_id: str | None = None,
         execution_path: str = "root",
+        runtime_context: dict[str, Any] | None = None,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -80,6 +81,7 @@ class WorkflowNodeRunner:
         self.capabilities = capabilities
         self.workflow_version_id = workflow_version_id
         self.execution_path = execution_path
+        self.runtime_context = dict(runtime_context or {})
 
     async def run(
         self,
@@ -87,10 +89,11 @@ class WorkflowNodeRunner:
         outgoing_edges: list[WorkflowEdge],
         state: WorkflowState,
         executed_nodes: tuple[str, ...],
+        event_context: dict[str, Any] | None = None,
     ) -> NodeExecution:
         """Execute one node with normalized errors and trajectory events."""
         current_execution = (*executed_nodes, node.id)
-        await self._record_node("node.started", node)
+        await self._record_node("node.started", node, context=event_context)
         try:
             if isinstance(node.config, InputNodeConfig):
                 validate_workflow_input(self.workflow, state, node)
@@ -99,12 +102,12 @@ class WorkflowNodeRunner:
                 result = NodeExecution(self._apply_transform(node, state), current_execution)
             elif isinstance(node.config, AgentNodeConfig):
                 result = NodeExecution(
-                    await self._invoke_agent(node, state),
+                    await self._invoke_agent(node, state, event_context),
                     current_execution,
                 )
             elif isinstance(node.config, ConnectorNodeConfig):
                 result = NodeExecution(
-                    await self._invoke_connector(node, state),
+                    await self._invoke_connector(node, state, event_context),
                     current_execution,
                 )
             elif isinstance(node.config, ConditionNodeConfig):
@@ -137,6 +140,7 @@ class WorkflowNodeRunner:
                     "error_code": "workflow.execution.cancelled",
                     "safe_message": f"Node '{node.id}' execution was cancelled.",
                 },
+                context=event_context,
             )
             raise
         except WorkflowExecutionError as exc:
@@ -147,19 +151,28 @@ class WorkflowNodeRunner:
                     "error_code": exc.issue.code,
                     "safe_message": exc.issue.message,
                 },
+                context=event_context,
             )
             raise
 
-        await self._record_node("node.completed", node)
+        await self._record_node("node.completed", node, context=event_context)
         return result
 
-    async def record_started(self, node: ValidatedWorkflowNode) -> None:
+    async def record_started(
+        self,
+        node: ValidatedWorkflowNode,
+        context: dict[str, Any] | None = None,
+    ) -> None:
         """Record the start of a framework-managed composite node."""
-        await self._record_node("node.started", node)
+        await self._record_node("node.started", node, context=context)
 
-    async def record_completed(self, node: ValidatedWorkflowNode) -> None:
+    async def record_completed(
+        self,
+        node: ValidatedWorkflowNode,
+        context: dict[str, Any] | None = None,
+    ) -> None:
         """Record the completion of a framework-managed composite node."""
-        await self._record_node("node.completed", node)
+        await self._record_node("node.completed", node, context=context)
 
     async def record_failed(
         self,
@@ -167,12 +180,14 @@ class WorkflowNodeRunner:
         *,
         error_code: str,
         safe_message: str,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Record a normalized failure for a framework-managed composite node."""
         await self._record_node(
             "node.failed",
             node,
             {"error_code": error_code, "safe_message": safe_message},
+            context=context,
         )
 
     def reject_non_object_input(self, node: ValidatedWorkflowNode) -> NoReturn:
@@ -187,6 +202,7 @@ class WorkflowNodeRunner:
         self,
         node: ValidatedWorkflowNode,
         state: WorkflowState,
+        event_context: dict[str, Any] | None = None,
     ) -> WorkflowState:
         """Resolve one inline or saved agent and delegate its loop to AgentRunner."""
         config = node.config
@@ -230,7 +246,7 @@ class WorkflowNodeRunner:
                 agent_input,
                 system_prompt=system_prompt,
                 callbacks=[self.callback] if self.callback is not None else [],
-                metadata=self._node_context(node),
+                metadata=self._node_context(node, event_context),
                 response_schema=config.response_schema,
             )
         except WorkflowExecutionError:
@@ -334,6 +350,7 @@ class WorkflowNodeRunner:
         self,
         node: ValidatedWorkflowNode,
         state: WorkflowState,
+        event_context: dict[str, Any] | None = None,
     ) -> WorkflowState:
         """Invoke one registered capability and project its result into state."""
         config = self._require_config(node, ConnectorNodeConfig)
@@ -350,7 +367,7 @@ class WorkflowNodeRunner:
                 arguments,
                 config={
                     "callbacks": [self.callback] if self.callback is not None else [],
-                    "metadata": self._node_context(node),
+                    "metadata": self._node_context(node, event_context),
                 },
             )
             if isinstance(result, Mapping):
@@ -456,7 +473,11 @@ class WorkflowNodeRunner:
                 cause=exc,
             )
 
-    def _node_context(self, node: ValidatedWorkflowNode) -> dict[str, Any]:
+    def _node_context(
+        self,
+        node: ValidatedWorkflowNode,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Build metadata shared by workflow-node and nested agent events."""
         return {
             "workflow_id": str(self.workflow.id),
@@ -465,6 +486,8 @@ class WorkflowNodeRunner:
             "node_id": node.id,
             "node_type": str(node.type),
             "execution_path": f"{self.execution_path}/{node.id}",
+            **self.runtime_context,
+            **(extra or {}),
         }
 
     async def _record_node(
@@ -472,9 +495,11 @@ class WorkflowNodeRunner:
         event_type: str,
         node: ValidatedWorkflowNode,
         payload: dict[str, Any] | None = None,
+        *,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Record node lifecycle through the existing trajectory callback."""
-        event_payload = {**self._node_context(node), **(payload or {})}
+        event_payload = {**self._node_context(node, context), **(payload or {})}
         if self.callback is not None:
             self.callback.record(
                 event_type,

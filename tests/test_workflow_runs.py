@@ -7,6 +7,7 @@ import pytest
 from langchain_core.tools import tool
 from sqlalchemy import func, select, text
 
+from heart_of_the_swarm import workflow_execution
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.models import WorkflowRunRecord
@@ -151,6 +152,49 @@ class RecordingEventSink:
 
     async def emit(self, event: WorkflowExecutionEvent) -> None:
         self.events.append(event)
+
+
+async def test_database_event_sink_serializes_parallel_event_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent branches must not race the durable per-run event sequence."""
+    active_writes = 0
+    max_active_writes = 0
+
+    class SessionContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class FakeDatabase:
+        def session(self) -> SessionContext:
+            return SessionContext()
+
+    class FakeRepository:
+        def __init__(self, _session: object) -> None:
+            pass
+
+        async def add_event(self, *_args: object) -> None:
+            nonlocal active_writes, max_active_writes
+            active_writes += 1
+            max_active_writes = max(max_active_writes, active_writes)
+            await asyncio.sleep(0)
+            active_writes -= 1
+
+    monkeypatch.setattr(workflow_execution, "WorkflowRunRepository", FakeRepository)
+    sink = workflow_execution._DatabaseWorkflowEventSink(  # noqa: SLF001
+        FakeDatabase(),  # type: ignore[arg-type]
+        "parallel-run",
+    )
+
+    await asyncio.gather(
+        sink.emit(WorkflowExecutionEvent(event_type="node.started", data={})),
+        sink.emit(WorkflowExecutionEvent(event_type="node.completed", data={})),
+    )
+
+    assert max_active_writes == 1
 
 
 def standalone_version() -> WorkflowVersionDetail:

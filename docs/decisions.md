@@ -77,9 +77,9 @@ the normative field-level rules.
 ## Current implementation limits
 
 - Schema v2 supports one bounded conditional back edge; nested or overlapping loops are deferred.
-- Subworkflow artifact bundling, parallel runtime reducers, dynamic handoffs, human approval,
-  remote control, and deployment lifecycle remain roadmap items. Parallel regions and write
-  conflicts are validated statically, but execution is rejected until the LangGraph translation is
-  implemented.
+- Subworkflow artifact bundling, nested parallel regions, dynamic handoffs, human approval, remote
+  control, and deployment lifecycle remain roadmap items. One validated fan-out/fan-in region uses
+  native LangGraph scheduling, isolated branch frames, deterministic reducers, and checkpoint-safe
+  resume.
 - Do not add a second capability catalogue, custom agent loop, custom traversal engine, or duplicate
   technical tracing pipeline.

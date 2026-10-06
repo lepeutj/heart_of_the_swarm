@@ -57,7 +57,8 @@ validated before its named fields are written atomically into state. Legacy `inp
 
 Multiple mappings do not enable parallel execution. Exclusive condition routes may converge. The
 V2.3 contract below defines ordinary-edge fan-out/fan-in and explicit state reducers. Its typed
-declarations and static conflict validation are implemented; runtime execution is not yet supported.
+declarations, static conflict validation, runtime execution, checkpoint resume, and editor support
+are implemented.
 
 An output node always projects named values. The workflow `output_schema` is optional; when present,
 the runtime validates the complete projection before returning it.
@@ -113,7 +114,7 @@ versions, direct or indirect dependency recursion, and nesting beyond the config
 validation repeats these checks through an injected version resolver so the same compiler works in
 the worker, tests, and future artifact runtimes.
 
-## Parallel state contract (V2.3, validation implemented)
+## Parallel state contract (V2.3)
 
 Parallelism is inferred from ordinary edges: multiple unconditional successors form a fan-out and
 their convergence forms an `all` fan-in. Conditions remain exclusive routes; convergence after a
@@ -139,10 +140,16 @@ resolve concurrent writes. `append` concatenates branch lists in declared branch
 `merge_dict` is shallow and rejects duplicate keys. Concurrent writes to the same path, or to
 ancestor/descendant paths, are rejected without an exact combinatory reducer declaration.
 
-The initial implementation will support one non-nested parallel region, required `all` joins,
+The initial implementation supports one non-nested parallel region, required `all` joins,
 subworkflows inside branches, and loops only outside the region. Partial joins, quorum, first-result
 wins, nested parallelism, parallel loops, and custom reducers remain deferred. Normative checkpoint,
 event, and acceptance rules are in [`v2-runtime-semantics.md`](v2-runtime-semantics.md).
+
+Each branch runs through native LangGraph scheduling with an isolated runtime state frame. A grouped
+LangGraph edge waits for every branch completion marker before the public join executes once. The
+join merges only paths written by nodes that actually ran, in declared branch order. Checkpoints
+preserve branch frames, so resume does not replay a completed sibling. `branch_id` is runtime event
+context and never enters business state.
 
 ## Validation and execution
 

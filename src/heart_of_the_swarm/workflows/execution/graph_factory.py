@@ -1,7 +1,7 @@
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
-from typing import Any, NoReturn, TypedDict
+from typing import Annotated, Any, NoReturn, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -20,6 +20,12 @@ from heart_of_the_swarm.workflows.execution.errors import (
 )
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
 from heart_of_the_swarm.workflows.execution.node_runner import WorkflowNodeRunner
+from heart_of_the_swarm.workflows.execution.parallel import (
+    ParallelRuntimeBranch,
+    ParallelRuntimeRegion,
+    build_parallel_runtime_region,
+    merge_parallel_states,
+)
 from heart_of_the_swarm.workflows.execution.workflow_versions import WorkflowVersionResolver
 from heart_of_the_swarm.workflows.spec import (
     ValidatedWorkflowNode,
@@ -31,6 +37,20 @@ from heart_of_the_swarm.workflows.subworkflows import validate_subworkflow_mappi
 from heart_of_the_swarm.workflows.validation import WorkflowValidator
 
 
+class _ParallelBranchFrame(TypedDict, total=False):
+    data: WorkflowState
+    executed_nodes: tuple[str, ...]
+    selected_target: str
+
+
+def _merge_parallel_branch_frames(
+    current: dict[str, _ParallelBranchFrame],
+    update: dict[str, _ParallelBranchFrame],
+) -> dict[str, _ParallelBranchFrame]:
+    """Combine isolated branch frames by stable branch ID."""
+    return {**current, **update}
+
+
 class _GraphState(TypedDict, total=False):
     data: WorkflowState
     executed_nodes: tuple[str, ...]
@@ -38,6 +58,17 @@ class _GraphState(TypedDict, total=False):
     output: Any
     loop_iterations: dict[str, int]
     parent_frames: tuple["_ExecutionFrame", ...]
+    parallel_branches: Annotated[
+        dict[str, _ParallelBranchFrame],
+        _merge_parallel_branch_frames,
+    ]
+
+
+class _ParallelBranchOutput(TypedDict):
+    parallel_branches: Annotated[
+        dict[str, _ParallelBranchFrame],
+        _merge_parallel_branch_frames,
+    ]
 
 
 class _ExecutionFrame(TypedDict):
@@ -148,8 +179,6 @@ class WorkflowGraphFactory:
         """Build one graph while resolving registered capabilities up front."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
             raise TypeError("WorkflowGraphFactory requires a ValidatedWorkflowSpec.")
-        if workflow.parallel_region is not None:
-            raise RuntimeError("Parallel workflow execution is not implemented yet.")
         if any(node.type == NodeType.SUBWORKFLOW for node in workflow.nodes):
             raise RuntimeError("Subworkflow compilation requires WorkflowGraphFactory.acreate().")
 
@@ -161,6 +190,8 @@ class WorkflowGraphFactory:
             event_sink=event_sink,
             workflow_version_id=workflow_version_id,
             execution_path=execution_path,
+            runtime_context=None,
+            parallel=build_parallel_runtime_region(workflow),
             subworkflows={},
         )
 
@@ -180,8 +211,6 @@ class WorkflowGraphFactory:
         """Resolve immutable child versions and compile them as nested LangGraph graphs."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
             raise TypeError("WorkflowGraphFactory requires a ValidatedWorkflowSpec.")
-        if workflow.parallel_region is not None:
-            raise RuntimeError("Parallel workflow execution is not implemented yet.")
         version_stack = (workflow_version_id,) if workflow_version_id is not None else ()
         return await self._acreate(
             workflow,
@@ -196,6 +225,7 @@ class WorkflowGraphFactory:
             version_stack=version_stack,
             workflow_stack=(str(workflow.id),),
             interrupt_after=interrupt_after,
+            runtime_context=None,
         )
 
     async def _acreate(
@@ -213,9 +243,11 @@ class WorkflowGraphFactory:
         version_stack: tuple[str, ...],
         workflow_stack: tuple[str, ...],
         interrupt_after: tuple[str, ...],
+        runtime_context: dict[str, Any] | None,
     ) -> WorkflowGraph:
         """Compile one workflow and its immutable dependency tree recursively."""
         subworkflows: dict[str, WorkflowGraph] = {}
+        parallel = build_parallel_runtime_region(workflow)
         for node in workflow.nodes:
             if not isinstance(node.config, SubworkflowNodeConfig):
                 continue
@@ -256,6 +288,10 @@ class WorkflowGraphFactory:
                     node,
                     exc,
                 )
+            child_context = dict(runtime_context or {})
+            branch = parallel.branch_for_node(node.id) if parallel is not None else None
+            if branch is not None:
+                child_context["branch_id"] = branch.id
             child_graph = await self._acreate(
                 child_workflow,
                 callback=callback,
@@ -273,6 +309,7 @@ class WorkflowGraphFactory:
                     for path in interrupt_after
                     if path.startswith(f"{node.id}/")
                 ),
+                runtime_context=child_context,
             )
             subworkflows[node.id] = child_graph
 
@@ -284,6 +321,8 @@ class WorkflowGraphFactory:
             event_sink=event_sink,
             workflow_version_id=workflow_version_id,
             execution_path=execution_path,
+            runtime_context=runtime_context,
+            parallel=parallel,
             subworkflows=subworkflows,
             compile_interrupt_after=tuple(path for path in interrupt_after if "/" not in path),
         )
@@ -298,6 +337,8 @@ class WorkflowGraphFactory:
         event_sink: Callable[[str, ValidatedWorkflowNode, dict[str, Any]], Awaitable[None]] | None,
         workflow_version_id: str | None,
         execution_path: str,
+        runtime_context: dict[str, Any] | None,
+        parallel: ParallelRuntimeRegion | None,
         subworkflows: Mapping[str, WorkflowGraph],
         compile_interrupt_after: tuple[str, ...] = (),
     ) -> WorkflowGraph:
@@ -313,15 +354,27 @@ class WorkflowGraphFactory:
             event_sink=event_sink,
             workflow_version_id=workflow_version_id,
             execution_path=execution_path,
+            runtime_context=runtime_context,
         )
         outgoing = self._outgoing_edges(workflow)
         graph_node_ids = {node.id: self._graph_node_id(node.id) for node in workflow.nodes}
+        branch_by_node = (
+            {node_id: branch for branch in parallel.branches for node_id in branch.node_ids}
+            if parallel is not None
+            else {}
+        )
         builder = StateGraph(_GraphState)
 
         for node in workflow.nodes:
             graph_node_id = graph_node_ids[node.id]
             edges = outgoing[node.id]
-            if isinstance(node.config, SubworkflowNodeConfig):
+            branch = branch_by_node.get(node.id)
+            if parallel is not None and node.id == parallel.join_node_id:
+                builder.add_node(
+                    graph_node_id,
+                    self._parallel_join_action(runner, node, edges, parallel),
+                )
+            elif isinstance(node.config, SubworkflowNodeConfig):
                 builder.add_node(
                     graph_node_id,
                     self._subworkflow_adapter(
@@ -329,17 +382,68 @@ class WorkflowGraphFactory:
                         node,
                         subworkflows[node.id],
                         runner,
+                        branch=branch,
                     ),
+                )
+            elif branch is not None:
+                builder.add_node(
+                    graph_node_id,
+                    self._parallel_node_action(runner, node, edges, branch),
                 )
             else:
                 builder.add_node(graph_node_id, self._node_action(runner, node, edges))
+
+        completion_ids: dict[str, str] = {}
+        if parallel is not None:
+            # Each branch gets one stable endpoint so conditional branch exits can still
+            # participate in a single native LangGraph all-join.
+            for index, branch in enumerate(parallel.branches):
+                completion_id = f"parallel_complete__{index}"
+                completion_ids[branch.id] = completion_id
+                builder.add_node(completion_id, self._parallel_branch_completed)
+
+        for node in workflow.nodes:
+            graph_node_id = graph_node_ids[node.id]
+            edges = outgoing[node.id]
+            branch = branch_by_node.get(node.id)
             if node.type == NodeType.CONDITION:
-                targets = {edge.target: graph_node_ids[edge.target] for edge in edges}
-                builder.add_conditional_edges(graph_node_id, self._selected_target, targets)
+                targets = {
+                    edge.target: (
+                        completion_ids[branch.id]
+                        if branch is not None
+                        and parallel is not None
+                        and edge.target == parallel.join_node_id
+                        else graph_node_ids[edge.target]
+                    )
+                    for edge in edges
+                }
+                selector = (
+                    self._parallel_selected_target(branch.id)
+                    if branch is not None
+                    else self._selected_target
+                )
+                builder.add_conditional_edges(graph_node_id, selector, targets)
             elif node.type == NodeType.OUTPUT:
                 builder.add_edge(graph_node_id, END)
+            elif parallel is not None and node.id == parallel.split_node_id:
+                for edge in edges:
+                    builder.add_edge(graph_node_id, graph_node_ids[edge.target])
+            elif branch is not None and parallel is not None:
+                target = edges[0].target
+                builder.add_edge(
+                    graph_node_id,
+                    completion_ids[branch.id]
+                    if target == parallel.join_node_id
+                    else graph_node_ids[target],
+                )
             else:
                 builder.add_edge(graph_node_id, graph_node_ids[edges[0].target])
+
+        if parallel is not None:
+            builder.add_edge(
+                [completion_ids[branch.id] for branch in parallel.branches],
+                graph_node_ids[parallel.join_node_id],
+            )
 
         builder.add_edge(START, graph_node_ids[workflow.entrypoint])
         return WorkflowGraph(
@@ -393,17 +497,29 @@ class WorkflowGraphFactory:
         node: ValidatedWorkflowNode,
         child: WorkflowGraph,
         runner: WorkflowNodeRunner,
+        *,
+        branch: ParallelRuntimeBranch | None = None,
     ) -> CompiledStateGraph:
         """Build a state-isolating wrapper around one native LangGraph subgraph."""
         config = node.config
         if not isinstance(config, SubworkflowNodeConfig):
             raise TypeError(f"Node '{node.id}' has an inconsistent subworkflow configuration.")
+        event_context = {"branch_id": branch.id} if branch is not None else None
 
         async def enter(state: _GraphState) -> _GraphState:
-            await runner.record_started(node)
+            await runner.record_started(node, event_context)
+            branch_frame = (
+                state.get("parallel_branches", {}).get(branch.id, {}) if branch is not None else {}
+            )
+            parent_data = branch_frame.get("data", state["data"])
+            parent_executed = tuple(
+                branch_frame.get("executed_nodes", ())
+                if branch is not None
+                else state.get("executed_nodes", ())
+            )
             try:
                 child_input = {
-                    name: deepcopy(get_path(state["data"], binding.from_state))
+                    name: deepcopy(get_path(parent_data, binding.from_state))
                     for name, binding in config.inputs.items()
                 }
             except StatePathError as exc:
@@ -413,11 +529,12 @@ class WorkflowGraphFactory:
                     node,
                     error_code=code,
                     safe_message=message,
+                    context=event_context,
                 )
                 cls._raise_subworkflow_error(code, message, workflow, node, exc)
             frame: _ExecutionFrame = {
-                "data": deepcopy(state["data"]),
-                "executed_nodes": tuple(state.get("executed_nodes", ())),
+                "data": deepcopy(parent_data),
+                "executed_nodes": parent_executed,
                 "loop_iterations": dict(state.get("loop_iterations", {})),
             }
             return {
@@ -436,6 +553,7 @@ class WorkflowGraphFactory:
                     node,
                     error_code=code,
                     safe_message=message,
+                    context=event_context,
                 )
                 cls._raise_subworkflow_error(code, message, workflow, node)
             missing = set(config.outputs) - set(child_output)
@@ -447,6 +565,7 @@ class WorkflowGraphFactory:
                     node,
                     error_code=code,
                     safe_message=message,
+                    context=event_context,
                 )
                 cls._raise_subworkflow_error(code, message, workflow, node)
             frames = state.get("parent_frames", ())
@@ -461,7 +580,17 @@ class WorkflowGraphFactory:
             updated = deepcopy(frame["data"])
             for name, binding in config.outputs.items():
                 set_path(updated, binding.to_state, deepcopy(child_output[name]))
-            await runner.record_completed(node)
+            await runner.record_completed(node, event_context)
+            if branch is not None:
+                return {
+                    "parallel_branches": {
+                        branch.id: {
+                            "data": updated,
+                            "executed_nodes": (*frame["executed_nodes"], node.id),
+                        }
+                    },
+                    "parent_frames": frames[:-1],
+                }
             return {
                 "data": updated,
                 "executed_nodes": (*frame["executed_nodes"], node.id),
@@ -469,7 +598,10 @@ class WorkflowGraphFactory:
                 "parent_frames": frames[:-1],
             }
 
-        adapter = StateGraph(_GraphState)
+        adapter = StateGraph(
+            _GraphState,
+            output_schema=_ParallelBranchOutput if branch is not None else None,
+        )
         adapter.add_node("enter", enter)
         adapter.add_node("child", child.graph)
         adapter.add_node("exit", exit_child)
@@ -561,6 +693,111 @@ class WorkflowGraphFactory:
             return update
 
         return execute
+
+    @staticmethod
+    def _parallel_node_action(
+        runner: WorkflowNodeRunner,
+        node: ValidatedWorkflowNode,
+        outgoing_edges: list[WorkflowEdge],
+        branch: ParallelRuntimeBranch,
+    ) -> Callable[[_GraphState], Awaitable[_GraphState]]:
+        """Execute one node against its branch-local state frame."""
+
+        async def execute(state: _GraphState) -> _GraphState:
+            frame = state.get("parallel_branches", {}).get(branch.id, {})
+            result = await runner.run(
+                node,
+                outgoing_edges,
+                frame.get("data", deepcopy(state["data"])),
+                tuple(frame.get("executed_nodes", ())),
+                {"branch_id": branch.id},
+            )
+            updated: _ParallelBranchFrame = {
+                "data": result.state,
+                "executed_nodes": result.executed_nodes,
+            }
+            if result.selected_target is not None:
+                updated["selected_target"] = result.selected_target
+            return {"parallel_branches": {branch.id: updated}}
+
+        return execute
+
+    @staticmethod
+    def _parallel_join_action(
+        runner: WorkflowNodeRunner,
+        node: ValidatedWorkflowNode,
+        outgoing_edges: list[WorkflowEdge],
+        region: ParallelRuntimeRegion,
+    ) -> Callable[[_GraphState], Awaitable[_GraphState]]:
+        """Merge completed branch frames, then execute the public all-join node once."""
+
+        async def execute(state: _GraphState) -> _GraphState:
+            frames = state.get("parallel_branches", {})
+            missing = [branch.id for branch in region.branches if branch.id not in frames]
+            if missing:
+                raise WorkflowExecutionError(
+                    WorkflowExecutionIssue(
+                        code="workflow.execution.parallel_branch_missing",
+                        message="Parallel join is missing completed branches: "
+                        + ", ".join(missing),
+                        workflow_id=runner.workflow.id,
+                        node_id=node.id,
+                        node_type=node.type,
+                    )
+                )
+            branch_states = {branch.id: frames[branch.id]["data"] for branch in region.branches}
+            branch_nodes = {
+                branch.id: tuple(frames[branch.id].get("executed_nodes", ()))
+                for branch in region.branches
+            }
+            try:
+                merged = merge_parallel_states(
+                    state["data"],
+                    region,
+                    branch_states,
+                    branch_nodes,
+                )
+            except (StatePathError, TypeError, ValueError) as exc:
+                raise WorkflowExecutionError(
+                    WorkflowExecutionIssue(
+                        code="workflow.execution.parallel_reduction_failed",
+                        message=f"Parallel state reduction failed at join '{node.id}': {exc}.",
+                        workflow_id=runner.workflow.id,
+                        node_id=node.id,
+                        node_type=node.type,
+                    )
+                ) from exc
+            executed_nodes = tuple(state.get("executed_nodes", ())) + tuple(
+                node_id for branch in region.branches for node_id in branch_nodes[branch.id]
+            )
+            result = await runner.run(node, outgoing_edges, merged, executed_nodes)
+            update: _GraphState = {
+                "data": result.state,
+                "executed_nodes": result.executed_nodes,
+            }
+            if result.selected_target is not None:
+                update["selected_target"] = result.selected_target
+            if result.is_output:
+                update["output"] = result.output
+            return update
+
+        return execute
+
+    @staticmethod
+    async def _parallel_branch_completed(_state: _GraphState) -> _GraphState:
+        """Mark one branch endpoint for LangGraph's grouped all-join edge."""
+        return {}
+
+    @staticmethod
+    def _parallel_selected_target(
+        branch_id: str,
+    ) -> Callable[[_GraphState], str]:
+        """Read a condition route from one isolated branch frame."""
+
+        def selected(state: _GraphState) -> str:
+            return state["parallel_branches"][branch_id]["selected_target"]
+
+        return selected
 
     @staticmethod
     def _selected_target(state: _GraphState) -> str:

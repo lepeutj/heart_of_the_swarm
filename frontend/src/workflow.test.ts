@@ -102,6 +102,37 @@ describe("toWorkflowSpec", () => {
     });
   });
 
+  it("uses schema V2 for fan-out and serializes parallel state reducers", () => {
+    const nodes: EditorNode[] = [
+      { id: "input", position: { x: 0, y: 0 }, data: { label: "Input", nodeType: "input", config: {} } },
+      { id: "left", position: { x: 100, y: 0 }, data: { label: "Left", nodeType: "transform", config: {} } },
+      { id: "right", position: { x: 100, y: 100 }, data: { label: "Right", nodeType: "transform", config: {} } },
+    ];
+    const edges: EditorEdge[] = [
+      { id: "left", source: "input", target: "left", data: {} },
+      { id: "right", source: "input", target: "right", data: {} },
+    ];
+
+    const spec = toWorkflowSpec(
+      {
+        id: "47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+        name: "Parallel",
+        description: "Test",
+        inputSchema: { type: "object" },
+        outputSchema: null,
+        stateSchema: {
+          "$.results": { schema: { type: "array" }, reducer: "append" },
+        },
+        entrypoint: "input",
+      },
+      nodes,
+      edges,
+    );
+
+    expect(spec.schema_version).toBe("2");
+    expect(spec.state_schema["$.results"].reducer).toBe("append");
+  });
+
   it("configures an inline agent with the shared AgentSpec", () => {
     expect(defaultConfig("agent", "openrouter")).toMatchObject({
       source: {
