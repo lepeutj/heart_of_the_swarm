@@ -15,6 +15,7 @@ from heart_of_the_swarm.workflows.interruptions import (
     WorkflowInterruptionDetail,
     WorkflowInterruptionStatus,
 )
+from heart_of_the_swarm.workflows.runs import WorkflowRunAccepted
 
 
 def approval_draft() -> WorkflowDraftSave:
@@ -98,20 +99,23 @@ async def test_approval_is_derived_from_the_immutable_version_and_resolved_once(
 
         async with database.session() as session:
             repository = WorkflowInterruptionRepository(session)
-            resolved = await repository.resolve(
+            resumed = await repository.resolve_and_resume(
                 str(approval.id),
-                thread_id=str(approval.thread_id),
-                checkpoint_id=approval.checkpoint_id,
                 response={"approved": True},
+                trace_id="trace-resolved",
             )
+            resolved = await repository.get(str(approval.id))
             with pytest.raises(ValueError, match="not pending"):
-                await repository.resolve(
+                await repository.resolve_and_resume(
                     str(approval.id),
-                    thread_id=str(approval.thread_id),
-                    checkpoint_id=approval.checkpoint_id,
                     response={"approved": False},
+                    trace_id="trace-duplicate",
                 )
 
+        assert resumed.thread_id == approval.thread_id
+        assert resumed.resumed_from_run_id == approval.workflow_run_id
+        assert resumed.attempt_index == 2
+        assert resolved is not None
         assert resolved.status == WorkflowInterruptionStatus.RESOLVED
         assert resolved.response == {"approved": True}
         assert resolved.resolved_at is not None
@@ -119,33 +123,18 @@ async def test_approval_is_derived_from_the_immutable_version_and_resolved_once(
         await database.close()
 
 
-async def test_invalid_or_foreign_response_does_not_mutate_pending_approval() -> None:
+async def test_invalid_response_does_not_mutate_pending_approval() -> None:
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_schema()
     try:
         approval = await create_pending_approval(database)
         async with database.session() as session:
             repository = WorkflowInterruptionRepository(session)
-            with pytest.raises(ValueError, match="execution context"):
-                await repository.resolve(
-                    str(approval.id),
-                    thread_id="00000000-0000-0000-0000-000000000000",
-                    checkpoint_id=approval.checkpoint_id,
-                    response={"approved": True},
-                )
-            with pytest.raises(ValueError, match="execution context"):
-                await repository.resolve(
-                    str(approval.id),
-                    thread_id=str(approval.thread_id),
-                    checkpoint_id="foreign-checkpoint",
-                    response={"approved": True},
-                )
             with pytest.raises(ValueError, match="response is invalid"):
-                await repository.resolve(
+                await repository.resolve_and_resume(
                     str(approval.id),
-                    thread_id=str(approval.thread_id),
-                    checkpoint_id=approval.checkpoint_id,
                     response={"approved": "yes"},
+                    trace_id="trace-invalid",
                 )
             unchanged = await repository.get(str(approval.id))
 
@@ -169,11 +158,10 @@ async def test_cancelled_approval_cannot_be_resolved() -> None:
                 checkpoint_id=approval.checkpoint_id,
             )
             with pytest.raises(ValueError, match="not pending"):
-                await repository.resolve(
+                await repository.resolve_and_resume(
                     str(approval.id),
-                    thread_id=str(approval.thread_id),
-                    checkpoint_id=approval.checkpoint_id,
                     response={"approved": True},
+                    trace_id="trace-cancelled",
                 )
 
         assert cancelled.status == WorkflowInterruptionStatus.CANCELLED
@@ -188,17 +176,16 @@ async def test_concurrent_resolution_accepts_exactly_one_response(tmp_path: Path
     try:
         approval = await create_pending_approval(database)
 
-        async def resolve(value: bool) -> WorkflowInterruptionDetail:
+        async def resolve(value: bool) -> WorkflowRunAccepted:
             async with database.session() as session:
-                return await WorkflowInterruptionRepository(session).resolve(
+                return await WorkflowInterruptionRepository(session).resolve_and_resume(
                     str(approval.id),
-                    thread_id=str(approval.thread_id),
-                    checkpoint_id=approval.checkpoint_id,
                     response={"approved": value},
+                    trace_id=f"trace-{value}",
                 )
 
         results = await asyncio.gather(resolve(True), resolve(False), return_exceptions=True)
-        successes = [item for item in results if isinstance(item, WorkflowInterruptionDetail)]
+        successes = [item for item in results if isinstance(item, WorkflowRunAccepted)]
         failures = [item for item in results if isinstance(item, ValueError)]
 
         assert len(successes) == 1

@@ -122,15 +122,15 @@ handoffs, quorum, cancellation, and human handoffs remain deferred.
 ## V2.5 — Interaction
 
 V2.5a human approval semantics are documented. Its typed node, LangGraph interruption boundary,
-durable checkpoint correlation, and pending interruption persistence are implemented. Response and
-resume APIs and React remain pending.
+durable checkpoint correlation, pending interruption persistence, and application-level response
+and resume service are implemented. HTTP API and React remain pending.
 
 1. Add the typed `HUMAN_APPROVAL` node and neutral persisted `WorkflowInterruption` lifecycle.
    **Implemented as a static contract and atomic persistence boundary.**
 2. Interrupt through LangGraph, persist the exact checkpoint reference, and release the worker.
    **Implemented.**
 3. Validate and atomically accept one boolean response before creating a resumed run in the same
-   execution thread.
+   execution thread. **Implemented at the application-service boundary.**
 4. Expose pending/resolved/cancelled approval state through the API and React run observation.
 5. V2.5b: adapt LangGraph streaming to SSE for messages, updates, interrupts, and subgraphs.
 

@@ -63,6 +63,7 @@ class WorkflowVersionRunner:
         execution_id: str | None = None,
         thread_id: str | None = None,
         checkpoint_id: str | None = None,
+        resume_value: dict[str, Any] | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
         interrupt_after: tuple[str, ...] = (),
     ) -> ExecutionResult:
@@ -87,6 +88,7 @@ class WorkflowVersionRunner:
                 recursion_limit=policy.recursion_limit,
                 thread_id=thread_id,
                 checkpoint_id=checkpoint_id,
+                resume_value=resume_value,
                 interrupt_after=tuple(path for path in interrupt_after if "/" not in path),
             )
         if result.checkpoint_id and event_sink is not None:

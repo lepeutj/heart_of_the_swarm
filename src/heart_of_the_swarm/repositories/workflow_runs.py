@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from heart_of_the_swarm.models import (
     ExecutionThreadRecord,
+    WorkflowInterruptionRecord,
     WorkflowRunEventRecord,
     WorkflowRunRecord,
 )
@@ -14,6 +15,7 @@ from heart_of_the_swarm.repositories.base import RepositoryBase
 from heart_of_the_swarm.repositories.workflows import WorkflowRepository
 from heart_of_the_swarm.spec import RunStatus
 from heart_of_the_swarm.workflows.documents import WorkflowVersionDetail
+from heart_of_the_swarm.workflows.interruptions import WorkflowInterruptionStatus
 from heart_of_the_swarm.workflows.runs import (
     ExecutionThreadStatus,
     WorkflowRunAccepted,
@@ -32,6 +34,7 @@ class WorkflowExecutionContext:
     version: WorkflowVersionDetail
     thread_id: str | None
     resume_checkpoint_id: str | None
+    resume_value: dict[str, Any] | None
     attempt_index: int
 
 
@@ -181,6 +184,19 @@ class WorkflowRunRepository(RepositoryBase):
         version = await WorkflowRepository(self.session).get_version(run.workflow_version_id)
         if version is None:
             return None
+        resume_value = None
+        if run.resumed_from_run_id is not None and run.resume_checkpoint_id is not None:
+            interruption = (
+                await self.session.execute(
+                    select(WorkflowInterruptionRecord).where(
+                        WorkflowInterruptionRecord.workflow_run_id == run.resumed_from_run_id,
+                        WorkflowInterruptionRecord.checkpoint_id == run.resume_checkpoint_id,
+                        WorkflowInterruptionRecord.status == WorkflowInterruptionStatus.RESOLVED,
+                    )
+                )
+            ).scalar_one_or_none()
+            if interruption is not None:
+                resume_value = interruption.response
         return WorkflowExecutionContext(
             run_id=run.id,
             attempt=run.attempt,
@@ -189,6 +205,7 @@ class WorkflowRunRepository(RepositoryBase):
             version=version,
             thread_id=run.thread_id,
             resume_checkpoint_id=run.resume_checkpoint_id,
+            resume_value=resume_value,
             attempt_index=run.attempt_index,
         )
 

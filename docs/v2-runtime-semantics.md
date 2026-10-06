@@ -266,7 +266,8 @@ remain deferred.
 
 ## V2.5a — Durable human approval contract
 
-Status: static node contract and persistence implemented; runtime, API, and React are not.
+Status: static contract, durable interruption, and application-level response/resume implemented;
+HTTP API and React are not.
 
 `HUMAN_APPROVAL` is the first deliberately narrow human-interaction node. It asks one boolean
 question and delegates suspension and resume to LangGraph:

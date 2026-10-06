@@ -12,6 +12,7 @@ from heart_of_the_swarm.models import (
     WorkflowRunRecord,
 )
 from heart_of_the_swarm.repositories.base import RepositoryBase
+from heart_of_the_swarm.repositories.workflow_runs import WorkflowRunRepository
 from heart_of_the_swarm.repositories.workflows import WorkflowRepository
 from heart_of_the_swarm.spec import RunStatus
 from heart_of_the_swarm.workflows.configs import HumanApprovalNodeConfig
@@ -21,7 +22,7 @@ from heart_of_the_swarm.workflows.interruptions import (
     WorkflowInterruptionDetail,
     WorkflowInterruptionStatus,
 )
-from heart_of_the_swarm.workflows.runs import ExecutionThreadStatus
+from heart_of_the_swarm.workflows.runs import ExecutionThreadStatus, WorkflowRunAccepted
 
 
 class WorkflowInterruptionRepository(RepositoryBase):
@@ -107,25 +108,35 @@ class WorkflowInterruptionRepository(RepositoryBase):
         record = await self.session.get(WorkflowInterruptionRecord, interruption_id)
         return self._detail(record) if record else None
 
-    async def resolve(
+    async def pending_for_run(self, run_id: str) -> WorkflowInterruptionDetail | None:
+        """Return the pending human interruption that owns a run's next resume."""
+        record = (
+            await self.session.execute(
+                select(WorkflowInterruptionRecord).where(
+                    WorkflowInterruptionRecord.workflow_run_id == run_id,
+                    WorkflowInterruptionRecord.status == WorkflowInterruptionStatus.PENDING,
+                )
+            )
+        ).scalar_one_or_none()
+        return self._detail(record) if record else None
+
+    async def resolve_and_resume(
         self,
         interruption_id: str,
         *,
-        thread_id: str,
-        checkpoint_id: str,
         response: dict[str, Any],
-    ) -> WorkflowInterruptionDetail:
-        """Validate and claim one pending interruption exactly once."""
+        trace_id: str,
+    ) -> WorkflowRunAccepted:
+        """Atomically resolve one approval and create its queued continuation run."""
         record = await self._required(WorkflowInterruptionRecord, interruption_id)
-        self._validate_context(record, thread_id, checkpoint_id)
+        if record.status != WorkflowInterruptionStatus.PENDING:
+            raise ValueError("workflow interruption is not pending")
         self._validate_response(record.response_schema, response)
         now = datetime.now(UTC)
         statement = (
             update(WorkflowInterruptionRecord)
             .where(
                 WorkflowInterruptionRecord.id == interruption_id,
-                WorkflowInterruptionRecord.thread_id == thread_id,
-                WorkflowInterruptionRecord.checkpoint_id == checkpoint_id,
                 WorkflowInterruptionRecord.status == WorkflowInterruptionStatus.PENDING,
             )
             .values(
@@ -138,9 +149,22 @@ class WorkflowInterruptionRepository(RepositoryBase):
         if result.rowcount != 1:
             await self.session.rollback()
             raise ValueError("workflow interruption is not pending")
-        await self.session.commit()
-        resolved = await self._required(WorkflowInterruptionRecord, interruption_id)
-        return self._detail(resolved)
+        previous = await self._required(WorkflowRunRecord, record.workflow_run_id)
+        self._add_event(
+            previous,
+            "approval.resolved",
+            {
+                "interruption_id": record.id,
+                "node_id": record.node_id,
+                "approved": response["approved"],
+            },
+        )
+        # The run repository commits only after both resolution and continuation exist.
+        return await WorkflowRunRepository(self.session).resume(
+            record.workflow_run_id,
+            record.checkpoint_id,
+            trace_id,
+        )
 
     async def cancel(
         self,

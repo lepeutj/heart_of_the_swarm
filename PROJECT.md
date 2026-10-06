@@ -92,8 +92,10 @@ supervisor handed work to a researcher, regained control, handed the result to a
 control again, and finished through the declared output node. Persisted node and handoff events
 matched that route. V2.5a now compiles a typed `HUMAN_APPROVAL` node to LangGraph `interrupt()`,
 creates a durable checkpoint, persists one pending interruption, and releases the current worker
-attempt as interrupted without writing an approval value into workflow state. The response API,
-resumed run creation, and React editing are not implemented yet.
+attempt as interrupted without writing an approval value into workflow state. The application
+service now validates one boolean response, atomically resolves the interruption, creates a new run
+in the same execution thread, and resumes LangGraph without replaying completed nodes. The HTTP API
+and React editing are not implemented yet.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow

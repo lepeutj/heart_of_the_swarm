@@ -111,6 +111,7 @@ class WorkflowGraph:
         recursion_limit: int | None = None,
         thread_id: str | None = None,
         checkpoint_id: str | None = None,
+        resume_value: dict[str, Any] | None = None,
         interrupt_after: tuple[str, ...] = (),
     ) -> ExecutionResult:
         """Run the graph, resuming the current thread head when a checkpoint is selected."""
@@ -128,7 +129,11 @@ class WorkflowGraph:
         if recursion_limit is not None:
             config["recursion_limit"] = recursion_limit
         graph_input = None
-        if workflow_input is not None:
+        if resume_value is not None:
+            if checkpoint_id is None:
+                raise ValueError("workflow resume value requires a checkpoint")
+            graph_input = Command(resume=resume_value)
+        elif workflow_input is not None:
             graph_input = {
                 "data": deepcopy(workflow_input),
                 "executed_nodes": (),
@@ -811,10 +816,9 @@ class WorkflowGraphFactory:
                 },
                 response_schema=ApprovalResponse,
             )
-            if not isinstance(response, ApprovalResponse):
-                raise TypeError("LangGraph returned an invalid approval response")
+            approval = ApprovalResponse.model_validate(response)
             updated = deepcopy(state["data"])
-            set_path(updated, config.output.to_state, response.approved)
+            set_path(updated, config.output.to_state, approval.approved)
             await runner.record_completed(node)
             return {
                 "data": updated,

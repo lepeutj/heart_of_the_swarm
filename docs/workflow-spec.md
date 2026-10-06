@@ -28,8 +28,10 @@ indistinguishable to workflow configuration and execution.
 `HUMAN_APPROVAL` compiles to LangGraph `interrupt()` and produces a minimal approval payload. The
 runtime checkpoints before a pending interruption is persisted and the worker releases the current
 run as interrupted. Nothing is written to the configured output path until a future valid response
-resumes execution. The node remains unavailable in the React catalogue until its typed inspector
-and response flow exist; API resolution and resumed run creation remain pending.
+resumes execution. The application service accepts one response atomically, creates a continuation
+run in the same thread, and invokes LangGraph with `Command(resume=...)` without replaying prior
+nodes. The node remains unavailable in the React catalogue until its typed inspector and HTTP
+response flow exist.
 
 Connector arguments may be literals or state references. Capability input schemas are catalogue
 metadata used by the editor and by LangChain validation. MCP content and structured artifacts are

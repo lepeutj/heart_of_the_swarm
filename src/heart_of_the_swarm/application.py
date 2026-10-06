@@ -15,6 +15,7 @@ from heart_of_the_swarm.tools import MCPToolLoader, create_default_registry
 from heart_of_the_swarm.triggers.service import TriggerService
 from heart_of_the_swarm.triggers.webhook import WebhookTriggerService
 from heart_of_the_swarm.validator import AgentSpecValidator
+from heart_of_the_swarm.workflow_approvals import WorkflowApprovalService
 from heart_of_the_swarm.workflow_execution import WorkflowExecutor, WorkflowRunService
 from heart_of_the_swarm.workflow_service import WorkflowService
 from heart_of_the_swarm.workflows import WorkflowValidator
@@ -65,6 +66,10 @@ class Application:
             self.database,
             self.workflow_validator,
             self.tools,
+            self.workflow_checkpoints,
+        )
+        self.workflow_approvals = WorkflowApprovalService(
+            self.database,
             self.workflow_checkpoints,
         )
         self.webhook_triggers = WebhookTriggerService(self.triggers, self.workflow_runs)

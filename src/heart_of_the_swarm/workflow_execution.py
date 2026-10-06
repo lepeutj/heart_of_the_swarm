@@ -81,8 +81,11 @@ class WorkflowRunService:
         saver = self._checkpointer()
         async with self.database.session() as session:
             previous = await WorkflowRunRepository(session).get(str(run_id))
+            pending = await WorkflowInterruptionRepository(session).pending_for_run(str(run_id))
         if previous is None:
             raise ValueError("workflow run not found")
+        if pending is not None:
+            raise ValueError("human approval requires an explicit response")
         if previous.thread_id is None:
             raise ValueError("workflow run does not belong to a resumable thread")
         config = {
@@ -227,6 +230,7 @@ class WorkflowExecutor:
                     execution_id=run_id,
                     thread_id=context.thread_id,
                     checkpoint_id=context.resume_checkpoint_id,
+                    resume_value=context.resume_value,
                     checkpointer=self._checkpointer(),
                     interrupt_after=interrupt_after,
                 )
