@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultConfig,
   normalizeLoadedNode,
+  supervisorTargetOptions,
   toWorkflowSpec,
   type EditorEdge,
   type EditorNode,
@@ -147,6 +148,86 @@ describe("toWorkflowSpec", () => {
       inputs: { request: { from_state: "$.request" } },
       outputs: { answer: { to_state: "$.answer" } },
     });
+  });
+
+  it("configures a typed supervisor with one existing agent target", () => {
+    expect(defaultConfig("supervisor", "openrouter", "researcher")).toMatchObject({
+      source: {
+        type: "inline",
+        agent: {
+          name: "Supervisor",
+          model: { provider: "openrouter" },
+        },
+      },
+      inputs: { request: { from_state: "$.request" } },
+      allowed_targets: { researcher: { task_field: "task" } },
+      finish_output: { to_state: "$.final" },
+      decision_schema: "supervisor_decision_v1",
+      max_handoffs_ref: "execution_policy.max_handoffs",
+    });
+  });
+
+  it("round-trips supervisor configuration without synthetic handoff edges", () => {
+    const supervisorConfig = defaultConfig("supervisor", "openrouter", "researcher");
+    const nodes: EditorNode[] = [
+      { id: "input", position: { x: 0, y: 0 }, data: { label: "Input", nodeType: "input", config: {} } },
+      {
+        id: "supervisor",
+        position: { x: 100, y: 0 },
+        data: { label: "Supervisor", nodeType: "supervisor", config: supervisorConfig },
+      },
+      {
+        id: "researcher",
+        position: { x: 100, y: 100 },
+        data: { label: "Researcher", nodeType: "agent", config: defaultConfig("agent") },
+      },
+      {
+        id: "output",
+        position: { x: 200, y: 0 },
+        data: { label: "Output", nodeType: "output", config: { output_path: "$.final" } },
+      },
+    ];
+    const edges: EditorEdge[] = [
+      { id: "input-supervisor", source: "input", target: "supervisor", data: {} },
+      { id: "supervisor-output", source: "supervisor", target: "output", data: {} },
+    ];
+
+    const spec = toWorkflowSpec(
+      {
+        id: "47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+        name: "Supervised workflow",
+        description: "Test",
+        inputSchema: { type: "object" },
+        outputSchema: null,
+        entrypoint: "input",
+      },
+      nodes,
+      edges,
+    );
+    const loaded = normalizeLoadedNode(spec.nodes.find((node) => node.id === "supervisor")!);
+
+    expect(spec.schema_version).toBe("2");
+    expect(spec.edges).toEqual([
+      { source: "input", target: "supervisor" },
+      { source: "supervisor", target: "output" },
+    ]);
+    expect(loaded).toEqual({ type: "supervisor", config: supervisorConfig });
+  });
+
+  it("offers only detached agents as eligible supervisor targets", () => {
+    const nodes: EditorNode[] = [
+      { id: "supervisor", position: { x: 0, y: 0 }, data: { label: "Supervisor", nodeType: "supervisor", config: {} } },
+      { id: "researcher", position: { x: 0, y: 0 }, data: { label: "Researcher", nodeType: "agent", config: {} } },
+      { id: "reviewer", position: { x: 0, y: 0 }, data: { label: "Reviewer", nodeType: "agent", config: {} } },
+    ];
+    const edges: EditorEdge[] = [
+      { id: "connected", source: "researcher", target: "supervisor", data: {} },
+    ];
+
+    expect(supervisorTargetOptions(nodes, edges)).toEqual([
+      { id: "researcher", label: "Researcher", eligible: false },
+      { id: "reviewer", label: "Reviewer", eligible: true },
+    ]);
   });
 
   it("configures a deterministic connector", () => {

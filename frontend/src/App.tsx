@@ -45,6 +45,7 @@ import {
 import {
   defaultConfig,
   normalizeLoadedNode,
+  supervisorTargetOptions,
   toWorkflowSpec,
   type EditorEdge,
   type EditorNode,
@@ -174,6 +175,10 @@ export default function App() {
       : false,
     [edges, nodes, selectedNode],
   );
+  const supervisorTargets = useMemo(
+    () => supervisorTargetOptions(nodes, edges),
+    [edges, nodes],
+  );
   const spec = useMemo(
     () => toWorkflowSpec(
       {
@@ -201,7 +206,11 @@ export default function App() {
         data: {
           label: nodeType.charAt(0).toUpperCase() + nodeType.slice(1),
           nodeType,
-          config: defaultConfig(nodeType, providerNames[0]),
+          config: defaultConfig(
+            nodeType,
+            providerNames[0],
+            supervisorTargets.find((target) => target.eligible)?.id,
+          ),
         },
       },
     ]);
@@ -584,6 +593,7 @@ export default function App() {
               skillNames={skillNames}
               providerNames={providerNames}
               agentOptions={agentOptions}
+              supervisorTargets={supervisorTargets}
               workflowVersions={workflowVersions.filter(
                 (version) => version.workflow_id !== workflowId.current,
               )}

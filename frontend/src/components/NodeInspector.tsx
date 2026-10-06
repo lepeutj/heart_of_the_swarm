@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 
 import type { AgentOption, ToolCapability, WorkflowVersion } from "../api";
-import type { EditorNode, JsonObject } from "../workflow";
-import { AgentDataFlowEditor, WorkflowOutputEditor } from "./DataFlowEditor";
+import type { EditorNode, JsonObject, SupervisorTargetOption } from "../workflow";
+import {
+  AgentDataFlowEditor,
+  StateInputEditor,
+  WorkflowOutputEditor,
+} from "./DataFlowEditor";
 import { JsonEditor } from "./JsonEditor";
 import { ModelEditor } from "./ModelEditor";
 import { WorkflowSchemaEditor } from "./WorkflowSchemaEditor";
@@ -14,6 +18,7 @@ interface NodeInspectorProps {
   skillNames: string[];
   providerNames: string[];
   agentOptions: AgentOption[];
+  supervisorTargets: SupervisorTargetOption[];
   workflowVersions: WorkflowVersion[];
   canDetach: boolean;
   onChange: (update: Partial<EditorNode["data"]>) => void;
@@ -58,12 +63,13 @@ function ValueEditor({ value, onApply }: { value: unknown; onApply: (value: unkn
   );
 }
 
-function AgentEditor({
+function AgentSourceEditor({
   config,
   toolNames,
   skillNames,
   providerNames,
   agentOptions,
+  requiresStructuredOutput,
   onChange,
 }: {
   config: JsonObject;
@@ -71,6 +77,7 @@ function AgentEditor({
   skillNames: string[];
   providerNames: string[];
   agentOptions: AgentOption[];
+  requiresStructuredOutput: boolean;
   onChange: (config: JsonObject) => void;
 }) {
   const source = asObject(config.source);
@@ -131,19 +138,27 @@ function AgentEditor({
           toolNames={toolNames}
           skillNames={skillNames}
           providerNames={providerNames}
+          requiresStructuredOutput={requiresStructuredOutput}
           onChange={onChange}
         />
       )}
-      {sourceType === "version" && <AgentDataFlowEditor config={config} onChange={onChange} />}
     </div>
   );
 }
 
-function InlineAgentEditor({ config, toolNames, skillNames, providerNames, onChange }: {
+function InlineAgentEditor({
+  config,
+  toolNames,
+  skillNames,
+  providerNames,
+  requiresStructuredOutput,
+  onChange,
+}: {
   config: JsonObject;
   toolNames: string[];
   skillNames: string[];
   providerNames: string[];
+  requiresStructuredOutput: boolean;
   onChange: (config: JsonObject) => void;
 }) {
   const source = asObject(config.source);
@@ -170,8 +185,7 @@ function InlineAgentEditor({ config, toolNames, skillNames, providerNames, onCha
         model={model}
         providerNames={providerNames}
         requiresTools={selectedTools.length > 0}
-        requiresStructuredOutput={config.response_schema !== null
-          && config.response_schema !== undefined}
+        requiresStructuredOutput={requiresStructuredOutput}
         onChange={(nextModel) => updateAgent("model", nextModel)}
       />
       <fieldset>
@@ -218,8 +232,27 @@ function InlineAgentEditor({ config, toolNames, skillNames, providerNames, onCha
           );
         })}
       </fieldset>
-      <AgentDataFlowEditor config={config} onChange={onChange} />
     </div>
+  );
+}
+
+function AgentEditor(props: {
+  config: JsonObject;
+  toolNames: string[];
+  skillNames: string[];
+  providerNames: string[];
+  agentOptions: AgentOption[];
+  onChange: (config: JsonObject) => void;
+}) {
+  return (
+    <>
+      <AgentSourceEditor
+        {...props}
+        requiresStructuredOutput={props.config.response_schema !== null
+          && props.config.response_schema !== undefined}
+      />
+      <AgentDataFlowEditor config={props.config} onChange={props.onChange} />
+    </>
   );
 }
 
@@ -550,6 +583,114 @@ function ConnectorEditor({ config, capabilities, onChange }: {
   );
 }
 
+function SupervisorEditor({
+  config,
+  toolNames,
+  skillNames,
+  providerNames,
+  agentOptions,
+  targets,
+  onChange,
+}: {
+  config: JsonObject;
+  toolNames: string[];
+  skillNames: string[];
+  providerNames: string[];
+  agentOptions: AgentOption[];
+  targets: SupervisorTargetOption[];
+  onChange: (config: JsonObject) => void;
+}) {
+  const inputs = asObject(config.inputs);
+  const allowedTargets = asObject(config.allowed_targets);
+  const knownTargetIds = new Set(targets.map((target) => target.id));
+  const choices = [
+    ...targets,
+    ...Object.keys(allowedTargets)
+      .filter((targetId) => !knownTargetIds.has(targetId))
+      .map((targetId) => ({ id: targetId, label: targetId, eligible: false })),
+  ];
+  const finishOutput = asObject(config.finish_output);
+
+  function replaceTarget(targetId: string, selected: boolean) {
+    const next = { ...allowedTargets };
+    if (selected) next[targetId] = { task_field: "task" };
+    else delete next[targetId];
+    onChange({ ...config, allowed_targets: next });
+  }
+
+  return (
+    <div className="typed-editor">
+      <p className="field-help">The supervisor chooses one configured agent at a time. LangGraph returns every completed target here before the next decision.</p>
+      <AgentSourceEditor
+        config={config}
+        toolNames={toolNames}
+        skillNames={skillNames}
+        providerNames={providerNames}
+        agentOptions={agentOptions}
+        requiresStructuredOutput
+        onChange={onChange}
+      />
+      <StateInputEditor
+        inputs={inputs}
+        onChange={(nextInputs) => onChange({ ...config, inputs: nextInputs })}
+      />
+      <fieldset>
+        <legend>Allowed agent targets</legend>
+        <p className="field-help">These are dynamic routing relations, not React Flow edges. Only AGENT nodes without static edges can be selected.</p>
+        <p className="field-help">Describe when to choose each target ID in the supervisor instructions above.</p>
+        {choices.length === 0 && (
+          <p className="field-help">Add an AGENT node and leave it detached from static edges.</p>
+        )}
+        {choices.map((target) => {
+          const selected = target.id in allowedTargets;
+          const targetConfig = asObject(allowedTargets[target.id]);
+          return (
+            <div className="mapping-row" key={target.id}>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  disabled={!target.eligible && !selected}
+                  onChange={(event) => replaceTarget(target.id, event.target.checked)}
+                />
+                {target.label} <small>{target.id}</small>
+              </label>
+              {!target.eligible && <small className="field-help">Unavailable until its static edges are removed.</small>}
+              {selected && (
+                <label>
+                  Delegated task field
+                  <input
+                    value={asString(targetConfig.task_field, "task")}
+                    onChange={(event) => onChange({
+                      ...config,
+                      allowed_targets: {
+                        ...allowedTargets,
+                        [target.id]: { task_field: event.target.value },
+                      },
+                    })}
+                  />
+                </label>
+              )}
+            </div>
+          );
+        })}
+      </fieldset>
+      <label>
+        Final result state path
+        <input
+          value={asString(finishOutput.to_state, "$.final")}
+          onChange={(event) => onChange({
+            ...config,
+            finish_output: { to_state: event.target.value },
+          })}
+        />
+      </label>
+      <p className="field-help">The static OUTPUT node must expose this same state path.</p>
+      <p className="field-help">The workflow ExecutionPolicy owns max_handoffs. The decision schema is fixed by the backend contract.</p>
+    </div>
+  );
+}
+
 export function NodeInspector({
   node,
   toolNames,
@@ -557,6 +698,7 @@ export function NodeInspector({
   skillNames,
   providerNames,
   agentOptions,
+  supervisorTargets,
   workflowVersions,
   canDetach,
   onChange,
@@ -589,6 +731,17 @@ export function NodeInspector({
         <ConnectorEditor
           config={config}
           capabilities={capabilities}
+          onChange={(next) => onChange({ config: next })}
+        />
+      )}
+      {node.data.nodeType === "supervisor" && (
+        <SupervisorEditor
+          config={config}
+          toolNames={toolNames}
+          skillNames={skillNames}
+          providerNames={providerNames}
+          agentOptions={agentOptions}
+          targets={supervisorTargets}
           onChange={(next) => onChange({ config: next })}
         />
       )}

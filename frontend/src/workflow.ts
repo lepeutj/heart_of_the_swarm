@@ -3,6 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 export type NodeType =
   | "input"
   | "agent"
+  | "supervisor"
   | "subworkflow"
   | "connector"
   | "condition"
@@ -30,6 +31,12 @@ export interface WorkflowEdgeData extends Record<string, unknown> {
 }
 
 export type EditorEdge = Edge<WorkflowEdgeData>;
+
+export interface SupervisorTargetOption {
+  id: string;
+  label: string;
+  eligible: boolean;
+}
 
 export interface WorkflowSpec {
   schema_version: "1" | "2";
@@ -90,6 +97,20 @@ export function normalizeLoadedNode(
   return { type: node.type, config: node.config };
 }
 
+export function supervisorTargetOptions(
+  nodes: EditorNode[],
+  edges: EditorEdge[],
+): SupervisorTargetOption[] {
+  const connected = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
+  return nodes
+    .filter((node) => node.data.nodeType === "agent")
+    .map((node) => ({
+      id: node.id,
+      label: node.data.label,
+      eligible: !connected.has(node.id),
+    }));
+}
+
 export function toWorkflowSpec(
   document: WorkflowDocument,
   nodes: EditorNode[],
@@ -107,7 +128,7 @@ export function toWorkflowSpec(
   return {
     schema_version: (
       edges.some((edge) => edge.data?.loop)
-      || nodes.some((node) => node.data.nodeType === "subworkflow")
+      || nodes.some((node) => ["subworkflow", "supervisor"].includes(node.data.nodeType))
       || hasParallelFanOut
       || Object.keys(stateSchema).length > 0
     ) ? "2" : "1",
@@ -134,7 +155,11 @@ export function toWorkflowSpec(
   };
 }
 
-export function defaultConfig(nodeType: NodeType, defaultProvider = "openai"): JsonObject {
+export function defaultConfig(
+  nodeType: NodeType,
+  defaultProvider = "openai",
+  supervisorTargetId?: string,
+): JsonObject {
   switch (nodeType) {
     case "agent":
       return {
@@ -157,6 +182,25 @@ export function defaultConfig(nodeType: NodeType, defaultProvider = "openai"): J
         capability_id: "http_get_json",
         inputs: { url: { from_state: "$.url" } },
         outputs: { result: { to_state: "$.result" } },
+      };
+    case "supervisor":
+      return {
+        source: {
+          type: "inline",
+          agent: {
+            name: "Supervisor",
+            goal: "Coordinate the configured specialist agents",
+            instructions: "Choose one configured target at a time, then finish with the final result.",
+            model: { provider: defaultProvider, model_id: "", temperature: 0, max_tokens: null },
+            tools: [],
+            skills: [],
+          },
+        },
+        inputs: { request: { from_state: "$.request" } },
+        allowed_targets: supervisorTargetId ? { [supervisorTargetId]: { task_field: "task" } } : {},
+        finish_output: { to_state: "$.final" },
+        decision_schema: "supervisor_decision_v1",
+        max_handoffs_ref: "execution_policy.max_handoffs",
       };
     case "subworkflow":
       return {

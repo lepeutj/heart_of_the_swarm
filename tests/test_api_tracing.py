@@ -223,6 +223,7 @@ def test_workflow_capabilities_report_runtime_support() -> None:
     assert response.status_code == 200
     nodes = {node["type"]: node for node in response.json()["nodes"]}
     assert nodes["agent"]["available"] is True
+    assert nodes["supervisor"]["available"] is True
     assert "tool" not in nodes
     assert nodes["connector"]["available"] is True
     assert "properties" in nodes["agent"]["config_schema"]

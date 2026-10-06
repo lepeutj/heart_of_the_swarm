@@ -96,7 +96,7 @@ loops inside a parallel region, partial joins, quorum joins, and first-result-wi
 
 ## V2.4 — Multi-agent routing
 
-Status: V2.4a runtime implemented; React editing deferred.
+Status: V2.4a runtime and V2.4b typed React editing implemented.
 
 1. Define a strict `SupervisorDecision`: one `handoff` target and task, or one final `finish`
    result. **Implemented as a typed contract.**
@@ -109,6 +109,8 @@ Status: V2.4a runtime implemented; React editing deferred.
 6. Preserve the completed target across checkpoint resume before returning to the supervisor.
    **Implemented.**
 7. Add contextual decision and handoff events without a public `HANDOFF` node. **Implemented.**
+8. Edit the exact supervisor contract in React while keeping allowed targets as configuration
+   relations rather than workflow edges. **Implemented.**
 
 Exit criterion: a supervisor can route sequentially to a researcher and reviewer, regain control
 after each target, then finish. It cannot select arbitrary nodes, exceed its handoff limit, inherit

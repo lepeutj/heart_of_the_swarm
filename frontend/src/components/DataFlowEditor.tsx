@@ -124,6 +124,41 @@ function responseSchemaFor(outputs: JsonObject, existing: unknown): JsonObject {
   };
 }
 
+export function StateInputEditor({ inputs, onChange }: {
+  inputs: JsonObject;
+  onChange: (inputs: JsonObject) => void;
+}) {
+  return (
+    <fieldset>
+      <legend>Data received by this node</legend>
+      <p className="field-help">Each field becomes context for the agent. Source paths refer to values produced earlier in the graph.</p>
+      {Object.entries(inputs).map(([name, binding]) => {
+        const value = asObject(binding);
+        return (
+          <BindingRow
+            key={name}
+            name={name}
+            path={asString(value.from_state)}
+            pathLabel="Source state path"
+            onRename={(nextName) => onChange(renameBinding(inputs, name, nextName))}
+            onPathChange={(path) => onChange({ ...inputs, [name]: { from_state: path } })}
+            onRemove={() => {
+              const next = { ...inputs };
+              delete next[name];
+              onChange(next);
+            }}
+          />
+        );
+      })}
+      <button type="button" onClick={() => {
+        let index = Object.keys(inputs).length + 1;
+        while (`input_${index}` in inputs) index += 1;
+        onChange({ ...inputs, [`input_${index}`]: { from_state: "$.request" } });
+      }}>Add received value</button>
+    </fieldset>
+  );
+}
+
 export function AgentDataFlowEditor({ config, onChange }: {
   config: JsonObject;
   onChange: (config: JsonObject) => void;
@@ -149,33 +184,7 @@ export function AgentDataFlowEditor({ config, onChange }: {
     <details className="data-mapping">
       <summary>Data mapping</summary>
       <p className="field-help">Choose what this agent receives and where its response is stored. Most simple agents need only the default request and answer fields.</p>
-      <fieldset>
-        <legend>Data received by this node</legend>
-        <p className="field-help">Each field becomes context for the agent. Source paths refer to values produced earlier in the graph.</p>
-        {Object.entries(inputs).map(([name, binding]) => {
-          const value = asObject(binding);
-          return (
-            <BindingRow
-              key={name}
-              name={name}
-              path={asString(value.from_state)}
-              pathLabel="Source state path"
-              onRename={(nextName) => replaceInputs(renameBinding(inputs, name, nextName))}
-              onPathChange={(path) => replaceInputs({ ...inputs, [name]: { from_state: path } })}
-              onRemove={() => {
-                const next = { ...inputs };
-                delete next[name];
-                replaceInputs(next);
-              }}
-            />
-          );
-        })}
-        <button type="button" onClick={() => {
-          let index = Object.keys(inputs).length + 1;
-          while (`input_${index}` in inputs) index += 1;
-          replaceInputs({ ...inputs, [`input_${index}`]: { from_state: "$.request" } });
-        }}>Add received value</button>
-      </fieldset>
+      <StateInputEditor inputs={inputs} onChange={replaceInputs} />
 
       <fieldset>
         <legend>Response fields</legend>

@@ -188,7 +188,8 @@ only for static reachability validation and are never serialized as workflow edg
 `ExecutionPolicy.max_handoffs` is a positive application-bounded contract value. The runtime turns
 each valid decision into a native LangGraph `Command`, returns every completed target to the
 supervisor, and emits contextual decision and handoff events. A checkpoint after target completion
-resumes at the supervisor without replaying that target. React editing remains deferred.
+resumes at the supervisor without replaying that target. The React inspector edits these fields
+directly; `allowed_targets` never become serialized React Flow edges.
 
 ## Validation and execution
 

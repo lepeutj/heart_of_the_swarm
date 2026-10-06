@@ -82,8 +82,10 @@ Standalone export of a parent with child workflow dependencies remains deferred.
 including one deterministic fan-out/fan-in region, is implemented with native LangGraph scheduling,
 closed reducers, contextual events, and checkpoint-safe resume. V2.4a multi-agent routing supports
 one bounded supervisor-selected agent at a time, mandatory return, strict structured decisions,
-contextual handoff events, and checkpoint-safe resume. React editing for supervisors, interaction,
-secure remote execution, and deployment lifecycle management remain later milestones.
+contextual handoff events, and checkpoint-safe resume. The React inspector edits the same
+supervisor source, inputs, allowed-target relations, task fields, and finish mapping without
+creating synthetic control-flow edges. Interaction, secure remote execution, and deployment
+lifecycle management remain later milestones.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
