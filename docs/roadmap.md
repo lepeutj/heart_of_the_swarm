@@ -96,13 +96,23 @@ loops inside a parallel region, partial joins, quorum joins, and first-result-wi
 
 ## V2.4 — Multi-agent routing
 
-1. Add validated `allowed_targets` for agent-directed routing.
-2. Translate valid selections to LangGraph `Command` internally.
-3. Add supervisor/router and delegation patterns without a public `HANDOFF` node.
-4. Evaluate agent-as-subgraph only after opaque agent execution remains stable with checkpoints.
+Status: V2.4a contract defined; runtime not implemented.
 
-Exit criterion: one router agent can hand work to one declared agent and return to an explicit
-workflow route without selecting arbitrary nodes.
+1. Define a strict `SupervisorDecision`: one `handoff` target and task, or one final `finish`
+   result. **Contract defined.**
+2. Validate `allowed_targets` as local `AGENT` node IDs and keep handoff state boundaries explicit.
+3. Add `max_handoffs` to execution policy; count transfers rather than supervisor/target node visits.
+4. Translate valid single-target selections to LangGraph `Command` internally.
+5. Require every target to return control to the supervisor before another decision.
+6. Preserve the completed target across checkpoint resume before returning to the supervisor.
+7. Add contextual decision and handoff events without a public `HANDOFF` node.
+
+Exit criterion: a supervisor can route sequentially to a researcher and reviewer, regain control
+after each target, then finish. It cannot select arbitrary nodes, exceed its handoff limit, inherit
+the complete workflow state implicitly, or replay a completed target after resume.
+
+Multiple targets per decision, `SUBWORKFLOW` targets, agent-as-tool, direct target-to-target
+handoffs, quorum, cancellation, and human handoffs remain deferred.
 
 ## V2.5 — Interaction
 

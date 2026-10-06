@@ -68,6 +68,12 @@ the normative field-level rules.
   edges express fan-out and required fan-in; there is no public `PARALLEL` node. Concurrent writes
   require `append` or conflict-free `merge_dict`; `replace` permits only one writer. LangGraph owns
   concurrent scheduling and checkpointing.
+- **ADR-042 — A supervisor makes bounded single-target handoffs.** A supervisor decision is a
+  validated `handoff` to one allowed `AGENT` node or `finish`; it is not free-form workflow output.
+  The target receives the decision task plus explicitly mapped inputs, returns through explicit
+  output mappings, and always yields control back to the supervisor. `max_handoffs` counts transfers,
+  not node visits. LangGraph commands implement routing internally; there is no public `HANDOFF`
+  node.
 - **ADR-009 — Human approval requires durable resume.** Approval builds on checkpoints and cannot be
   a blocking in-memory callback.
 - **ADR-040 — Security is cross-cutting.** Identity, authorization, secret references, bounded
@@ -78,8 +84,8 @@ the normative field-level rules.
 
 - Schema v2 supports one bounded conditional back edge; nested or overlapping loops are deferred.
 - Subworkflow artifact bundling, nested parallel regions, dynamic handoffs, human approval, remote
-  control, and deployment lifecycle remain roadmap items. One validated fan-out/fan-in region uses
-  native LangGraph scheduling, isolated branch frames, deterministic reducers, and checkpoint-safe
-  resume.
+  control, and deployment lifecycle remain roadmap items. One validated
+  fan-out/fan-in region uses native LangGraph scheduling, isolated branch frames, deterministic
+  reducers, and checkpoint-safe resume. V2.4a routing is documented but not implemented.
 - Do not add a second capability catalogue, custom agent loop, custom traversal engine, or duplicate
   technical tracing pipeline.

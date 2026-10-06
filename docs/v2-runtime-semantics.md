@@ -105,7 +105,7 @@ without creating a LangGraph time-travel fork, so a completed child connector is
 Standalone artifacts reject subworkflow dependencies until an export can bundle the complete
 immutable dependency tree.
 
-## V2.3 — Parallel state (contract defined, not implemented)
+## V2.3 — Parallel state (implemented)
 
 ### Graph semantics
 
@@ -185,13 +185,85 @@ replay the completed sibling, and releases the fan-in only after every required 
 Partial joins, quorum joins, first-result-wins, nested parallel regions, arbitrary reducers, and
 parallel loops remain deferred.
 
-## V2.4+ deferred contracts
+## V2.4a — Single-target supervisor routing (contract defined, not implemented)
 
-### Dynamic routing and handoffs
+### Decision contract
 
-Agents may select only validated `allowed_targets`. Translate valid selections to LangGraph
-`Command` internally. Do not expose arbitrary node IDs, framework configuration, or a public
-`HANDOFF` node until the opaque-agent model proves insufficient.
+The supervisor produces only a strict routing decision. It produces business output only when it
+finishes:
+
+```yaml
+# Continue through one target.
+action: handoff
+target: researcher
+task: Find primary sources for the requested topic.
+
+# Finish the supervisor cycle.
+action: finish
+result: {summary: Research and review are complete.}
+```
+
+`SupervisorDecision` is a discriminated union with these invariants:
+
+- `handoff` requires a non-empty `target` and `task`, forbids `result`, and accepts exactly one
+  target;
+- `finish` requires a JSON-serializable `result` and forbids `target` and `task`;
+- `target` must be one of the supervisor's validated `allowed_targets`;
+- every allowed target is a different local `AGENT` node; the supervisor itself, `SUBWORKFLOW`, and
+  arbitrary node targets are rejected;
+- model prose outside this structure is invalid rather than interpreted as routing.
+
+### Control and data flow
+
+```text
+             ┌→ Researcher ─┐
+Supervisor ──┼→ Analyst ────┼→ Supervisor
+             └→ Reviewer ───┘
+                    │
+Supervisor finish ──┴→ OUTPUT
+```
+
+- a handoff is a temporary transfer of control, not a tool call or a new `WorkflowRun`;
+- the selected target receives the decision `task` plus only its declared state input mappings;
+- target outputs return through declared output mappings; the complete workflow state is never
+  inherited implicitly;
+- completing a target returns control to the supervisor; a target failure fails the workflow rather
+  than becoming an implicit supervisor decision, and direct target-to-target handoff is rejected;
+- `max_handoffs` is a positive, application-bounded execution-policy value and counts transfers
+  from the supervisor, not node visits or returns;
+- valid decisions translate to LangGraph `Command` internally. Specifications never contain
+  LangGraph objects and expose no public `HANDOFF` node.
+
+### Checkpoints and events
+
+A completed target is a committed execution step. If a checkpoint is written after the target and
+the process crashes before the supervisor runs again, resume continues at the supervisor and does
+not invoke the target again.
+
+Minimum contextual events are `supervisor.decision`, `handoff.started`, `handoff.completed`,
+`handoff.failed`, and `handoff.limit_reached`. They carry the supervisor and target node IDs,
+`handoff_index`, execution path, run ID, and thread ID. The decision payload must not expose hidden
+model reasoning.
+
+### Normative scenarios
+
+1. `Supervisor → Researcher → Supervisor → Reviewer → Supervisor → finish → OUTPUT` succeeds.
+2. A target outside `allowed_targets` is rejected before it executes.
+3. `handoff` without a target or task is rejected.
+4. `finish` with target or task fields is rejected.
+5. A target receives only the task and explicitly mapped inputs.
+6. A target's mapped outputs are available to the next supervisor decision.
+7. The same allowed target may be selected more than once while the bound remains available.
+8. Exceeding `max_handoffs` produces a structured execution failure.
+9. Target completion returns to the supervisor; target failure fails the workflow.
+10. Resume after a completed target continues at the supervisor without replaying the target.
+11. Every decision and transfer emits contextual events with a monotonic handoff index.
+12. Multiple targets, subworkflow targets, and direct target-to-target handoffs are rejected.
+
+Multiple selection, dynamic fan-out, quorum, first-N completion, cancellation, agent-as-tool,
+human handoff, and target subworkflows remain deferred.
+
+## V2.5+ deferred contracts
 
 ### Human interaction
 

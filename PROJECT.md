@@ -79,8 +79,11 @@ subworkflows, and reducers. V2.1 durable execution threads and explicit resume a
 supports one checkpoint-safe bounded conditional back edge and immutable nested workflow versions
 with isolated mappings, hierarchical events, recursion protection, and nested checkpoint resume.
 Standalone export of a parent with child workflow dependencies remains deferred. Parallel state,
-multi-agent handoffs, and interaction build on those primitives; secure
-remote execution and deployment lifecycle management follow after the runtime semantics are stable.
+including one deterministic fan-out/fan-in region, is implemented with native LangGraph scheduling,
+closed reducers, contextual events, and checkpoint-safe resume. The V2.4a contract next limits
+multi-agent routing to one supervisor-selected agent followed by a mandatory return. Interaction,
+secure remote execution, and deployment lifecycle management follow after the runtime semantics are
+stable.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
