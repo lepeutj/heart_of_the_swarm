@@ -22,6 +22,10 @@ from heart_of_the_swarm.workflows.execution import (
     validate_workflow_input,
 )
 from heart_of_the_swarm.workflows.spec import (
+    ParallelBranch,
+    ParallelRegion,
+    StateFieldSpec,
+    StateReducer,
     ValidatedWorkflowSpec,
     WorkflowEdge,
     WorkflowNode,
@@ -40,7 +44,11 @@ __all__ = [
     "ExecutionResult",
     "ExecutionPolicy",
     "NodeType",
+    "ParallelBranch",
+    "ParallelRegion",
     "ResolvedAgentVersion",
+    "StateFieldSpec",
+    "StateReducer",
     "ValidatedWorkflowSpec",
     "WorkflowEdge",
     "WorkflowCapabilities",

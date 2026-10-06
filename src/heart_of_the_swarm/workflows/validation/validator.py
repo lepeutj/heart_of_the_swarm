@@ -15,6 +15,7 @@ from heart_of_the_swarm.workflows.configs import (
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
+    StateReducer,
     ValidatedWorkflowNode,
     ValidatedWorkflowSpec,
     WorkflowEdge,
@@ -32,6 +33,7 @@ from heart_of_the_swarm.workflows.validation.graph import (
     nodes_reaching_outputs,
     reachable_nodes,
 )
+from heart_of_the_swarm.workflows.validation.parallel import analyze_parallel_region
 
 
 class WorkflowValidator:
@@ -62,6 +64,8 @@ class WorkflowValidator:
         issues.extend(config_issues)
         issues.extend(self._graph_errors(spec))
         issues.extend(self._semantic_errors(spec, typed_nodes))
+        parallel_region, parallel_issues = analyze_parallel_region(spec, typed_nodes)
+        issues.extend(parallel_issues)
         if issues:
             raise WorkflowValidationError(issues)
         return ValidatedWorkflowSpec(
@@ -71,9 +75,11 @@ class WorkflowValidator:
             description=spec.description,
             input_schema=spec.input_schema,
             output_schema=spec.output_schema,
+            state_schema=spec.state_schema,
             nodes=typed_nodes,
             edges=spec.edges,
             entrypoint=spec.entrypoint,
+            parallel_region=parallel_region,
         )
 
     @staticmethod
@@ -291,7 +297,7 @@ class WorkflowValidator:
                             "edges",
                         )
                     )
-                if len(fallback) > 1:
+                if len(fallback) > 1 and spec.schema_version == "1":
                     issues.append(
                         _issue(
                             "workflow.node.multiple_successors",
@@ -398,6 +404,7 @@ class WorkflowValidator:
         issues.extend(_schema_errors(spec.input_schema, "input_schema"))
         if spec.output_schema is not None:
             issues.extend(_schema_errors(spec.output_schema, "output_schema"))
+        issues.extend(_state_schema_errors(spec))
         for node in nodes:
             config = node.config
             if isinstance(config, AgentNodeConfig):
@@ -467,6 +474,39 @@ def _schema_errors(schema: dict[str, Any], field: str) -> list[WorkflowValidatio
             )
         ]
     return []
+
+
+def _state_schema_errors(spec: WorkflowSpec) -> list[WorkflowValidationIssue]:
+    """Validate state-field schemas and reducer compatibility."""
+    if not spec.state_schema:
+        return []
+    issues: list[WorkflowValidationIssue] = []
+    if spec.schema_version == "1":
+        issues.append(
+            _issue(
+                "workflow.state_schema.requires_schema_v2",
+                "Shared state declarations require workflow schema version 2.",
+                field="schema_version",
+            )
+        )
+    for path in spec.state_schema:
+        declaration = spec.state_schema[path]
+        field = f"state_schema.{path}"
+        issues.extend(_schema_errors(declaration.schema_, f"{field}.schema"))
+        expected_type = {
+            StateReducer.APPEND: "array",
+            StateReducer.MERGE_DICT: "object",
+        }.get(declaration.reducer)
+        if expected_type is not None and declaration.schema_.get("type") != expected_type:
+            issues.append(
+                _issue(
+                    "workflow.state_schema.reducer_type_mismatch",
+                    f"Reducer '{declaration.reducer}' at '{path}' requires a JSON Schema of "
+                    f"type '{expected_type}'.",
+                    field=f"{field}.reducer",
+                )
+            )
+    return issues
 
 
 def _response_schema_errors(

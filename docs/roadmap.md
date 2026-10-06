@@ -72,16 +72,16 @@ are rejected explicitly rather than producing incomplete runtimes.
 
 ## V2.3 — Parallel state
 
-Status: contract defined; runtime not implemented.
+Status: typed state declarations and static parallel validation implemented; runtime not implemented.
 
 1. Infer one non-nested fan-out/fan-in region from ordinary unconditional edges; add no public
-   `PARALLEL` node.
+   `PARALLEL` node. **Static analysis implemented.**
 2. Compile convergence from an unconditional fan-out as an `all` dependency; preserve `any selected
    predecessor` convergence for exclusive condition routes.
 3. Add optional path-keyed `state_schema` declarations with the closed reducer set `replace`,
-   `append`, and `merge_dict`.
+   `append`, and `merge_dict`. **Implemented.**
 4. Reject concurrent writes to the same or overlapping paths unless the exact shared path has a
-   combinatory reducer. `replace` never resolves a concurrent conflict.
+   combinatory reducer. `replace` never resolves a concurrent conflict. **Implemented.**
 5. Keep merged state deterministic by declared branch order and reject duplicate `merge_dict` keys.
 6. Persist contextual branch identity and observation sequence without imposing a fake execution
    order.

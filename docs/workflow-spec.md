@@ -56,8 +56,8 @@ validated before its named fields are written atomically into state. Legacy `inp
 `output_path` configurations remain executable during migration.
 
 Multiple mappings do not enable parallel execution. Exclusive condition routes may converge. The
-proposed V2.3 contract below defines ordinary-edge fan-out/fan-in and explicit state reducers; it is
-not yet supported by the runtime.
+V2.3 contract below defines ordinary-edge fan-out/fan-in and explicit state reducers. Its typed
+declarations and static conflict validation are implemented; runtime execution is not yet supported.
 
 An output node always projects named values. The workflow `output_schema` is optional; when present,
 the runtime validates the complete projection before returning it.
@@ -113,7 +113,7 @@ versions, direct or indirect dependency recursion, and nesting beyond the config
 validation repeats these checks through an injected version resolver so the same compiler works in
 the worker, tests, and future artifact runtimes.
 
-## Proposed parallel state contract (V2.3, not implemented)
+## Parallel state contract (V2.3, validation implemented)
 
 Parallelism is inferred from ordinary edges: multiple unconditional successors form a fan-out and
 their convergence forms an `all` fan-in. Conditions remain exclusive routes; convergence after a

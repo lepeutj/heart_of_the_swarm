@@ -148,6 +148,8 @@ class WorkflowGraphFactory:
         """Build one graph while resolving registered capabilities up front."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
             raise TypeError("WorkflowGraphFactory requires a ValidatedWorkflowSpec.")
+        if workflow.parallel_region is not None:
+            raise RuntimeError("Parallel workflow execution is not implemented yet.")
         if any(node.type == NodeType.SUBWORKFLOW for node in workflow.nodes):
             raise RuntimeError("Subworkflow compilation requires WorkflowGraphFactory.acreate().")
 
@@ -178,6 +180,8 @@ class WorkflowGraphFactory:
         """Resolve immutable child versions and compile them as nested LangGraph graphs."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
             raise TypeError("WorkflowGraphFactory requires a ValidatedWorkflowSpec.")
+        if workflow.parallel_region is not None:
+            raise RuntimeError("Parallel workflow execution is not implemented yet.")
         version_stack = (workflow_version_id,) if workflow_version_id is not None else ()
         return await self._acreate(
             workflow,
