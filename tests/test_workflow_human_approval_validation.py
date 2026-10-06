@@ -45,7 +45,7 @@ def approval_workflow_data() -> dict:
     }
 
 
-def test_human_approval_contract_is_typed_but_not_runtime_available() -> None:
+def test_human_approval_contract_is_typed_and_runtime_available() -> None:
     workflow = WorkflowValidator([], []).validate(
         WorkflowSpec.model_validate(approval_workflow_data())
     )
@@ -57,7 +57,7 @@ def test_human_approval_contract_is_typed_but_not_runtime_available() -> None:
     capability = next(
         item for item in workflow_capabilities().nodes if item.type == "human_approval"
     )
-    assert capability.available is False
+    assert capability.available is True
 
 
 def test_human_approval_requires_schema_v2() -> None:

@@ -115,6 +115,7 @@ export interface WorkflowVersion {
 export type WorkflowRunStatus =
   | "queued"
   | "running"
+  | "interrupted"
   | "completed"
   | "failed"
   | "timed_out";
@@ -142,6 +143,28 @@ export interface WorkflowRunAccepted {
   workflow_version_id: string;
   workflow_version: number;
   status: WorkflowRunStatus;
+  thread_id?: string | null;
+  attempt_index?: number;
+  resumed_from_run_id?: string | null;
+  resume_checkpoint_id?: string | null;
+}
+
+export type WorkflowInterruptionStatus = "pending" | "resolved" | "cancelled";
+
+export interface WorkflowInterruption {
+  id: string;
+  workflow_version_id: string;
+  thread_id: string;
+  workflow_run_id: string;
+  node_id: string;
+  kind: "approval";
+  prompt: string;
+  response_schema: Record<string, unknown>;
+  checkpoint_id: string;
+  status: WorkflowInterruptionStatus;
+  response: { approved: boolean } | null;
+  created_at: string;
+  resolved_at: string | null;
 }
 
 export interface WorkflowRunEvent {
@@ -301,4 +324,20 @@ export function loadWorkflowRun(runId: string): Promise<WorkflowRun> {
 
 export function loadWorkflowRunEvents(runId: string): Promise<WorkflowRunEvent[]> {
   return request(`/api/v1/workflow-runs/${runId}/events`);
+}
+
+export function loadWorkflowInterruptions(
+  status: WorkflowInterruptionStatus = "pending",
+): Promise<WorkflowInterruption[]> {
+  return request(`/api/v1/workflow-interruptions?status=${encodeURIComponent(status)}`);
+}
+
+export function respondToWorkflowInterruption(
+  interruptionId: string,
+  approved: boolean,
+): Promise<WorkflowRunAccepted> {
+  return request(`/api/v1/workflow-interruptions/${interruptionId}/response`, {
+    method: "POST",
+    body: JSON.stringify({ approved }),
+  });
 }

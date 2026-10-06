@@ -4,6 +4,7 @@ export type NodeType =
   | "input"
   | "agent"
   | "supervisor"
+  | "human_approval"
   | "subworkflow"
   | "connector"
   | "condition"
@@ -128,7 +129,7 @@ export function toWorkflowSpec(
   return {
     schema_version: (
       edges.some((edge) => edge.data?.loop)
-      || nodes.some((node) => ["subworkflow", "supervisor"].includes(node.data.nodeType))
+      || nodes.some((node) => ["subworkflow", "supervisor", "human_approval"].includes(node.data.nodeType))
       || hasParallelFanOut
       || Object.keys(stateSchema).length > 0
     ) ? "2" : "1",
@@ -207,6 +208,11 @@ export function defaultConfig(
         workflow_version_id: "",
         inputs: { request: { from_state: "$.request" } },
         outputs: { result: { to_state: "$.result" } },
+      };
+    case "human_approval":
+      return {
+        prompt: "Approve this workflow result?",
+        output: { to_state: "$.approved" },
       };
     case "transform":
       return { assign: { "$.result": { from_state: "$.request" } } };

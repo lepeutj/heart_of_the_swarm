@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { request } from "./api";
+import { request, respondToWorkflowInterruption } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -25,5 +25,27 @@ describe("API responses", () => {
     )));
 
     await expect(request("/api/test")).rejects.toThrow("Invalid workflow");
+  });
+
+  it.each([true, false])("submits an approval response and returns the continuation run", async (approved) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      run_id: "resumed-run",
+      status: "queued",
+    }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const accepted = await respondToWorkflowInterruption("interrupt-1", approved);
+
+    expect(accepted.run_id).toBe("resumed-run");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/workflow-interruptions/interrupt-1/response",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ approved }),
+      }),
+    );
   });
 });

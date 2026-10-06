@@ -103,6 +103,34 @@ describe("toWorkflowSpec", () => {
     });
   });
 
+  it("configures a typed human approval node in schema V2", () => {
+    const config = defaultConfig("human_approval");
+    const nodes: EditorNode[] = [{
+      id: "approval",
+      position: { x: 0, y: 0 },
+      data: { label: "Approval", nodeType: "human_approval", config },
+    }];
+
+    const spec = toWorkflowSpec(
+      {
+        id: "47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+        name: "Approval workflow",
+        description: "Test",
+        inputSchema: { type: "object" },
+        outputSchema: null,
+        entrypoint: "approval",
+      },
+      nodes,
+      [],
+    );
+
+    expect(spec.schema_version).toBe("2");
+    expect(config).toEqual({
+      prompt: "Approve this workflow result?",
+      output: { to_state: "$.approved" },
+    });
+  });
+
   it("uses schema V2 for fan-out and serializes parallel state reducers", () => {
     const nodes: EditorNode[] = [
       { id: "input", position: { x: 0, y: 0 }, data: { label: "Input", nodeType: "input", config: {} } },

@@ -11,6 +11,7 @@ _SUPPORTED_NODE_TYPES = {
     NodeType.INPUT,
     NodeType.AGENT,
     NodeType.SUPERVISOR,
+    NodeType.HUMAN_APPROVAL,
     NodeType.CONNECTOR,
     NodeType.SUBWORKFLOW,
     NodeType.CONDITION,

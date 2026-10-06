@@ -691,6 +691,41 @@ function SupervisorEditor({
   );
 }
 
+function HumanApprovalEditor({ config, onChange }: {
+  config: JsonObject;
+  onChange: (config: JsonObject) => void;
+}) {
+  const output = asObject(config.output);
+  return (
+    <div className="typed-editor">
+      <p className="field-help">
+        Pause this workflow until an operator approves or rejects the request. The boolean response
+        is written to shared state only after durable resume.
+      </p>
+      <label>
+        Approval prompt
+        <textarea
+          value={asString(config.prompt)}
+          placeholder="Publish this report?"
+          onChange={(event) => onChange({ ...config, prompt: event.target.value })}
+        />
+      </label>
+      <label>
+        Response state path
+        <input
+          value={asString(output.to_state, "$.approved")}
+          placeholder="$.approved"
+          onChange={(event) => onChange({
+            ...config,
+            output: { to_state: event.target.value },
+          })}
+        />
+      </label>
+      <p className="field-help">The response schema is fixed to {`{ approved: boolean }`} in V2.5a.</p>
+    </div>
+  );
+}
+
 export function NodeInspector({
   node,
   toolNames,
@@ -749,6 +784,12 @@ export function NodeInspector({
         <SubworkflowEditor
           config={config}
           versions={workflowVersions}
+          onChange={(next) => onChange({ config: next })}
+        />
+      )}
+      {node.data.nodeType === "human_approval" && (
+        <HumanApprovalEditor
+          config={config}
           onChange={(next) => onChange({ config: next })}
         />
       )}

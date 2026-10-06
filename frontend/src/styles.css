@@ -141,6 +141,10 @@ textarea { min-height: 76px; resize: vertical; font-family: ui-monospace, SFMono
 .run-events { display: grid; gap: 4px; max-height: 180px; overflow: auto; padding-left: 20px; }
 .run-events li { color: #8fa097; font-size: 11px; }
 .run-events strong { margin-right: 6px; color: #c7d5cd; }
+.approval-request { margin: 14px 0; padding: 14px; border: 1px solid #8c713e; border-radius: 8px; background: #1e1a11; }
+.approval-request h3 { margin: 4px 0 8px; font-size: 15px; }
+.approval-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.approval-actions .danger { width: auto; margin-top: 0; }
 .react-flow__node.node-run-running { box-shadow: 0 0 0 2px #f4c66d; }
 .react-flow__node.node-run-completed { box-shadow: 0 0 0 2px #79d19c; }
 .react-flow__node.node-run-failed { box-shadow: 0 0 0 2px #ff938c; }

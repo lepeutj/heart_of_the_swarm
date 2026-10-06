@@ -94,8 +94,10 @@ matched that route. V2.5a now compiles a typed `HUMAN_APPROVAL` node to LangGrap
 creates a durable checkpoint, persists one pending interruption, and releases the current worker
 attempt as interrupted without writing an approval value into workflow state. The application
 service now validates one boolean response, atomically resolves the interruption, creates a new run
-in the same execution thread, and resumes LangGraph without replaying completed nodes. The HTTP API
-and React editing are not implemented yet.
+in the same execution thread, and resumes LangGraph without replaying completed nodes. HTTP adapters
+list and read interruption state and accept one boolean response. React editing and run interaction
+now expose a typed approval node, show pending requests, submit approve/reject decisions, and follow
+the returned continuation run while preserving prior attempt events.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow

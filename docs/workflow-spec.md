@@ -30,8 +30,10 @@ runtime checkpoints before a pending interruption is persisted and the worker re
 run as interrupted. Nothing is written to the configured output path until a future valid response
 resumes execution. The application service accepts one response atomically, creates a continuation
 run in the same thread, and invokes LangGraph with `Command(resume=...)` without replaying prior
-nodes. The node remains unavailable in the React catalogue until its typed inspector and HTTP
-response flow exist.
+nodes. The React catalogue and typed inspector edit the static prompt and boolean destination. The
+run panel displays a pending approval, submits approve/reject through the HTTP API, and follows the
+returned continuation run. Dynamic approval context sourced from workflow state is not part of the
+V2.5a contract.
 
 Connector arguments may be literals or state references. Capability input schemas are catalogue
 metadata used by the editor and by LangChain validation. MCP content and structured artifacts are
