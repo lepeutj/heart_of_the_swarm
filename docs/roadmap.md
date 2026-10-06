@@ -121,9 +121,11 @@ handoffs, quorum, cancellation, and human handoffs remain deferred.
 
 ## V2.5 — Interaction
 
-V2.5a human approval semantics are documented; implementation has not started.
+V2.5a human approval semantics are documented. Its typed node contract and durable interruption
+persistence are implemented; runtime interruption, API, and React remain pending.
 
 1. Add the typed `HUMAN_APPROVAL` node and neutral persisted `WorkflowInterruption` lifecycle.
+   **Implemented as a static contract and atomic persistence boundary.**
 2. Interrupt through LangGraph, persist the exact checkpoint reference, and release the worker.
 3. Validate and atomically accept one boolean response before creating a resumed run in the same
    execution thread.

@@ -155,6 +155,32 @@ class WorkflowRunRecord(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WorkflowInterruptionRecord(Base):
+    __tablename__ = "workflow_interruptions"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "node_id", "checkpoint_id"),
+        CheckConstraint("kind IN ('approval')", name="ck_workflow_interruptions_kind"),
+        CheckConstraint(
+            "status IN ('pending', 'resolved', 'cancelled')",
+            name="ck_workflow_interruptions_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
+    thread_id: Mapped[str] = mapped_column(ForeignKey("execution_threads.id"), index=True)
+    workflow_run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
+    node_id: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(20))
+    prompt: Mapped[str] = mapped_column(String(1000))
+    response_schema: Mapped[dict[str, Any]] = mapped_column(JSON)
+    checkpoint_id: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    response: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class WorkflowRunEventRecord(Base):
     __tablename__ = "workflow_run_events"
 

@@ -3,8 +3,8 @@
 `WorkflowSpec` is the portable executable graph edited by React and interpreted by LangGraph.
 It contains no layout, database records, framework objects, credentials, or executable source.
 
-Schema v1 remains frozen and acyclic. Schema v2 adds one bounded conditional back edge and immutable
-subworkflow composition. Other V2 contracts are tracked in
+Schema v1 remains frozen and acyclic. Schema v2 adds controlled loops, composition, parallel state,
+supervisor routing, and durable interaction contracts. Detailed V2 semantics are tracked in
 [`v2-runtime-semantics.md`](v2-runtime-semantics.md).
 
 ## Nodes
@@ -14,6 +14,7 @@ subworkflow composition. Other V2 contracts are tracked in
 | `input` | Initialize and validate object input | Product adapter |
 | `agent` | Inline `AgentSpec` or immutable `AgentVersion`, named mappings | `AgentRunner` / `create_agent` |
 | `supervisor` | Bounded single-target routing through LangGraph `Command` | V2.4a |
+| `human_approval` | One boolean operator decision written to state | V2.5a persistence only |
 | `connector` | One registered capability invocation, named mappings | Capability registry |
 | `subworkflow` | Immutable `WorkflowVersion`, isolated named mappings | LangGraph subgraph |
 | `transform` | Restricted state assignments | Product adapter |
@@ -23,6 +24,11 @@ subworkflow composition. Other V2 contracts are tracked in
 Agent tools are selected by the model. Connectors deterministically invoke a capability once. Both
 use the same allow-listed registry implementations. Built-in tools and MCP-discovered tools are
 indistinguishable to workflow configuration and execution.
+
+`HUMAN_APPROVAL` is currently a validation-only node contract and is not reported as runtime
+available. Its prompt and output mapping can be versioned, and its durable interruption record can
+be persisted and resolved exactly once. Graph execution through LangGraph `interrupt()`, API
+resolution, and React editing remain pending.
 
 Connector arguments may be literals or state references. Capability input schemas are catalogue
 metadata used by the editor and by LangChain validation. MCP content and structured artifacts are

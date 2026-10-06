@@ -21,6 +21,11 @@ from heart_of_the_swarm.workflows.execution import (
     WorkflowVersionRunner,
     validate_workflow_input,
 )
+from heart_of_the_swarm.workflows.interruptions import (
+    ApprovalResponse,
+    WorkflowInterruptionDetail,
+    WorkflowInterruptionStatus,
+)
 from heart_of_the_swarm.workflows.spec import (
     ParallelBranch,
     ParallelRegion,
@@ -44,6 +49,7 @@ from heart_of_the_swarm.workflows.validation import (
 
 __all__ = [
     "AgentVersionResolver",
+    "ApprovalResponse",
     "ConditionOperator",
     "ConditionSpec",
     "ExecutionResult",
@@ -64,6 +70,8 @@ __all__ = [
     "WorkflowExecutionIssue",
     "WorkflowGraph",
     "WorkflowGraphFactory",
+    "WorkflowInterruptionDetail",
+    "WorkflowInterruptionStatus",
     "WorkflowEventSink",
     "WorkflowExecutionEvent",
     "WorkflowVersionRunner",

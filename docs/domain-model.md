@@ -44,6 +44,8 @@ ValidatedWorkflowSpec → WorkflowGraphFactory → LangGraph StateGraph
   it contains no LangGraph state.
 - `WorkflowRunRecord`: one bounded execution period in a thread, with an attempt index and optional
   resume lineage.
+- `WorkflowInterruptionRecord`: one durable human request bound to an immutable workflow version,
+  execution thread, run, node, and exact checkpoint; resolution is accepted at most once.
 - `MCPServerRecord`: persisted HTTP discovery source shared by API and worker processes.
 - `WorkflowEditorDocument`: node positions and viewport; never affects execution.
 - `RunRecord`: lifecycle for one immutable agent or workflow version.

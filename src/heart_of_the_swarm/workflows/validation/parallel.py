@@ -3,6 +3,7 @@ from collections import defaultdict, deque
 from heart_of_the_swarm.workflows.configs import (
     AgentNodeConfig,
     ConnectorNodeConfig,
+    HumanApprovalNodeConfig,
     SubworkflowNodeConfig,
     TransformNodeConfig,
 )
@@ -120,6 +121,8 @@ def node_write_paths(node: ValidatedWorkflowNode) -> tuple[str, ...]:
         return tuple(binding.to_state for binding in (config.outputs or {}).values())
     if isinstance(config, (ConnectorNodeConfig, SubworkflowNodeConfig)):
         return tuple(binding.to_state for binding in config.outputs.values())
+    if isinstance(config, HumanApprovalNodeConfig):
+        return (config.output.to_state,)
     if isinstance(config, TransformNodeConfig):
         return tuple(config.assign)
     return ()

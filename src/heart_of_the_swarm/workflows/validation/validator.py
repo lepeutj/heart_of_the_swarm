@@ -10,6 +10,7 @@ from heart_of_the_swarm.workflows.configs import (
     NODE_CONFIG_TYPES,
     AgentNodeConfig,
     ConnectorNodeConfig,
+    HumanApprovalNodeConfig,
     InlineAgentSource,
     SubworkflowNodeConfig,
     SupervisorNodeConfig,
@@ -412,6 +413,16 @@ class WorkflowValidator:
                 _issue(
                     "workflow.subworkflow.requires_schema_v2",
                     "Subworkflow nodes require workflow schema version 2.",
+                    field="schema_version",
+                )
+            )
+        if spec.schema_version == "1" and any(
+            isinstance(node.config, HumanApprovalNodeConfig) for node in nodes
+        ):
+            issues.append(
+                _issue(
+                    "workflow.human_approval.requires_schema_v2",
+                    "Human approval nodes require workflow schema version 2.",
                     field="schema_version",
                 )
             )

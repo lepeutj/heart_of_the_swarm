@@ -131,6 +131,13 @@ class SupervisorNodeConfig(NodeConfig):
     max_handoffs_ref: Literal["execution_policy.max_handoffs"] = "execution_policy.max_handoffs"
 
 
+class HumanApprovalNodeConfig(NodeConfig):
+    """Declare one boolean human decision and its business-state destination."""
+
+    prompt: str = Field(min_length=1, max_length=1_000)
+    output: OutputBinding
+
+
 class ConnectorNodeConfig(NodeConfig):
     capability_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]*$", max_length=100)
     inputs: dict[DataFieldName, Any] = Field(default_factory=dict, max_length=50)
@@ -187,6 +194,7 @@ WorkflowNodeConfig = (
     InputNodeConfig
     | AgentNodeConfig
     | SupervisorNodeConfig
+    | HumanApprovalNodeConfig
     | ConnectorNodeConfig
     | SubworkflowNodeConfig
     | ConditionNodeConfig
@@ -198,6 +206,7 @@ NODE_CONFIG_TYPES: dict[NodeType, type[NodeConfig]] = {
     NodeType.INPUT: InputNodeConfig,
     NodeType.AGENT: AgentNodeConfig,
     NodeType.SUPERVISOR: SupervisorNodeConfig,
+    NodeType.HUMAN_APPROVAL: HumanApprovalNodeConfig,
     NodeType.LLM: AgentNodeConfig,
     NodeType.CONNECTOR: ConnectorNodeConfig,
     NodeType.SUBWORKFLOW: SubworkflowNodeConfig,
