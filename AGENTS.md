@@ -43,9 +43,11 @@ asked otherwise.
 
 ## Development
 
-- Follow KISS: choose the smallest clear implementation that satisfies the current contract. Avoid
-  speculative abstractions, duplicated framework features, and flexibility without an active use
-  case.
+- Follow KISS: choose the smallest clear implementation that satisfies correctness, observability,
+  and known performance constraints. Avoid speculative abstractions, duplicated framework features,
+  and flexibility without an active use case. Do not introduce obviously unbounded work, unnecessary
+  deep copies, or repeated computation that can be performed once at validation or compilation time.
+  Measure real workloads before adding caches, schedulers, or other performance machinery.
 - Document non-obvious business and runtime functions with concise, precise docstrings. Add a short
   explanatory comment around a complex framework boundary or code block when its purpose or
   constraint is not evident from the code. Explain responsibility and intent; do not restate syntax
