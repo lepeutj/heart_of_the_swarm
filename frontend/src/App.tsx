@@ -385,7 +385,7 @@ export default function App() {
         source: edge.source,
         target: edge.target,
         label: edge.label,
-        data: { condition: edge.condition ?? null },
+        data: { condition: edge.condition ?? null, loop: edge.loop ?? null },
       })));
       setRevision(saved.revision);
       setPublishedVersion(latestVersion);

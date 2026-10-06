@@ -192,6 +192,33 @@ class WorkflowValidator:
             incoming[edge.target].append(edge)
             outgoing[edge.source].append(edge)
 
+        loop_edges = [edge for edge in valid_edges if edge.loop is not None]
+        if spec.schema_version == "1" and loop_edges:
+            issues.append(
+                _issue(
+                    "workflow.loop.requires_schema_v2",
+                    "Loop edges require workflow schema version 2.",
+                    field="schema_version",
+                )
+            )
+        if len(loop_edges) > 1:
+            issues.append(
+                _issue(
+                    "workflow.loop.multiple_not_supported",
+                    "The first V2 runtime supports exactly one declared loop edge.",
+                    field="edges",
+                )
+            )
+        loop_ids = [edge.loop.id for edge in loop_edges if edge.loop is not None]
+        if len(loop_ids) != len(set(loop_ids)):
+            issues.append(
+                _issue(
+                    "workflow.loop.duplicate_id",
+                    "Loop identifiers must be unique.",
+                    field="edges",
+                )
+            )
+
         for node in unique_nodes.values():
             node_incoming = incoming[node.id]
             node_outgoing = outgoing[node.id]
@@ -216,6 +243,16 @@ class WorkflowValidator:
                     )
                 )
             if node.type == NodeType.CONDITION:
+                targets = [edge.target for edge in node_outgoing]
+                if len(targets) != len(set(targets)):
+                    issues.append(
+                        _issue(
+                            "workflow.condition.duplicate_target",
+                            f"Condition node '{node.id}' must use a distinct target per route.",
+                            node.id,
+                            "edges",
+                        )
+                    )
                 if not conditional:
                     issues.append(
                         _issue(
@@ -262,9 +299,20 @@ class WorkflowValidator:
                             "edges",
                         )
                     )
+                if any(edge.loop is not None for edge in node_outgoing):
+                    issues.append(
+                        _issue(
+                            "workflow.loop.source_not_condition",
+                            f"Loop edge source '{node.id}' must be a condition node.",
+                            node.id,
+                            "edges",
+                        )
+                    )
 
         graph = adjacency(unique_nodes, valid_edges)
-        cycle = find_cycle(graph)
+        forward_edges = [edge for edge in valid_edges if edge.loop is None]
+        forward_graph = adjacency(unique_nodes, forward_edges)
+        cycle = find_cycle(forward_graph)
         if cycle:
             issues.append(
                 _issue(
@@ -273,6 +321,23 @@ class WorkflowValidator:
                     field="edges",
                 )
             )
+        for index, edge in enumerate(spec.edges):
+            if (
+                edge.loop is None
+                or edge.source not in unique_nodes
+                or edge.target not in unique_nodes
+            ):
+                continue
+            reachable_from_target = reachable_nodes(forward_graph, edge.target)
+            if edge.source not in reachable_from_target:
+                issues.append(
+                    _issue(
+                        "workflow.loop.not_back_edge",
+                        f"Loop edge '{edge.source} -> {edge.target}' does not close a cycle.",
+                        edge.source,
+                        f"edges.{index}.loop",
+                    )
+                )
         reachable = reachable_nodes(graph, spec.entrypoint)
         for node_id in sorted(set(unique_nodes) - reachable):
             issues.append(

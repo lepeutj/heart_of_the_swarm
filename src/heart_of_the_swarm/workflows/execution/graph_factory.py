@@ -12,6 +12,10 @@ from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionResolver
+from heart_of_the_swarm.workflows.execution.errors import (
+    WorkflowExecutionError,
+    WorkflowExecutionIssue,
+)
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
 from heart_of_the_swarm.workflows.execution.node_runner import WorkflowNodeRunner
 from heart_of_the_swarm.workflows.spec import (
@@ -27,6 +31,7 @@ class _GraphState(TypedDict, total=False):
     executed_nodes: tuple[str, ...]
     selected_target: str
     output: Any
+    loop_iterations: dict[str, int]
 
 
 class WorkflowGraph:
@@ -72,6 +77,7 @@ class WorkflowGraph:
             graph_input = {
                 "data": deepcopy(workflow_input),
                 "executed_nodes": (),
+                "loop_iterations": {},
             }
         result = await self.graph.ainvoke(
             graph_input,
@@ -93,6 +99,7 @@ class WorkflowGraph:
             executed_nodes=tuple(values["executed_nodes"]),
             interrupted=bool(snapshot and snapshot.next),
             checkpoint_id=saved_config.get("checkpoint_id"),
+            loop_iterations=dict(values.get("loop_iterations", {})),
         )
 
 
@@ -191,6 +198,27 @@ class WorkflowGraphFactory:
             }
             if result.selected_target is not None:
                 update["selected_target"] = result.selected_target
+                selected_edge = next(
+                    edge for edge in outgoing_edges if edge.target == result.selected_target
+                )
+                if selected_edge.loop is not None:
+                    iterations = dict(state.get("loop_iterations", {}))
+                    next_iteration = iterations.get(selected_edge.loop.id, 0) + 1
+                    if next_iteration > selected_edge.loop.max_iterations:
+                        raise WorkflowExecutionError(
+                            WorkflowExecutionIssue(
+                                code="workflow.execution.iteration_limit",
+                                message=(
+                                    f"Loop '{selected_edge.loop.id}' exceeded its limit of "
+                                    f"{selected_edge.loop.max_iterations} iterations."
+                                ),
+                                workflow_id=runner.workflow.id,
+                                node_id=node.id,
+                                node_type=node.type,
+                            )
+                        )
+                    iterations[selected_edge.loop.id] = next_iteration
+                    update["loop_iterations"] = iterations
             if result.is_output:
                 update["output"] = result.output
             return update

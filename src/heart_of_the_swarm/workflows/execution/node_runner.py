@@ -85,13 +85,6 @@ class WorkflowNodeRunner:
         executed_nodes: tuple[str, ...],
     ) -> NodeExecution:
         """Execute one node with normalized errors and trajectory events."""
-        if node.id in executed_nodes:
-            self._raise(
-                code="workflow.execution.repeated_node",
-                message=f"Node '{node.id}' was selected more than once.",
-                node=node,
-            )
-
         current_execution = (*executed_nodes, node.id)
         await self._record_node("node.started", node)
         try:

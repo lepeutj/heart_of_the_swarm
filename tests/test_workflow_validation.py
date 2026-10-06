@@ -169,6 +169,12 @@ def test_condition_rejects_multiple_fallback_edges() -> None:
     assert "workflow.condition.multiple_fallbacks" in issue_codes(data)
 
 
+def test_condition_rejects_routes_with_the_same_target() -> None:
+    data = workflow_data()
+    data["edges"][-1]["target"] = data["edges"][4]["target"]
+    assert "workflow.condition.duplicate_target" in issue_codes(data)
+
+
 def test_conditional_edge_is_rejected_on_regular_node() -> None:
     data = workflow_data()
     data["edges"][0]["condition"] = {
@@ -185,6 +191,36 @@ def test_cycle_is_rejected_with_machine_readable_error() -> None:
     codes = issue_codes(data)
     assert "workflow.cycle_detected" in codes
     assert "workflow.output.has_outgoing_edge" in codes
+
+
+def test_v2_accepts_one_bounded_conditional_back_edge() -> None:
+    data = workflow_data()
+    data["schema_version"] = "2"
+    data["edges"][-1] = {
+        "source": "verified",
+        "target": "summarize",
+        "loop": {"id": "revision", "max_iterations": 3},
+    }
+    data["nodes"] = [node for node in data["nodes"] if node["id"] != "fallback"]
+
+    workflow = validator().validate(WorkflowSpec.model_validate(data))
+
+    assert workflow.schema_version == "2"
+    assert workflow.edges[-1].loop is not None
+    assert workflow.edges[-1].loop.id == "revision"
+
+
+def test_loop_contract_rejects_v1_forward_and_multiple_loop_edges() -> None:
+    data = workflow_data()
+    data["edges"][-1]["loop"] = {"id": "revision", "max_iterations": 3}
+    assert "workflow.loop.requires_schema_v2" in issue_codes(data)
+
+    data["schema_version"] = "2"
+    assert "workflow.loop.not_back_edge" in issue_codes(data)
+
+    data["edges"][-1]["target"] = "summarize"
+    data["edges"][4]["loop"] = {"id": "exit", "max_iterations": 1}
+    assert "workflow.loop.multiple_not_supported" in issue_codes(data)
 
 
 def test_unreachable_node_and_path_without_output_are_rejected() -> None:

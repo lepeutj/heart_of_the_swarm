@@ -76,7 +76,9 @@ unavailable.
 The workflow runtime image has been built and invoked with a real read-only artifact. Its
 database-independent result and nested MLflow trace were verified through Docker. V1 is frozen.
 V2 first introduces execution policies, threads, durable LangGraph checkpoints, controlled cycles,
-subworkflows, and reducers. Multi-agent handoffs and interaction build on those primitives; secure
+subworkflows, and reducers. V2.1 durable execution threads and explicit resume are complete. V2.2a
+adds one checkpoint-safe bounded conditional back edge; immutable subworkflows are next.
+Multi-agent handoffs and interaction build on those primitives; secure
 remote execution and deployment lifecycle management follow after the runtime semantics are stable.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service

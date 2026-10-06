@@ -1,12 +1,10 @@
-# WorkflowSpec v1
+# WorkflowSpec
 
 `WorkflowSpec` is the portable executable graph edited by React and interpreted by LangGraph.
 It contains no layout, database records, framework objects, credentials, or executable source.
 
-Schema v1 remains frozen and acyclic. Proposed V2 thread, checkpoint, loop, subworkflow, reducer,
-handoff, and streaming contracts are documented separately in
-[`v2-runtime-semantics.md`](v2-runtime-semantics.md). Implementations must not reinterpret existing
-v1 documents with new execution semantics.
+Schema v1 remains frozen and acyclic. Schema v2 currently adds one bounded conditional back edge.
+Other V2 contracts are tracked in [`v2-runtime-semantics.md`](v2-runtime-semantics.md).
 
 ## Nodes
 
@@ -69,7 +67,26 @@ set `equals`, `not_equals`, `exists`, `not_exists`, `contains`, `greater_than`, 
 Arbitrary Python, templates, JSONPath filters, callbacks, and imports are forbidden.
 
 Condition routes are evaluated in edge order. The first match wins; exactly one unconditional edge
-is the fallback. Schema v1 is acyclic.
+is the fallback. Routes from one condition must have distinct targets.
+
+## Bounded loop edge (schema v2)
+
+A loop is metadata on a conditional back edge, not a node or a custom traversal engine:
+
+```yaml
+- source: review
+  target: output
+  condition: {path: $.approved, operator: equals, value: true}
+
+- source: review
+  target: draft
+  loop: {id: revision, max_iterations: 3}
+```
+
+The first runtime accepts exactly one loop edge. Its source must be a condition, removing it must
+leave a DAG, and its target must reach its source through forward edges. The iteration counter is
+runtime-owned state, persists in LangGraph checkpoints, and exceeding the bound raises
+`workflow.execution.iteration_limit`. Nested and overlapping loops remain unsupported.
 
 ## Validation and execution
 

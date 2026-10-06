@@ -23,13 +23,23 @@ class WorkflowEdge(BaseModel):
     source: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$", max_length=64)
     target: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$", max_length=64)
     condition: ConditionSpec | None = None
+    loop: "LoopSpec | None" = None
     label: str | None = Field(default=None, max_length=100)
+
+
+class LoopSpec(BaseModel):
+    """Bound one declared conditional back edge without introducing a loop node."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$", max_length=64)
+    max_iterations: int = Field(ge=1, le=100)
 
 
 class WorkflowSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1"]
+    schema_version: Literal["1", "2"]
     id: UUID
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1_000)
@@ -52,7 +62,7 @@ class ValidatedWorkflowNode(BaseModel):
 class ValidatedWorkflowSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1"]
+    schema_version: Literal["1", "2"]
     id: UUID
     name: str
     description: str

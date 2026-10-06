@@ -3,10 +3,11 @@
 Heart of the Swarm turns declarative agent and workflow configuration into tested, traced,
 versioned, and deployable LangChain/LangGraph runtimes.
 
-Before significant changes, read `PROJECT.md`, `docs/roadmap.md`, `docs/decisions.md`, and the
-relevant contract document. When local planning files such as `tasks/current.md` or
-`reports/latest.md` are present, use them as additional context. Do not silently replace accepted
-decisions or redesign unrelated code.
+Before significant changes, read `PROJECT.md`, the active milestone in `docs/roadmap.md`, the
+concise `docs/decisions.md` index, and only the contract sections relevant to the task. When local
+planning files such as `tasks/current.md` or `reports/latest.md` are present, read those first to
+avoid reopening completed work. Do not reread deferred sections without a concrete need, silently
+replace accepted decisions, or redesign unrelated code.
 
 ## Language
 

@@ -41,6 +41,36 @@ describe("toWorkflowSpec", () => {
       config: { output_path: "$.result" },
     });
     expect(spec.edges[0]).toEqual({ source: "input", target: "output", label: "done" });
+    expect(spec.schema_version).toBe("1");
+  });
+
+  it("uses schema V2 and serializes a bounded loop edge", () => {
+    const nodes: EditorNode[] = [
+      { id: "review", position: { x: 0, y: 0 }, data: { label: "Review", nodeType: "condition", config: {} } },
+      { id: "draft", position: { x: 100, y: 0 }, data: { label: "Draft", nodeType: "agent", config: {} } },
+    ];
+    const edges: EditorEdge[] = [{
+      id: "loop",
+      source: "review",
+      target: "draft",
+      data: { loop: { id: "revision", max_iterations: 3 } },
+    }];
+
+    const spec = toWorkflowSpec(
+      {
+        id: "47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+        name: "Review loop",
+        description: "Test",
+        inputSchema: { type: "object" },
+        outputSchema: null,
+        entrypoint: "draft",
+      },
+      nodes,
+      edges,
+    );
+
+    expect(spec.schema_version).toBe("2");
+    expect(spec.edges[0].loop).toEqual({ id: "revision", max_iterations: 3 });
   });
 
   it("configures an inline agent with the shared AgentSpec", () => {

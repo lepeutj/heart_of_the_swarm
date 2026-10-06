@@ -20,12 +20,13 @@ export type EditorNode = Node<WorkflowNodeData>;
 
 export interface WorkflowEdgeData extends Record<string, unknown> {
   condition?: JsonObject | null;
+  loop?: { id: string; max_iterations: number } | null;
 }
 
 export type EditorEdge = Edge<WorkflowEdgeData>;
 
 export interface WorkflowSpec {
-  schema_version: "1";
+  schema_version: "1" | "2";
   id: string;
   name: string;
   description: string;
@@ -41,6 +42,7 @@ export interface WorkflowSpec {
     source: string;
     target: string;
     condition?: JsonObject;
+    loop?: { id: string; max_iterations: number };
     label?: string;
   }>;
   entrypoint: string;
@@ -86,7 +88,7 @@ export function toWorkflowSpec(
   edges: EditorEdge[],
 ): WorkflowSpec {
   return {
-    schema_version: "1",
+    schema_version: edges.some((edge) => edge.data?.loop) ? "2" : "1",
     id: document.id,
     name: document.name,
     description: document.description,
@@ -103,6 +105,7 @@ export function toWorkflowSpec(
       source: edge.source,
       target: edge.target,
       ...(edge.data?.condition ? { condition: edge.data.condition } : {}),
+      ...(edge.data?.loop ? { loop: edge.data.loop } : {}),
       ...(edge.label ? { label: String(edge.label) } : {}),
     })),
   };

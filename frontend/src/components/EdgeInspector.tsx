@@ -27,6 +27,15 @@ function conditionObject(edge: EditorEdge): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : null;
 }
 
+function loopObject(edge: EditorEdge): { id: string; max_iterations: number } | null {
+  const value = edge.data?.loop;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return {
+    id: String(value.id ?? "revision"),
+    max_iterations: Number(value.max_iterations ?? 3),
+  };
+}
+
 function ConditionValue({ value, onApply }: { value: unknown; onApply: (value: unknown) => void }) {
   const [text, setText] = useState(JSON.stringify(value ?? ""));
 
@@ -57,10 +66,15 @@ export function EdgeInspector({
   onDelete,
 }: EdgeInspectorProps) {
   const condition = conditionObject(edge);
+  const loop = loopObject(edge);
   const requiresValue = condition && !["exists", "not_exists"].includes(String(condition.operator));
 
   function setCondition(next: Record<string, unknown> | null) {
     onChange({ data: { ...edge.data, condition: next } });
+  }
+
+  function setLoop(next: { id: string; max_iterations: number } | null) {
+    onChange({ data: { ...edge.data, loop: next } });
   }
 
   return (
@@ -108,6 +122,24 @@ export function EdgeInspector({
             </>
           )}
           <p className="field-help">Conditional routes are evaluated in edge order. Exactly one outgoing edge must be the fallback.</p>
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={loop !== null}
+              onChange={(event) => setLoop(event.target.checked ? {
+                id: "revision",
+                max_iterations: 3,
+              } : null)}
+            />
+            Bounded loop back edge
+          </label>
+          {loop && (
+            <>
+              <label>Loop ID<input value={loop.id} onChange={(event) => setLoop({ ...loop, id: event.target.value })} /></label>
+              <label>Maximum iterations<input type="number" min="1" max="100" value={loop.max_iterations} onChange={(event) => setLoop({ ...loop, max_iterations: Number(event.target.value) })} /></label>
+              <p className="field-help">This route may return to an earlier node. The runtime stops it after the declared number of traversals.</p>
+            </>
+          )}
         </div>
       ) : (
         <p className="field-help">This is an unconditional workflow transition.</p>

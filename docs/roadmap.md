@@ -44,6 +44,8 @@ agent loops to LangChain and orchestration to LangGraph. The normative runtime c
 
 ## V2.1 — Runtime semantics
 
+Status: complete.
+
 1. Introduce `ExecutionPolicy` independently from future deployment limits.
 2. Persist `ExecutionThread` separately from `WorkflowRun`.
 3. Add an injected durable LangGraph checkpointer.
@@ -56,8 +58,8 @@ selected checkpoint, and both traces share the product thread identifier.
 
 ## V2.2 — Controlled composition
 
-1. Support one bounded conditional back edge without adding a `LOOP` node.
-2. Add immutable `SUBWORKFLOW` references with typed input/output mappings.
+1. V2.2a: support one bounded conditional back edge without adding a `LOOP` node. **Implemented.**
+2. V2.2b: add immutable `SUBWORKFLOW` references with typed input/output mappings.
 3. Reject recursive subworkflow dependencies and bound nesting depth.
 4. Preserve execution counters, traces, and events across nested workflows.
 

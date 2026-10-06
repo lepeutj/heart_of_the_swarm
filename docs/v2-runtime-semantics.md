@@ -1,45 +1,21 @@
 # V2 runtime semantics
 
-## Goal
+This is the compact V2 contract. Implemented features are marked explicitly; later sections are
+design constraints, not claims of runtime support.
 
-V2 extends the acyclic V1 workflow into a stateful, durable, and composable agent graph without
-reimplementing LangChain agent loops or LangGraph orchestration.
+## Boundaries
 
-```text
-WorkflowVersion
-        ↓
-ExecutionThread
-        ↓ one or more
-WorkflowRun
-        ↓
-LangGraph + checkpointer
-        ↓
-agents / connectors / subworkflows
-```
+- Specs contain JSON data only: no LangGraph objects, callables, credentials, or source code.
+- LangChain `create_agent` owns autonomous model/tool loops.
+- LangGraph owns traversal, checkpoints, routing, interrupts, streaming, and parallel scheduling.
+- The product owns declarations, validation, versions, policy, lifecycle, and business metadata.
+- Checkpoints, product runs, and MLflow traces are related but never substitute for one another.
+- Successful external side effects are not replayed automatically without a known idempotency
+  contract.
 
-This document defines the target contracts. Features become available only when their validation,
-runtime adapter, persistence, observability, tests, and editor representation are complete.
+## V2.1 — Durable execution (implemented)
 
-## Non-negotiable boundaries
-
-- `WorkflowSpec` remains JSON-serializable and contains no LangGraph objects, Python callables,
-  credentials, or executable source.
-- LangChain `create_agent` owns every autonomous model/tool loop.
-- LangGraph owns traversal, checkpointing, routing, interrupts, streaming, and parallel scheduling.
-- Heart of the Swarm owns declarations, validation, immutable versions, policies, lifecycle, and
-  product metadata.
-- An `AGENT` remains an opaque callable in the first V2 milestones. Exposing its internal graph is a
-  later adapter, not a change to `AgentSpec`.
-- Dynamic routes and reducers use closed allow-lists. A model cannot provide arbitrary node names,
-  state paths, functions, or framework configuration.
-- Checkpoints are technical execution state. They do not replace product runs, audit events, or
-  MLflow traces.
-- A successful external side effect must never be replayed automatically unless its idempotency
-  contract is known.
-
-## ExecutionPolicy
-
-Execution limits are separate from container and network limits.
+### Execution policy
 
 ```yaml
 execution_policy:
@@ -47,349 +23,120 @@ execution_policy:
   recursion_limit: 100
 ```
 
-Initial fields:
+Both values are positive and application-bounded. Exhaustion produces a structured execution
+failure. CPU, memory, network, filesystem, and placement belong to a future deployment policy.
 
-| Field | Meaning |
-| --- | --- |
-| `timeout_seconds` | Wall-clock limit for one run |
-| `recursion_limit` | LangGraph recursion/step limit |
-
-Rules:
-
-- all values are positive and bounded by application-level maximums;
-- deployment policy may lower an execution limit but never raise an application maximum;
-- exhausting a limit produces a typed terminal or interrupted result, never an unstructured crash;
-- model/tool-call and loop counters will be added only when they can share one reliable counter
-  across nested agents and subworkflows;
-- monetary budgets remain deferred until provider usage and pricing data are reliable.
-
-`DeploymentPolicy` is a separate future contract for CPU, memory, filesystem, network, concurrency,
-and allowed hosts.
-
-## ExecutionThread and WorkflowRun
-
-An `ExecutionThread` owns resumable context. A `WorkflowRun` records one invocation attempt in that
-context.
+### Thread, run, and checkpoint
 
 ```text
-ExecutionThread #42
-├── Run 1 → interrupted
-├── Run 2 → failed
-└── Run 3 → completed
+ExecutionThread
+├── WorkflowRun #1 → interrupted or failed
+└── WorkflowRun #2 → resumed → completed
 ```
 
-Minimum thread record:
+- `ExecutionThread` pins one immutable `WorkflowVersion` and owns logical continuity.
+- `WorkflowRun` is one bounded attempt with `attempt_index`, `resumed_from_run_id`, and optional
+  `resume_checkpoint_id`.
+- The product creates the thread ID and passes it to LangGraph as `thread_id`.
+- Resume creates a new run and MLflow trace in the same thread; an old run is never reopened.
+- The selected checkpoint must belong to the same thread and workflow version.
+- The checkpointer is injected into `WorkflowVersionRunner`; the runner does not load repositories.
+- SQLite and PostgreSQL use official LangGraph checkpointer implementations.
+- A crash never starts an automatic replay. Explicit resume uses a committed checkpoint.
+
+Minimum audit events are `thread.created`, `workflow.queued`, `workflow.started`,
+`checkpoint.created`, `workflow.interrupted`, `workflow.failed`, `workflow.resumed`, and
+`workflow.completed`. Product audit stores checkpoint references, not checkpoint payloads.
+
+## V2.2a — One bounded back edge (implemented)
+
+There is no `LOOP` node. A condition selects an ordinary edge that may declare a bound:
 
 ```yaml
-id: uuid
-workflow_version_id: uuid
-status: active | interrupted | closed
-created_at: timestamp
-updated_at: timestamp
-```
+- source: review
+  target: output
+  condition: {path: $.approved, operator: equals, value: true}
 
-Minimum run additions:
-
-```yaml
-thread_id: uuid
-attempt_index: integer
-resumed_from_run_id: uuid | null
-resume_checkpoint_id: string | null
+- source: review
+  target: draft
+  loop: {id: revision, max_iterations: 3}
 ```
 
 Rules:
 
-- a V2 thread pins one immutable `WorkflowVersion`;
-- each initial invocation or resume creates a distinct run;
-- run status remains the lifecycle of that invocation;
-- closing a thread prevents new runs;
-- a failed run does not silently discard or replay the thread state;
-- conversation history is checkpointed agent state, not duplicated into generic workflow state;
-- long-term memory is a later store and is not part of this contract.
+- schema v1 rejects loop metadata; schema v2 accepts it;
+- the current runtime accepts exactly one loop edge;
+- the source is a condition and each condition route has a distinct target;
+- removing the loop edge leaves a DAG;
+- the target reaches the source through forward edges, so the edge closes a real cycle;
+- the positive iteration bound is at most 100;
+- the counter lives in namespaced internal state and persists in LangGraph checkpoints;
+- every node visit emits its own lifecycle events;
+- exceeding the bound raises `workflow.execution.iteration_limit`.
 
-### Thread and run creation ownership
+Nested and overlapping loops are deferred.
 
-The product creates thread identifiers. A caller never supplies a new arbitrary LangGraph
-`thread_id`.
-
-```text
-initial invocation
-→ RunCreationService creates ExecutionThread
-→ RunCreationService creates WorkflowRun #1 atomically
-
-resume request(thread_id)
-→ ResumeService validates thread + checkpoint
-→ ResumeService creates WorkflowRun #N
-```
-
-The product `ExecutionThread.id` maps one-to-one to LangGraph's configurable thread identifier. The
-portable runner receives that identifier from its caller; it does not generate it or persist the
-thread. A standalone runtime may generate an ephemeral product thread ID when no durable thread
-adapter is configured.
-
-### Resume semantics
-
-A resume never changes the identity of an existing run. It creates a new run with:
-
-- the same `thread_id`;
-- the next monotonically increasing `attempt_index`;
-- `resumed_from_run_id` referencing the previous run;
-- `resume_checkpoint_id` referencing an explicit committed checkpoint;
-- a new product trace ID and a new MLflow trace.
-
-All traces carry `execution_thread_id`, run ID, attempt index, and resumed-from metadata so the UI
-can reconstruct one continuous history without treating several execution periods as one trace.
-
-## Checkpoint contract
-
-The graph is compiled with an injected LangGraph checkpointer. The adapter maps
-`ExecutionThread.id` to LangGraph's configurable thread identifier.
-
-```text
-product ExecutionThread.id
-        ↓
-LangGraph thread_id
-        ↓
-checkpoint sequence
-```
-
-Requirements:
-
-- the worker and standalone runtime use the same runner-level checkpoint interface;
-- PostgreSQL is the first durable checkpointer backend for the control plane;
-- a resume loads an explicit checkpoint and creates a new `WorkflowRun`;
-- checkpoint identifiers are stored as run references, not embedded checkpoint payloads;
-- version, capability contracts, and execution policy are revalidated before resume;
-- a worker crash may resume after the last committed checkpoint;
-- a connector interrupted between an external side effect and checkpoint commit is not replayed
-  automatically without an idempotency key or explicit operator decision.
-
-The checkpointer is injected behind a runner-level interface. `WorkflowVersionRunner` and its
-domain contracts must not import a PostgreSQL repository. The control-plane worker may inject a
-PostgreSQL-backed implementation; a standalone runtime may inject another durable implementation
-or explicitly run without resume support.
-
-### Interruption and crash behavior
-
-Explicit interruption and process failure remain different outcomes:
-
-- an explicit LangGraph interrupt completes the current run as `interrupted` and keeps the thread
-  `interrupted`;
-- a crash or expired worker lease completes the current run as `failed` and keeps the last
-  committed checkpoint available;
-- neither outcome automatically starts another run;
-- an operator or an explicit safe recovery policy requests resume from a selected checkpoint;
-- a connector recorded as completed before that checkpoint is not executed again;
-- an uncertain external side effect after the latest checkpoint requires explicit recovery rather
-  than automatic replay.
-
-Minimum product events:
-
-```text
-thread.created
-workflow.queued
-workflow.started
-checkpoint.created
-workflow.interrupted
-workflow.failed
-workflow.resumed
-workflow.completed
-```
-
-`checkpoint.created` stores only checkpoint identity, node context, thread, run, and timestamp in
-the product audit stream. The checkpoint payload remains owned by the LangGraph checkpointer.
-
-## Controlled cycles
-
-V2 does not add a `LOOP` node. A cycle is expressed by an existing conditional route whose back
-edge declares a bounded loop contract.
-
-Proposed public shape:
-
-```yaml
-edges:
-  - source: review
-    target: output
-    condition:
-      path: $.review.approved
-      operator: equals
-      value: true
-
-  - source: review
-    target: draft
-    loop:
-      id: revision
-      max_iterations: 3
-```
-
-Validation requirements:
-
-- every cycle contains exactly one declared loop back edge;
-- removing declared back edges leaves an acyclic graph;
-- the loop target reaches the loop source in the remaining graph;
-- loop IDs are unique and iteration limits are positive and policy-bounded;
-- only a condition node may choose between exit and loop routes in the first implementation;
-- nested and overlapping loops are deferred;
-- iteration counters use namespaced runtime state and cannot collide with workflow data.
-
-Exceeding `max_iterations` produces `workflow.execution.iteration_limit` with workflow, node, loop,
-thread, and run context.
-
-## Subworkflow contract
-
-V2 introduces `SUBWORKFLOW` as composition, not as serialized LangGraph state.
+## V2.2b — Immutable subworkflow (next)
 
 ```yaml
 - id: research
   type: subworkflow
-  name: Research workflow
   config:
     workflow_version_id: 8134eb0e-7d3b-4dd5-8fde-28d8e64336b1
     inputs:
       request: {from_state: $.request}
     outputs:
       summary: {to_state: $.research.summary}
-      sources: {to_state: $.research.sources}
 ```
 
-Requirements:
+Required before support can be claimed:
 
-- the node references an immutable `WorkflowVersion`;
-- input and output mappings are validated against the child schemas;
-- publishing freezes the referenced child version;
-- recursive version references are rejected;
-- nesting depth is policy-bounded;
-- thread, run, trace, and execution counters propagate into the child;
-- node events identify both the parent node and child workflow version;
-- the portable runner receives a resolver; it never queries persistence directly;
-- standalone export must bundle the transitive declarations or reject the version explicitly.
+- reference only immutable `WorkflowVersion` records;
+- validate mappings against parent and child schemas;
+- freeze the referenced child version when publishing the parent;
+- reject direct and indirect recursive dependencies and bound nesting depth;
+- propagate thread/run context, execution counters, events, and trace correlation;
+- namespace child state and checkpoints; never serialize a compiled child graph.
 
-## Parallel branches and reducers
+## V2.3+ deferred contracts
 
-Multiple unconditional outgoing edges are enabled only with explicit parallel semantics. The first
-implementation supports unconditional fan-out followed by an `all` join.
+### Parallel state
 
-Concurrent writes to the same state path require a declared reducer:
+Use LangGraph fan-out/fan-in. Each concurrent state path must declare one closed reducer strategy
+such as replace, append-list, merge-object-without-conflicts, or numeric-sum. Reject ambiguous
+writes. Event order must use sequence data, not timestamps alone.
 
-```yaml
-state_reducers:
-  - path: $.research.results
-    strategy: append
-```
+### Dynamic routing and handoffs
 
-Initial closed reducer set:
+Agents may select only validated `allowed_targets`. Translate valid selections to LangGraph
+`Command` internally. Do not expose arbitrary node IDs, framework configuration, or a public
+`HANDOFF` node until the opaque-agent model proves insufficient.
 
-| Strategy | Contract |
-| --- | --- |
-| `append` | Concatenate arrays in stable branch order |
-| `merge_object` | Merge objects and reject duplicate keys |
+### Human interaction
 
-Rules:
+Use LangGraph interrupts over the durable checkpoint contract. Persist an interruption record with
+node, schema, prompt, checkpoint, and expiry. Validate the resume payload before creating a new run.
 
-- concurrent writes without a reducer are rejected at publication;
-- `replace` is not a valid concurrent reducer;
-- reducers are declarative identifiers, never callbacks;
-- reducer input and result types are checked against state schemas;
-- product event sequencing must remain deterministic under concurrent node completion;
-- conditional branches do not participate in an `all` join unless the join contract explicitly
-  identifies the active branch set.
+### Streaming
 
-## Dynamic routing and handoffs
+Adapt LangGraph streaming to stable SSE events for messages, updates, interrupts, custom progress,
+and subgraph paths. Reconnection must use sequence IDs and must not reconstruct state by replaying
+side effects.
 
-Explicit edges and `CONDITION` remain the default. Agent-directed routing is restricted to declared
-targets:
+### Security and remote execution
 
-```yaml
-allowed_targets:
-  - reviewer
-  - researcher
-```
-
-The runtime validates the selected target and translates it internally to LangGraph `Command`.
-`Command` is not serialized into `WorkflowSpec`.
-
-The first handoff implementation must:
-
-- use structured output rather than parse free text;
-- reject unknown or unavailable targets;
-- count the handoff as a graph step;
-- preserve the shared thread and execution policy;
-- emit a business routing event and normal LangGraph technical trace;
-- define a deterministic fallback when no allowed target is selected.
-
-Supervisor/router patterns build on this mechanism. A dedicated `HANDOFF` node is not planned.
-
-## Interrupt, resume, and approval
-
-Human approval is introduced only after durable checkpoints and threads work.
-
-```text
-node requests approval
-→ LangGraph interrupt
-→ thread becomes interrupted
-→ run finishes as interrupted
-→ user submits decision
-→ new run resumes the same thread
-```
-
-Approval payloads have a declared JSON Schema. The API validates them before resume. Approval
-cannot change the workflow version, policy ceiling, allowed tools, or routing allow-list.
-
-## Streaming
-
-Polling remains valid for short runs. Long executions use LangGraph streaming through a thin
-adapter:
-
-```text
-LangGraph messages / updates / interrupts / subgraph events
-        ↓
-normalized runtime event
-        ↓
-SSE
-        ↓
-React run view
-```
-
-The product does not invent a second execution protocol. PostgreSQL keeps durable business events;
-SSE delivery may be transient and reconnect from the last persisted event sequence.
-
-## Security requirements carried through V2
-
-Advanced orchestration does not wait for the complete remote-security milestone. Every new runtime
-feature must preserve:
-
-- immutable version references and capability contracts;
-- external secret injection;
-- allow-listed tools, MCP sources, reducers, and routing targets;
-- request, state, event, and checkpoint size limits;
-- safe public errors with trace identifiers;
-- no arbitrary code, shell, templates, or callbacks in public specifications;
-- explicit idempotency rules before retry or replay;
-- authenticated APIs before any public-network deployment.
-
-Remote runtime identity, secure MLflow transport, deployment credentials, image signing, and host
-control belong to the later remote-execution and deployment milestones.
+Authenticate API and runtime identities; authorize immutable versions and capabilities; inject
+credentials through references; bound requests, concurrency, state, and execution; restrict SSRF
+and egress; redact safe errors; and secure result, heartbeat, and MLflow transport. Prefer outbound
+runtime communication behind NAT.
 
 ## Reference V2 scenario
 
-The first complete V2 scenario is a checkpointed review loop:
-
 ```text
-INPUT
-→ Research agent
-→ Review agent
-→ CONDITION
-   ├── approved → OUTPUT
-   └── rejected → Research agent
+INPUT → AGENT draft → AGENT review
+                     ├── approved → SUBWORKFLOW publish → OUTPUT
+                     └── retry (max 3) → draft
 ```
 
-Acceptance criteria:
-
-- one immutable workflow version declares a loop bounded to three iterations;
-- one execution thread owns all runs and checkpoints;
-- an interrupt can pause after review and a new run can resume it;
-- completed nodes before the checkpoint are not repeated;
-- model calls, tool calls, graph steps, and iterations respect `ExecutionPolicy`;
-- PostgreSQL exposes runs and business events while MLflow exposes nested technical spans;
-- the editor displays the current iteration, interruption, resume, and final result;
-- the same runner contract remains usable by the future standalone runtime.
+Completion requires a checkpointed bounded loop, one immutable child workflow, correlated events
+and traces, and no custom agent loop or graph traversal.
