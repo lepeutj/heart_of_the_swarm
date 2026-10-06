@@ -121,10 +121,14 @@ handoffs, quorum, cancellation, and human handoffs remain deferred.
 
 ## V2.5 — Interaction
 
-1. Add durable interrupts and resume payload validation.
-2. Add human approval over the same checkpoint contract.
-3. Adapt LangGraph streaming to SSE for messages, updates, interrupts, and subgraphs.
-4. Extend React run observation without creating UI-only execution concepts.
+V2.5a human approval semantics are documented; implementation has not started.
+
+1. Add the typed `HUMAN_APPROVAL` node and neutral persisted `WorkflowInterruption` lifecycle.
+2. Interrupt through LangGraph, persist the exact checkpoint reference, and release the worker.
+3. Validate and atomically accept one boolean response before creating a resumed run in the same
+   execution thread.
+4. Expose pending/resolved/cancelled approval state through the API and React run observation.
+5. V2.5b: adapt LangGraph streaming to SSE for messages, updates, interrupts, and subgraphs.
 
 Exit criterion: an operator can observe, approve, and resume a long-running workflow without
 restarting it.

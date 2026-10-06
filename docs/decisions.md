@@ -74,8 +74,11 @@ the normative field-level rules.
   output mappings, and always yields control back to the supervisor. `max_handoffs` counts transfers,
   not node visits. LangGraph commands implement routing internally; there is no public `HANDOFF`
   node.
-- **ADR-009 — Human approval requires durable resume.** Approval builds on checkpoints and cannot be
-  a blocking in-memory callback.
+- **ADR-009/043 — Human approval is a durable interruption.** `HUMAN_APPROVAL` requests one boolean
+  product decision, while a neutral `WorkflowInterruption` persists the checkpoint, response
+  contract, and resolution lifecycle. No worker blocks while waiting. An accepted response is
+  validated and claimed once, then creates a new run in the same execution thread and resumes
+  LangGraph with `Command(resume=...)` without replaying completed nodes.
 - **ADR-040 — Security is cross-cutting.** Identity, authorization, secret references, bounded
   execution, safe errors, and secure trace/result transport apply across V2; credentials never
   enter specifications.

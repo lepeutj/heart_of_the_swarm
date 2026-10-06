@@ -87,6 +87,12 @@ supervisor source, inputs, allowed-target relations, task fields, and finish map
 creating synthetic control-flow edges. Interaction, secure remote execution, and deployment
 lifecycle management remain later milestones.
 
+The V2.4 supervisor path has also been exercised end to end with a real OpenRouter model: the
+supervisor handed work to a researcher, regained control, handed the result to a reviewer, regained
+control again, and finished through the declared output node. Persisted node and handoff events
+matched that route. V2.5a now has a documented durable human-approval contract; its implementation
+has not started.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

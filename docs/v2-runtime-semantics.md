@@ -264,12 +264,82 @@ Multiple selection, dynamic fan-out, quorum, first-N completion, cancellation, a
 human handoff, target subworkflows, multiple supervisors, and supervisors inside parallel regions
 remain deferred.
 
-## V2.5+ deferred contracts
+## V2.5a — Durable human approval contract
 
-### Human interaction
+Status: contract defined; persistence, runtime, API, and React are not implemented.
 
-Use LangGraph interrupts over the durable checkpoint contract. Persist an interruption record with
-node, schema, prompt, checkpoint, and expiry. Validate the resume payload before creating a new run.
+`HUMAN_APPROVAL` is the first deliberately narrow human-interaction node. It asks one boolean
+question and delegates suspension and resume to LangGraph:
+
+```yaml
+- id: approve_publication
+  type: human_approval
+  config:
+    prompt: Approve publication of the reviewed report?
+    output: {to_state: $.publication.approved}
+```
+
+The node type is intentionally specific. A neutral persisted `WorkflowInterruption` supports later
+text, choice, or form interactions without making their runtime contracts part of V2.5a:
+
+```text
+WorkflowInterruption
+├── id, workflow_version_id, thread_id, run_id, node_id
+├── kind = approval
+├── prompt and response_schema
+├── checkpoint_id
+├── status = pending | resolved | cancelled
+├── response
+└── created_at, resolved_at
+```
+
+The runtime sequence is:
+
+```text
+WorkflowRun R1 reaches HUMAN_APPROVAL
+→ LangGraph interrupt() creates resumable checkpoint state
+→ checkpoint reference and pending interruption are persisted
+→ R1 becomes interrupted; the worker returns to the queue
+
+operator submits {approved: true | false}
+→ validate response and atomically claim the pending interruption
+→ create WorkflowRun R2 in the same ExecutionThread
+→ R2.resumed_from_run_id = R1 and R2.resume_checkpoint_id is recorded
+→ resume with LangGraph Command(resume=response)
+→ write approval result through the declared output mapping
+→ continue the graph without replaying completed nodes
+```
+
+Invariants:
+
+- one pending interruption references one exact resumable checkpoint;
+- a response is accepted at most once, including under concurrent requests;
+- an invalid response changes neither the interruption nor the execution thread and creates no run;
+- resolving an already resolved or cancelled interruption is rejected;
+- every accepted response creates a new `WorkflowRun` in the same `ExecutionThread` and a new
+  MLflow trace;
+- no worker or HTTP request remains blocked while waiting for an operator;
+- resume does not replay nodes committed before the interruption;
+- `pending`, `resolved`, and `cancelled` are the complete V2.5a lifecycle; expiry is deferred;
+- checkpoint payloads remain owned by the injected LangGraph checkpointer, not the product table.
+
+Minimum audit events are `workflow.interrupted`, `approval.requested`, `approval.resolved`,
+`approval.cancelled`, and `workflow.resumed`. Events and traces may include the validated approval
+value but never hidden model reasoning or checkpoint payloads.
+
+Normative scenarios:
+
+1. An approval node interrupts, persists one pending record, and terminates the current run.
+2. `{approved: true}` creates a new run and follows the approved continuation.
+3. `{approved: false}` creates a new run and follows the rejected continuation.
+4. Invalid, duplicate, cancelled, foreign-thread, or foreign-checkpoint responses create no run.
+5. Resume retains the same thread, increments the attempt index, and does not replay prior nodes.
+6. A worker restart while approval is pending does not lose or consume the interruption.
+
+Free-text input, multiple choice, forms, expiry, delegation, human handoffs, bulk approvals, and UI
+notifications remain deferred. V2.5a also does not add streaming.
+
+## V2.5b+ deferred contracts
 
 ### Streaming
 
