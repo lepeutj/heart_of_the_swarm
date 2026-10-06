@@ -20,6 +20,7 @@ _SUPPORTED_NODE_TYPES = {
 _NODE_DESCRIPTIONS = {
     NodeType.INPUT: "Validate and initialize workflow input.",
     NodeType.AGENT: "Run an inline AgentSpec or one immutable saved agent version.",
+    NodeType.SUPERVISOR: "Route one task at a time to an explicitly allowed agent node.",
     NodeType.LLM: "Deprecated inline-agent node; migrate it to AGENT.",
     NodeType.CONNECTOR: "Invoke one registered capability exactly once.",
     NodeType.SUBWORKFLOW: "Run one immutable workflow version with explicit state mappings.",

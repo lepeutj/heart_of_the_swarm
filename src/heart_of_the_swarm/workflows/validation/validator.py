@@ -12,6 +12,7 @@ from heart_of_the_swarm.workflows.configs import (
     ConnectorNodeConfig,
     InlineAgentSource,
     SubworkflowNodeConfig,
+    SupervisorNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
@@ -34,6 +35,10 @@ from heart_of_the_swarm.workflows.validation.graph import (
     reachable_nodes,
 )
 from heart_of_the_swarm.workflows.validation.parallel import analyze_parallel_region
+from heart_of_the_swarm.workflows.validation.supervisor import (
+    supervisor_reachability_edges,
+    validate_supervisors,
+)
 
 
 class WorkflowValidator:
@@ -62,7 +67,7 @@ class WorkflowValidator:
         issues.extend(self._structural_errors(spec))
         typed_nodes, config_issues = self._parse_nodes(spec.nodes)
         issues.extend(config_issues)
-        issues.extend(self._graph_errors(spec))
+        issues.extend(self._graph_errors(spec, typed_nodes))
         issues.extend(self._semantic_errors(spec, typed_nodes))
         parallel_region, parallel_issues = analyze_parallel_region(spec, typed_nodes)
         issues.extend(parallel_issues)
@@ -185,7 +190,10 @@ class WorkflowValidator:
         return issues
 
     @staticmethod
-    def _graph_errors(spec: WorkflowSpec) -> list[WorkflowValidationIssue]:
+    def _graph_errors(
+        spec: WorkflowSpec,
+        typed_nodes: list[ValidatedWorkflowNode],
+    ) -> list[WorkflowValidationIssue]:
         issues: list[WorkflowValidationIssue] = []
         unique_nodes = {node.id: node for node in spec.nodes}
         valid_edges = [
@@ -316,7 +324,11 @@ class WorkflowValidator:
                         )
                     )
 
-        graph = adjacency(unique_nodes, valid_edges)
+        routing_edges = [
+            *valid_edges,
+            *supervisor_reachability_edges(typed_nodes, set(unique_nodes)),
+        ]
+        graph = adjacency(unique_nodes, routing_edges)
         forward_edges = [edge for edge in valid_edges if edge.loop is None]
         forward_graph = adjacency(unique_nodes, forward_edges)
         cycle = find_cycle(forward_graph)
@@ -405,9 +417,10 @@ class WorkflowValidator:
         if spec.output_schema is not None:
             issues.extend(_schema_errors(spec.output_schema, "output_schema"))
         issues.extend(_state_schema_errors(spec))
+        issues.extend(validate_supervisors(spec, nodes))
         for node in nodes:
             config = node.config
-            if isinstance(config, AgentNodeConfig):
+            if isinstance(config, (AgentNodeConfig, SupervisorNodeConfig)):
                 if isinstance(config.source, InlineAgentSource):
                     agent = config.source.agent
                     issues.extend(self._provider_errors(node.id, agent.model.provider))
@@ -431,7 +444,7 @@ class WorkflowValidator:
                                     "config.source.agent.skills",
                                 )
                             )
-                if config.response_schema is not None:
+                if isinstance(config, AgentNodeConfig) and config.response_schema is not None:
                     issues.extend(
                         _response_schema_errors(
                             node.id, config.response_schema, config.outputs or {}

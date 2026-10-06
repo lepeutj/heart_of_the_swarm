@@ -4,6 +4,7 @@ from enum import StrEnum
 class NodeType(StrEnum):
     INPUT = "input"
     AGENT = "agent"
+    SUPERVISOR = "supervisor"
     SUBWORKFLOW = "subworkflow"
     LLM = "llm"
     CONNECTOR = "connector"

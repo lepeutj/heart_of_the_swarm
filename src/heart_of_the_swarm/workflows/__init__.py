@@ -31,6 +31,11 @@ from heart_of_the_swarm.workflows.spec import (
     WorkflowNode,
     WorkflowSpec,
 )
+from heart_of_the_swarm.workflows.supervisors import (
+    FinishDecision,
+    HandoffDecision,
+    SupervisorDecision,
+)
 from heart_of_the_swarm.workflows.validation import (
     WorkflowValidationError,
     WorkflowValidationIssue,
@@ -43,12 +48,15 @@ __all__ = [
     "ConditionSpec",
     "ExecutionResult",
     "ExecutionPolicy",
+    "FinishDecision",
+    "HandoffDecision",
     "NodeType",
     "ParallelBranch",
     "ParallelRegion",
     "ResolvedAgentVersion",
     "StateFieldSpec",
     "StateReducer",
+    "SupervisorDecision",
     "ValidatedWorkflowSpec",
     "WorkflowEdge",
     "WorkflowCapabilities",

@@ -13,6 +13,7 @@ subworkflow composition. Other V2 contracts are tracked in
 | --- | --- | --- |
 | `input` | Initialize and validate object input | Product adapter |
 | `agent` | Inline `AgentSpec` or immutable `AgentVersion`, named mappings | `AgentRunner` / `create_agent` |
+| `supervisor` | Strict single-target routing contract | Deferred to V2.4 runtime |
 | `connector` | One registered capability invocation, named mappings | Capability registry |
 | `subworkflow` | Immutable `WorkflowVersion`, isolated named mappings | LangGraph subgraph |
 | `transform` | Restricted state assignments | Product adapter |
@@ -150,6 +151,44 @@ LangGraph edge waits for every branch completion marker before the public join e
 join merges only paths written by nodes that actually ran, in declared branch order. Checkpoints
 preserve branch frames, so resume does not replay a completed sibling. `branch_id` is runtime event
 context and never enters business state.
+
+## Supervisor contract (V2.4a, validation only)
+
+A supervisor is an agent declaration with a closed routing contract. The current implementation
+parses and validates it but deliberately does not execute it:
+
+```yaml
+type: supervisor
+config:
+  source:
+    type: version
+    agent_version_id: 9ab6cb56-f13c-4175-8237-bfe16d278f6b
+  inputs:
+    request: {from_state: $.request}
+  allowed_targets:
+    researcher: {task_field: task}
+    reviewer: {task_field: task}
+  finish_output: {to_state: $.final}
+  decision_schema: supervisor_decision_v1
+  max_handoffs_ref: execution_policy.max_handoffs
+```
+
+Each target is a different local `AGENT` node with structured inputs, explicit outputs, and no
+ordinary workflow edges. The selected decision task is injected at `task_field`; other target
+inputs and outputs remain the mappings declared by that agent node. The supervisor has one ordinary
+edge to an `OUTPUT` node that reads `finish_output`. Virtual supervisor/target relations are used
+only for static reachability validation and are never serialized as workflow edges.
+
+`SupervisorDecision` accepts exactly one of:
+
+```yaml
+{action: handoff, target: researcher, task: Find primary sources.}
+{action: finish, result: {summary: Complete.}}
+```
+
+`ExecutionPolicy.max_handoffs` is a positive application-bounded contract value. Runtime counting,
+LangGraph `Command`, mandatory return, checkpoint behavior, events, and React editing remain outside
+this static-validation sub-jalon.
 
 ## Validation and execution
 

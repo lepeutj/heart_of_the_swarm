@@ -23,6 +23,7 @@ class ExecutionPolicy(BaseModel):
     timeout_seconds: float = Field(gt=0, le=3_600)
     recursion_limit: int = Field(ge=2, le=10_000)
     max_subworkflow_depth: int = Field(default=MAX_SUBWORKFLOW_DEPTH, ge=1, le=32)
+    max_handoffs: int = Field(default=20, ge=1, le=100)
 
 
 class WorkflowExecutionEvent(BaseModel):
