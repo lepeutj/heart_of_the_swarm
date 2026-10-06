@@ -72,13 +72,25 @@ are rejected explicitly rather than producing incomplete runtimes.
 
 ## V2.3 — Parallel state
 
-1. Add explicit unconditional fan-out and `all` joins.
-2. Add closed reducer strategies for concurrent state paths.
-3. Reject conflicting writes without reducers.
-4. Make business event ordering safe under concurrent completion.
+Status: contract defined; runtime not implemented.
+
+1. Infer one non-nested fan-out/fan-in region from ordinary unconditional edges; add no public
+   `PARALLEL` node.
+2. Compile convergence from an unconditional fan-out as an `all` dependency; preserve `any selected
+   predecessor` convergence for exclusive condition routes.
+3. Add optional path-keyed `state_schema` declarations with the closed reducer set `replace`,
+   `append`, and `merge_dict`.
+4. Reject concurrent writes to the same or overlapping paths unless the exact shared path has a
+   combinatory reducer. `replace` never resolves a concurrent conflict.
+5. Keep merged state deterministic by declared branch order and reject duplicate `merge_dict` keys.
+6. Persist contextual branch identity and observation sequence without imposing a fake execution
+   order.
+7. Resume an interrupted branch without replaying a completed sibling.
+8. Add the React representation only after runtime and checkpoint behavior pass integration tests.
 
 Exit criterion: two agents can work concurrently, append typed results, and feed one synthesis node
-with deterministic state and events.
+with deterministic state and events. V2.3 initially excludes nested or overlapping parallel regions,
+loops inside a parallel region, partial joins, quorum joins, and first-result-wins behavior.
 
 ## V2.4 — Multi-agent routing
 

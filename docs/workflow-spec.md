@@ -55,8 +55,9 @@ JSON Schema. The schema is delegated to LangChain structured output and the retu
 validated before its named fields are written atomically into state. Legacy `input_path` and
 `output_path` configurations remain executable during migration.
 
-Multiple mappings do not enable parallel execution. Exclusive condition routes may converge, but
-parallel fan-out, fan-in, and concurrent writes require explicit LangGraph reducers later.
+Multiple mappings do not enable parallel execution. Exclusive condition routes may converge. The
+proposed V2.3 contract below defines ordinary-edge fan-out/fan-in and explicit state reducers; it is
+not yet supported by the runtime.
 
 An output node always projects named values. The workflow `output_schema` is optional; when present,
 the runtime validates the complete projection before returning it.
@@ -111,6 +112,37 @@ paths remain part of the parent execution. Publishing rejects invalid mappings, 
 versions, direct or indirect dependency recursion, and nesting beyond the configured bound. Runtime
 validation repeats these checks through an injected version resolver so the same compiler works in
 the worker, tests, and future artifact runtimes.
+
+## Proposed parallel state contract (V2.3, not implemented)
+
+Parallelism is inferred from ordinary edges: multiple unconditional successors form a fan-out and
+their convergence forms an `all` fan-in. Conditions remain exclusive routes; convergence after a
+condition accepts the selected predecessor and does not wait for unselected routes. No new node type
+is introduced.
+
+Shared intermediate paths may declare their type and reduction rule:
+
+```yaml
+state_schema:
+  $.research_results:
+    schema:
+      type: array
+      items: {type: object}
+    reducer: append
+  $.metadata:
+    schema: {type: object}
+    reducer: merge_dict
+```
+
+The closed reducer set is `replace`, `append`, and `merge_dict`. `replace` is the default and cannot
+resolve concurrent writes. `append` concatenates branch lists in declared branch order.
+`merge_dict` is shallow and rejects duplicate keys. Concurrent writes to the same path, or to
+ancestor/descendant paths, are rejected without an exact combinatory reducer declaration.
+
+The initial implementation will support one non-nested parallel region, required `all` joins,
+subworkflows inside branches, and loops only outside the region. Partial joins, quorum, first-result
+wins, nested parallelism, parallel loops, and custom reducers remain deferred. Normative checkpoint,
+event, and acceptance rules are in [`v2-runtime-semantics.md`](v2-runtime-semantics.md).
 
 ## Validation and execution
 

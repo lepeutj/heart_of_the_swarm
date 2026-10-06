@@ -64,6 +64,10 @@ the normative field-level rules.
 - **ADR-039 — Immutable subworkflows.** Composition references a published `WorkflowVersion`, with
   typed parent/child mappings, bounded nesting, and recursive dependencies rejected. The child is a
   native LangGraph subgraph in the same run/thread, with contextual event paths and isolated state.
+- **ADR-041 — Parallelism is graph structure plus declared state reduction.** Ordinary unconditional
+  edges express fan-out and required fan-in; there is no public `PARALLEL` node. Concurrent writes
+  require `append` or conflict-free `merge_dict`; `replace` permits only one writer. LangGraph owns
+  concurrent scheduling and checkpointing.
 - **ADR-009 — Human approval requires durable resume.** Approval builds on checkpoints and cannot be
   a blocking in-memory callback.
 - **ADR-040 — Security is cross-cutting.** Identity, authorization, secret references, bounded

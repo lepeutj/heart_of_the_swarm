@@ -105,13 +105,87 @@ without creating a LangGraph time-travel fork, so a completed child connector is
 Standalone artifacts reject subworkflow dependencies until an export can bundle the complete
 immutable dependency tree.
 
-## V2.3+ deferred contracts
+## V2.3 — Parallel state (contract defined, not implemented)
 
-### Parallel state
+### Graph semantics
 
-Use LangGraph fan-out/fan-in. Each concurrent state path must declare one closed reducer strategy
-such as replace, append-list, merge-object-without-conflicts, or numeric-sum. Reject ambiguous
-writes. Event order must use sequence data, not timestamps alone.
+Parallelism uses ordinary graph edges and native LangGraph scheduling. There is no `PARALLEL` node:
+
+```text
+        ┌→ B ─┐
+A ──────┤     ├→ D
+        └→ C ─┘
+```
+
+- multiple unconditional outgoing edges from a non-condition node create a fan-out;
+- a condition remains an exclusive ordered route, never an implicit fan-out;
+- a node reached by branches from the same unconditional fan-out is an `all` fan-in and runs once
+  after all required branches complete;
+- convergence after exclusive condition routes remains an `any selected predecessor` dependency and
+  must not wait for routes that were not selected;
+- the compiler groups the incoming dependencies when adding the LangGraph edge;
+- the first runtime supports one non-nested, non-overlapping parallel region;
+- a bounded loop may exist outside that region but cannot cross or execute inside it;
+- a parallel branch may contain an immutable `SUBWORKFLOW`.
+
+### Shared state contract
+
+`WorkflowSpec.state_schema` is an optional map keyed by canonical state path. Each entry contains a
+JSON Schema and one reducer from the closed set `replace`, `append`, or `merge_dict`:
+
+```yaml
+state_schema:
+  $.research_results:
+    schema: {type: array, items: {type: object}}
+    reducer: append
+  $.metadata:
+    schema: {type: object}
+    reducer: merge_dict
+  $.final_answer:
+    schema: {type: string}
+    reducer: replace
+```
+
+`replace` is the default and permits only one writer in a parallel region. `append` concatenates
+list contributions in declared branch order. `merge_dict` performs a shallow merge and rejects a
+key produced by more than one branch. Concurrent ancestor/descendant writes, such as `$.result` and
+`$.result.title`, are conflicting and rejected; a reducer applies only to its exact path.
+
+Static write analysis covers agent, connector, subworkflow, transform, and supported legacy output
+mappings. Writes to distinct paths are valid. Writes to the same or overlapping path require an
+exact `append` or `merge_dict` declaration. Nodes return state updates for LangGraph reduction; the
+product does not implement traversal or concurrent scheduling.
+
+### Determinism, events, and resume
+
+Execution completion order is intentionally not deterministic. Merged state is deterministic by
+the outgoing edge order declared at the fan-out. Every branch event carries `execution_path`,
+`node_id`, a stable contextual `branch_id`, persistence `sequence`, and `timestamp`. Sequence records
+observation order only; it does not claim a logical ordering between branches.
+
+If one branch fails, the run fails. If one branch completes and a sibling interrupts, the checkpoint
+must retain the completed contribution. Explicit resume continues the interrupted branch, does not
+replay the completed sibling, and releases the fan-in only after every required contribution exists.
+
+### Acceptance scenarios
+
+1. Fan-out starts two independent branches.
+2. Fan-in waits for both required predecessors and runs once.
+3. Concurrent writes to distinct paths succeed.
+4. The same or overlapping path without a combinatory reducer is rejected.
+5. `append` combines branch lists in declared branch order.
+6. `merge_dict` combines objects with distinct keys.
+7. Duplicate `merge_dict` keys are rejected.
+8. One failed branch fails the workflow.
+9. Resume does not replay a completed sibling when another branch interrupted.
+10. A `SUBWORKFLOW` executes inside one parallel branch.
+11. A bounded loop outside the parallel region still works.
+12. Events identify branches and preserve an unambiguous observation sequence.
+
+Partial joins, quorum joins, first-result-wins, nested parallel regions, arbitrary reducers, and
+parallel loops remain deferred.
+
+## V2.4+ deferred contracts
 
 ### Dynamic routing and handoffs
 
