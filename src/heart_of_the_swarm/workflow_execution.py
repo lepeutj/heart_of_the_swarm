@@ -9,7 +9,11 @@ from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.observability import audit_event, audit_exception, trace_context
-from heart_of_the_swarm.repositories import WorkflowRepository, WorkflowRunRepository
+from heart_of_the_swarm.repositories import (
+    WorkflowInterruptionRepository,
+    WorkflowRepository,
+    WorkflowRunRepository,
+)
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflow_agent_versions import DatabaseAgentVersionResolver
@@ -231,11 +235,18 @@ class WorkflowExecutor:
                     if result.interrupted:
                         if result.checkpoint_id is None:
                             raise RuntimeError("interrupted workflow has no durable checkpoint")
-                        await repository.interrupt(
-                            run_id,
-                            result.checkpoint_id,
-                            result.executed_nodes,
-                        )
+                        if result.interruption is not None:
+                            await WorkflowInterruptionRepository(session).create_approval(
+                                run_id,
+                                result.interruption.node_id,
+                                result.checkpoint_id,
+                            )
+                        else:
+                            await repository.interrupt(
+                                run_id,
+                                result.checkpoint_id,
+                                result.executed_nodes,
+                            )
                     else:
                         await repository.finish(
                             run_id,

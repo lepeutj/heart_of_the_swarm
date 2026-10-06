@@ -6,12 +6,13 @@ from typing import Annotated, Any, NoReturn, TypedDict
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.configs import (
+    HumanApprovalNodeConfig,
     SubworkflowNodeConfig,
     SupervisorNodeConfig,
     SupervisorTargetConfig,
@@ -23,7 +24,7 @@ from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
 )
-from heart_of_the_swarm.workflows.execution.models import ExecutionResult
+from heart_of_the_swarm.workflows.execution.models import ExecutionInterruption, ExecutionResult
 from heart_of_the_swarm.workflows.execution.node_runner import WorkflowNodeRunner
 from heart_of_the_swarm.workflows.execution.parallel import (
     ParallelRuntimeBranch,
@@ -32,6 +33,7 @@ from heart_of_the_swarm.workflows.execution.parallel import (
     merge_parallel_states,
 )
 from heart_of_the_swarm.workflows.execution.workflow_versions import WorkflowVersionResolver
+from heart_of_the_swarm.workflows.interruptions import ApprovalResponse
 from heart_of_the_swarm.workflows.spec import (
     ValidatedWorkflowNode,
     ValidatedWorkflowSpec,
@@ -146,6 +148,7 @@ class WorkflowGraph:
         )
         values = snapshot.values if snapshot is not None else result
         saved_config = snapshot.config.get("configurable", {}) if snapshot is not None else {}
+        interruption = self._execution_interruption(snapshot.interrupts if snapshot else ())
         return ExecutionResult(
             workflow_id=self.workflow.id,
             output=deepcopy(values.get("output")),
@@ -153,7 +156,27 @@ class WorkflowGraph:
             executed_nodes=tuple(values["executed_nodes"]),
             interrupted=bool(snapshot and snapshot.next),
             checkpoint_id=saved_config.get("checkpoint_id"),
+            interruption=interruption,
             loop_iterations=dict(values.get("loop_iterations", {})),
+        )
+
+    @staticmethod
+    def _execution_interruption(interruptions: tuple[Any, ...]) -> ExecutionInterruption | None:
+        """Project one LangGraph interrupt into the portable runtime result."""
+        if not interruptions:
+            return None
+        if len(interruptions) != 1:
+            raise RuntimeError("V2.5a supports exactly one active workflow interruption")
+        item = interruptions[0]
+        value = item.value
+        if not isinstance(value, dict):
+            raise RuntimeError("workflow interruption payload is not an object")
+        return ExecutionInterruption(
+            interrupt_id=item.id,
+            kind=value.get("kind"),
+            node_id=value.get("node_id"),
+            prompt=value.get("prompt"),
+            response_schema=item.response_schema or {},
         )
 
 
@@ -421,6 +444,11 @@ class WorkflowGraphFactory:
                         graph_node_ids[target]
                         for target in (*node.config.allowed_targets, finish_target)
                     ),
+                )
+            elif isinstance(node.config, HumanApprovalNodeConfig):
+                builder.add_node(
+                    graph_node_id,
+                    self._human_approval_action(runner, node),
                 )
             elif node.id in delegated_targets:
                 supervisor, target_config = delegated_targets[node.id]
@@ -760,6 +788,38 @@ class WorkflowGraphFactory:
             if result.is_output:
                 update["output"] = result.output
             return update
+
+        return execute
+
+    @staticmethod
+    def _human_approval_action(
+        runner: WorkflowNodeRunner,
+        node: ValidatedWorkflowNode,
+    ) -> Callable[[_GraphState], Awaitable[_GraphState]]:
+        """Suspend through LangGraph and write state only after a future valid resume."""
+        config = node.config
+        if not isinstance(config, HumanApprovalNodeConfig):
+            raise TypeError(f"Node '{node.id}' has an inconsistent approval configuration.")
+
+        async def execute(state: _GraphState) -> _GraphState:
+            await runner.record_started(node)
+            response = interrupt(
+                {
+                    "kind": "approval",
+                    "node_id": node.id,
+                    "prompt": config.prompt,
+                },
+                response_schema=ApprovalResponse,
+            )
+            if not isinstance(response, ApprovalResponse):
+                raise TypeError("LangGraph returned an invalid approval response")
+            updated = deepcopy(state["data"])
+            set_path(updated, config.output.to_state, response.approved)
+            await runner.record_completed(node)
+            return {
+                "data": updated,
+                "executed_nodes": (*tuple(state.get("executed_nodes", ())), node.id),
+            }
 
         return execute
 

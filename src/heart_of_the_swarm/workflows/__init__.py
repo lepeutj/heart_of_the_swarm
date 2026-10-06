@@ -8,6 +8,7 @@ from heart_of_the_swarm.workflows.conditions import ConditionSpec, evaluate_cond
 from heart_of_the_swarm.workflows.enums import ConditionOperator, NodeType
 from heart_of_the_swarm.workflows.execution import (
     AgentVersionResolver,
+    ExecutionInterruption,
     ExecutionPolicy,
     ExecutionResult,
     ResolvedAgentVersion,
@@ -54,6 +55,7 @@ __all__ = [
     "ConditionSpec",
     "ExecutionResult",
     "ExecutionPolicy",
+    "ExecutionInterruption",
     "FinishDecision",
     "HandoffDecision",
     "NodeType",
