@@ -7,6 +7,7 @@ from typing import Any, NoReturn
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
+from pydantic import BaseModel
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
@@ -19,6 +20,7 @@ from heart_of_the_swarm.workflows.configs import (
     InlineAgentSource,
     InputNodeConfig,
     OutputNodeConfig,
+    SupervisorNodeConfig,
     TransformNodeConfig,
     VersionedAgentSource,
 )
@@ -41,6 +43,7 @@ from heart_of_the_swarm.workflows.state import (
     resolve_value,
     set_path,
 )
+from heart_of_the_swarm.workflows.supervisors import SupervisorDecision
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,7 @@ class NodeExecution:
     selected_target: str | None = None
     output: Any = None
     is_output: bool = False
+    supervisor_decision: SupervisorDecision | None = None
 
 
 class WorkflowNodeRunner:
@@ -90,6 +94,7 @@ class WorkflowNodeRunner:
         state: WorkflowState,
         executed_nodes: tuple[str, ...],
         event_context: dict[str, Any] | None = None,
+        agent_input_overrides: dict[str, Any] | None = None,
     ) -> NodeExecution:
         """Execute one node with normalized errors and trajectory events."""
         current_execution = (*executed_nodes, node.id)
@@ -102,8 +107,20 @@ class WorkflowNodeRunner:
                 result = NodeExecution(self._apply_transform(node, state), current_execution)
             elif isinstance(node.config, AgentNodeConfig):
                 result = NodeExecution(
-                    await self._invoke_agent(node, state, event_context),
+                    await self._invoke_agent(
+                        node,
+                        state,
+                        event_context,
+                        agent_input_overrides,
+                    ),
                     current_execution,
+                )
+            elif isinstance(node.config, SupervisorNodeConfig):
+                decision = await self._invoke_supervisor(node, state, event_context)
+                result = NodeExecution(
+                    state,
+                    current_execution,
+                    supervisor_decision=decision,
                 )
             elif isinstance(node.config, ConnectorNodeConfig):
                 result = NodeExecution(
@@ -190,6 +207,16 @@ class WorkflowNodeRunner:
             context=context,
         )
 
+    async def record_event(
+        self,
+        event_type: str,
+        node: ValidatedWorkflowNode,
+        payload: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit one contextual workflow event outside normal node lifecycle events."""
+        await self._record_node(event_type, node, payload, context=context)
+
     def reject_non_object_input(self, node: ValidatedWorkflowNode) -> NoReturn:
         """Raise the stable workflow error used for non-object input."""
         self._raise(
@@ -203,11 +230,84 @@ class WorkflowNodeRunner:
         node: ValidatedWorkflowNode,
         state: WorkflowState,
         event_context: dict[str, Any] | None = None,
+        input_overrides: dict[str, Any] | None = None,
     ) -> WorkflowState:
         """Resolve one inline or saved agent and delegate its loop to AgentRunner."""
         config = node.config
         if not isinstance(config, AgentNodeConfig):
             raise TypeError(f"Node '{node.id}' has an inconsistent agent configuration.")
+        agent_input = self._resolve_agent_input(node, config, state, input_overrides)
+
+        output = await self._call_agent(
+            node,
+            config.source,
+            agent_input,
+            config.response_schema,
+            event_context,
+        )
+
+        try:
+            updated = self._write_agent_output(node, config, state, output)
+        except WorkflowExecutionError:
+            raise
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.agent_output_failed",
+                message=f"Output from agent node '{node.id}' could not be written to state.",
+                node=node,
+                cause=exc,
+            )
+        return updated
+
+    async def _invoke_supervisor(
+        self,
+        node: ValidatedWorkflowNode,
+        state: WorkflowState,
+        event_context: dict[str, Any] | None = None,
+    ) -> SupervisorDecision:
+        """Invoke one supervisor agent and validate its closed routing decision."""
+        config = self._require_config(node, SupervisorNodeConfig)
+        agent_input = self._serialize_named_inputs(node, config.inputs, state)
+        output = await self._call_agent(
+            node,
+            config.source,
+            agent_input,
+            SupervisorDecision,
+            event_context,
+        )
+        try:
+            decision = SupervisorDecision.model_validate(output)
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.supervisor_decision_invalid",
+                message=f"Supervisor node '{node.id}' returned an invalid routing decision.",
+                node=node,
+                cause=exc,
+            )
+        if decision.root.action == "handoff" and decision.root.target not in config.allowed_targets:
+            self._raise(
+                code="workflow.execution.supervisor_target_not_allowed",
+                message=(
+                    f"Supervisor node '{node.id}' selected an unavailable target "
+                    f"'{decision.root.target}'."
+                ),
+                node=node,
+            )
+        payload: dict[str, Any] = {"action": decision.root.action}
+        if decision.root.action == "handoff":
+            payload["target_node_id"] = decision.root.target
+        await self._record_node("supervisor.decision", node, payload, context=event_context)
+        return decision
+
+    async def _call_agent(
+        self,
+        node: ValidatedWorkflowNode,
+        source: InlineAgentSource | VersionedAgentSource,
+        agent_input: str,
+        response_schema: dict[str, Any] | type[BaseModel] | None,
+        event_context: dict[str, Any] | None,
+    ) -> Any:
+        """Resolve one agent source and delegate exactly one invocation to AgentRunner."""
         if self.agent_runner is None:
             self._raise(
                 code="workflow.execution.agent_runtime_unavailable",
@@ -215,13 +315,10 @@ class WorkflowNodeRunner:
                 node=node,
             )
 
-        agent_input = self._resolve_agent_input(node, config, state)
-
-        if isinstance(config.source, InlineAgentSource):
-            spec = config.source.agent
+        if isinstance(source, InlineAgentSource):
+            spec = source.agent
             system_prompt = None
         else:
-            source = config.source
             if not isinstance(source, VersionedAgentSource):
                 raise TypeError(f"Node '{node.id}' has an inconsistent agent source.")
             if self.agent_versions is None:
@@ -247,7 +344,7 @@ class WorkflowNodeRunner:
                 system_prompt=system_prompt,
                 callbacks=[self.callback] if self.callback is not None else [],
                 metadata=self._node_context(node, event_context),
-                response_schema=config.response_schema,
+                response_schema=response_schema,
             )
         except WorkflowExecutionError:
             raise
@@ -258,29 +355,20 @@ class WorkflowNodeRunner:
                 node=node,
                 cause=exc,
             )
-
-        try:
-            updated = self._write_agent_output(node, config, state, output)
-        except WorkflowExecutionError:
-            raise
-        except Exception as exc:
-            self._raise(
-                code="workflow.execution.agent_output_failed",
-                message=f"Output from agent node '{node.id}' could not be written to state.",
-                node=node,
-                cause=exc,
-            )
-        return updated
+        return output
 
     def _resolve_agent_input(
         self,
         node: ValidatedWorkflowNode,
         config: AgentNodeConfig,
         state: WorkflowState,
+        input_overrides: dict[str, Any] | None = None,
     ) -> str:
         """Resolve one legacy input or serialize named state inputs for the agent."""
         try:
             if config.input_path is not None:
+                if input_overrides:
+                    raise ValueError("scalar agent input cannot receive delegated fields")
                 value = get_path(state, config.input_path)
                 if not isinstance(value, str):
                     self._raise(
@@ -294,6 +382,7 @@ class WorkflowNodeRunner:
                 name: get_path(state, binding.from_state)
                 for name, binding in (config.inputs or {}).items()
             }
+            inputs.update(deepcopy(input_overrides or {}))
         except StatePathError as exc:
             self._raise(
                 code="workflow.execution.agent_input_missing",
@@ -302,6 +391,30 @@ class WorkflowNodeRunner:
                 cause=exc,
             )
 
+        return self._serialize_inputs(node, inputs)
+
+    def _serialize_named_inputs(
+        self,
+        node: ValidatedWorkflowNode,
+        bindings: Mapping[str, Any],
+        state: WorkflowState,
+    ) -> str:
+        """Resolve declared named inputs and serialize them for one agent invocation."""
+        try:
+            inputs = {
+                name: get_path(state, binding.from_state) for name, binding in bindings.items()
+            }
+        except StatePathError as exc:
+            self._raise(
+                code="workflow.execution.agent_input_missing",
+                message=f"Input for agent node '{node.id}' could not be resolved.",
+                node=node,
+                cause=exc,
+            )
+        return self._serialize_inputs(node, inputs)
+
+    def _serialize_inputs(self, node: ValidatedWorkflowNode, inputs: dict[str, Any]) -> str:
+        """Serialize named agent inputs consistently across agents and supervisors."""
         if len(inputs) == 1:
             value = next(iter(inputs.values()))
             if isinstance(value, str):

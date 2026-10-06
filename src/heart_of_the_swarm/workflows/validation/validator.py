@@ -37,6 +37,7 @@ from heart_of_the_swarm.workflows.validation.graph import (
 from heart_of_the_swarm.workflows.validation.parallel import analyze_parallel_region
 from heart_of_the_swarm.workflows.validation.supervisor import (
     supervisor_reachability_edges,
+    validate_supervisor_parallel_region,
     validate_supervisors,
 )
 
@@ -71,6 +72,7 @@ class WorkflowValidator:
         issues.extend(self._semantic_errors(spec, typed_nodes))
         parallel_region, parallel_issues = analyze_parallel_region(spec, typed_nodes)
         issues.extend(parallel_issues)
+        issues.extend(validate_supervisor_parallel_region(typed_nodes, parallel_region))
         if issues:
             raise WorkflowValidationError(issues)
         return ValidatedWorkflowSpec(

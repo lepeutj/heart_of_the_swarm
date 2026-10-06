@@ -13,7 +13,7 @@ subworkflow composition. Other V2 contracts are tracked in
 | --- | --- | --- |
 | `input` | Initialize and validate object input | Product adapter |
 | `agent` | Inline `AgentSpec` or immutable `AgentVersion`, named mappings | `AgentRunner` / `create_agent` |
-| `supervisor` | Strict single-target routing contract | Deferred to V2.4 runtime |
+| `supervisor` | Bounded single-target routing through LangGraph `Command` | V2.4a |
 | `connector` | One registered capability invocation, named mappings | Capability registry |
 | `subworkflow` | Immutable `WorkflowVersion`, isolated named mappings | LangGraph subgraph |
 | `transform` | Restricted state assignments | Product adapter |
@@ -152,10 +152,9 @@ join merges only paths written by nodes that actually ran, in declared branch or
 preserve branch frames, so resume does not replay a completed sibling. `branch_id` is runtime event
 context and never enters business state.
 
-## Supervisor contract (V2.4a, validation only)
+## Supervisor contract (V2.4a)
 
-A supervisor is an agent declaration with a closed routing contract. The current implementation
-parses and validates it but deliberately does not execute it:
+A supervisor is an agent declaration with a closed routing contract:
 
 ```yaml
 type: supervisor
@@ -186,9 +185,10 @@ only for static reachability validation and are never serialized as workflow edg
 {action: finish, result: {summary: Complete.}}
 ```
 
-`ExecutionPolicy.max_handoffs` is a positive application-bounded contract value. Runtime counting,
-LangGraph `Command`, mandatory return, checkpoint behavior, events, and React editing remain outside
-this static-validation sub-jalon.
+`ExecutionPolicy.max_handoffs` is a positive application-bounded contract value. The runtime turns
+each valid decision into a native LangGraph `Command`, returns every completed target to the
+supervisor, and emits contextual decision and handoff events. A checkpoint after target completion
+resumes at the supervisor without replaying that target. React editing remains deferred.
 
 ## Validation and execution
 

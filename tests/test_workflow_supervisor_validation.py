@@ -202,3 +202,34 @@ def test_empty_allowed_targets_is_rejected_during_config_parsing() -> None:
     data["nodes"][1]["config"]["allowed_targets"] = {}
 
     assert "workflow.node.invalid_config" in {issue.code for issue in issues(data)}
+
+
+def test_multiple_supervisors_are_rejected_for_v2_4a() -> None:
+    data = supervisor_workflow_data()
+    second = deepcopy(data["nodes"][1])
+    second["id"] = "second_supervisor"
+    second["name"] = "Second supervisor"
+    second["config"]["allowed_targets"] = {"researcher": {"task_field": "delegated_task"}}
+    data["nodes"].append(second)
+
+    assert "workflow.supervisor.multiple_not_supported" in {issue.code for issue in issues(data)}
+
+
+def test_supervisor_inside_parallel_region_is_rejected() -> None:
+    data = supervisor_workflow_data()
+    data["nodes"].append(
+        {
+            "id": "side_branch",
+            "type": "transform",
+            "name": "Side branch",
+            "config": {"assign": {"$.side": "done"}},
+        }
+    )
+    data["edges"].extend(
+        [
+            {"source": "input", "target": "side_branch"},
+            {"source": "side_branch", "target": "output"},
+        ]
+    )
+
+    assert "workflow.supervisor.parallel_not_supported" in {issue.code for issue in issues(data)}

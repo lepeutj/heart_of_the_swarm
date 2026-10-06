@@ -7,6 +7,7 @@ from heart_of_the_swarm.workflows.configs import (
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
+    ParallelRegion,
     ValidatedWorkflowNode,
     WorkflowEdge,
     WorkflowNode,
@@ -51,7 +52,18 @@ def validate_supervisors(
         incoming[edge.target].append(edge)
         outgoing[edge.source].append(edge)
 
-    for supervisor in nodes:
+    supervisors = [node for node in nodes if isinstance(node.config, SupervisorNodeConfig)]
+    if len(supervisors) > 1:
+        issues.append(
+            _issue(
+                "workflow.supervisor.multiple_not_supported",
+                "V2.4a supports exactly one supervisor node per workflow.",
+                supervisors[1].id,
+                "nodes",
+            )
+        )
+
+    for supervisor in supervisors:
         config = supervisor.config
         if not isinstance(config, SupervisorNodeConfig):
             continue
@@ -106,6 +118,30 @@ def validate_supervisors(
                 )
             )
     return issues
+
+
+def validate_supervisor_parallel_region(
+    nodes: list[ValidatedWorkflowNode],
+    region: ParallelRegion | None,
+) -> list[WorkflowValidationIssue]:
+    """Reject a supervisor inside the first runtime's static parallel region."""
+    if region is None:
+        return []
+    region_nodes = {
+        region.split_node_id,
+        region.join_node_id,
+        *(node_id for branch in region.branches for node_id in branch.node_ids),
+    }
+    return [
+        _issue(
+            "workflow.supervisor.parallel_not_supported",
+            "A supervisor cannot execute inside a V2.3 parallel region.",
+            node.id,
+            "nodes",
+        )
+        for node in nodes
+        if isinstance(node.config, SupervisorNodeConfig) and node.id in region_nodes
+    ]
 
 
 def _target_errors(

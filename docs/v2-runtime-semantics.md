@@ -185,7 +185,7 @@ replay the completed sibling, and releases the fan-in only after every required 
 Partial joins, quorum joins, first-result-wins, nested parallel regions, arbitrary reducers, and
 parallel loops remain deferred.
 
-## V2.4a — Single-target supervisor routing (contract defined, not implemented)
+## V2.4a — Single-target supervisor routing
 
 ### Decision contract
 
@@ -261,7 +261,8 @@ model reasoning.
 12. Multiple targets, subworkflow targets, and direct target-to-target handoffs are rejected.
 
 Multiple selection, dynamic fan-out, quorum, first-N completion, cancellation, agent-as-tool,
-human handoff, and target subworkflows remain deferred.
+human handoff, target subworkflows, multiple supervisors, and supervisors inside parallel regions
+remain deferred.
 
 ## V2.5+ deferred contracts
 

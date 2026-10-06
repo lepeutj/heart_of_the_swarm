@@ -96,18 +96,19 @@ loops inside a parallel region, partial joins, quorum joins, and first-result-wi
 
 ## V2.4 — Multi-agent routing
 
-Status: V2.4a contract defined; runtime not implemented.
+Status: V2.4a runtime implemented; React editing deferred.
 
 1. Define a strict `SupervisorDecision`: one `handoff` target and task, or one final `finish`
    result. **Implemented as a typed contract.**
 2. Validate `allowed_targets` as local `AGENT` node IDs and keep handoff state boundaries explicit.
    **Static validation implemented.**
 3. Add `max_handoffs` to execution policy; count transfers rather than supervisor/target node visits.
-   **Policy field and declarative linkage implemented; runtime counting deferred.**
-4. Translate valid single-target selections to LangGraph `Command` internally.
-5. Require every target to return control to the supervisor before another decision.
+   **Implemented.**
+4. Translate valid single-target selections to LangGraph `Command` internally. **Implemented.**
+5. Require every target to return control to the supervisor before another decision. **Implemented.**
 6. Preserve the completed target across checkpoint resume before returning to the supervisor.
-7. Add contextual decision and handoff events without a public `HANDOFF` node.
+   **Implemented.**
+7. Add contextual decision and handoff events without a public `HANDOFF` node. **Implemented.**
 
 Exit criterion: a supervisor can route sequentially to a researcher and reviewer, regain control
 after each target, then finish. It cannot select arbitrary nodes, exceed its handoff limit, inherit

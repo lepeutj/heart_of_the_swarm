@@ -77,6 +77,7 @@ class WorkflowVersionRunner:
             checkpointer=checkpointer,
             workflow_version_id=str(version.id),
             max_subworkflow_depth=policy.max_subworkflow_depth,
+            max_handoffs=policy.max_handoffs,
             interrupt_after=tuple(path for path in interrupt_after if "/" in path),
         )
 

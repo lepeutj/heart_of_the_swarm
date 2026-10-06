@@ -32,7 +32,7 @@ class AgentRunner:
         system_prompt: str | None = None,
         callbacks: Sequence[BaseCallbackHandler] = (),
         metadata: Mapping[str, Any] | None = None,
-        response_schema: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | type[BaseModel] | None = None,
     ) -> Any:
         """Execute one agent and return text or LangChain-validated structured output."""
         self.validator.validate_execution(spec)

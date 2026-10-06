@@ -6,11 +6,16 @@ from typing import Annotated, Any, NoReturn, TypedDict
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
-from heart_of_the_swarm.workflows.configs import SubworkflowNodeConfig
+from heart_of_the_swarm.workflows.configs import (
+    SubworkflowNodeConfig,
+    SupervisorNodeConfig,
+    SupervisorTargetConfig,
+)
 from heart_of_the_swarm.workflows.documents import WorkflowVersionSnapshot
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionResolver
@@ -34,6 +39,7 @@ from heart_of_the_swarm.workflows.spec import (
 )
 from heart_of_the_swarm.workflows.state import StatePathError, WorkflowState, get_path, set_path
 from heart_of_the_swarm.workflows.subworkflows import validate_subworkflow_mappings
+from heart_of_the_swarm.workflows.supervisors import FinishDecision, HandoffDecision
 from heart_of_the_swarm.workflows.validation import WorkflowValidator
 
 
@@ -58,6 +64,10 @@ class _GraphState(TypedDict, total=False):
     output: Any
     loop_iterations: dict[str, int]
     parent_frames: tuple["_ExecutionFrame", ...]
+    handoff_index: int
+    handoff_task: str | None
+    active_supervisor: str | None
+    active_target: str | None
     parallel_branches: Annotated[
         dict[str, _ParallelBranchFrame],
         _merge_parallel_branch_frames,
@@ -121,6 +131,7 @@ class WorkflowGraph:
                 "data": deepcopy(workflow_input),
                 "executed_nodes": (),
                 "loop_iterations": {},
+                "handoff_index": 0,
             }
         result = await self.graph.ainvoke(
             graph_input,
@@ -175,6 +186,7 @@ class WorkflowGraphFactory:
         | None = None,
         workflow_version_id: str | None = None,
         execution_path: str = "root",
+        max_handoffs: int = 20,
     ) -> WorkflowGraph:
         """Build one graph while resolving registered capabilities up front."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
@@ -193,6 +205,7 @@ class WorkflowGraphFactory:
             runtime_context=None,
             parallel=build_parallel_runtime_region(workflow),
             subworkflows={},
+            max_handoffs=max_handoffs,
         )
 
     async def acreate(
@@ -206,6 +219,7 @@ class WorkflowGraphFactory:
         | None = None,
         workflow_version_id: str | None = None,
         max_subworkflow_depth: int = 8,
+        max_handoffs: int = 20,
         interrupt_after: tuple[str, ...] = (),
     ) -> WorkflowGraph:
         """Resolve immutable child versions and compile them as nested LangGraph graphs."""
@@ -226,6 +240,7 @@ class WorkflowGraphFactory:
             workflow_stack=(str(workflow.id),),
             interrupt_after=interrupt_after,
             runtime_context=None,
+            max_handoffs=max_handoffs,
         )
 
     async def _acreate(
@@ -244,6 +259,7 @@ class WorkflowGraphFactory:
         workflow_stack: tuple[str, ...],
         interrupt_after: tuple[str, ...],
         runtime_context: dict[str, Any] | None,
+        max_handoffs: int,
     ) -> WorkflowGraph:
         """Compile one workflow and its immutable dependency tree recursively."""
         subworkflows: dict[str, WorkflowGraph] = {}
@@ -310,6 +326,7 @@ class WorkflowGraphFactory:
                     if path.startswith(f"{node.id}/")
                 ),
                 runtime_context=child_context,
+                max_handoffs=max_handoffs,
             )
             subworkflows[node.id] = child_graph
 
@@ -324,6 +341,7 @@ class WorkflowGraphFactory:
             runtime_context=runtime_context,
             parallel=parallel,
             subworkflows=subworkflows,
+            max_handoffs=max_handoffs,
             compile_interrupt_after=tuple(path for path in interrupt_after if "/" not in path),
         )
 
@@ -340,9 +358,12 @@ class WorkflowGraphFactory:
         runtime_context: dict[str, Any] | None,
         parallel: ParallelRuntimeRegion | None,
         subworkflows: Mapping[str, WorkflowGraph],
+        max_handoffs: int,
         compile_interrupt_after: tuple[str, ...] = (),
     ) -> WorkflowGraph:
         """Build one graph from validated nodes and already-compiled child graphs."""
+        if not 1 <= max_handoffs <= 100:
+            raise ValueError("max_handoffs must be between 1 and 100")
 
         runner = WorkflowNodeRunner(
             workflow,
@@ -357,7 +378,22 @@ class WorkflowGraphFactory:
             runtime_context=runtime_context,
         )
         outgoing = self._outgoing_edges(workflow)
+        nodes_by_id = {node.id: node for node in workflow.nodes}
         graph_node_ids = {node.id: self._graph_node_id(node.id) for node in workflow.nodes}
+        supervisor_nodes = {
+            node.id: node
+            for node in workflow.nodes
+            if isinstance(node.config, SupervisorNodeConfig)
+        }
+        delegated_targets: dict[
+            str,
+            tuple[ValidatedWorkflowNode, SupervisorTargetConfig],
+        ] = {
+            target_id: (supervisor, target_config)
+            for supervisor in supervisor_nodes.values()
+            for target_id, target_config in supervisor.config.allowed_targets.items()
+            if isinstance(supervisor.config, SupervisorNodeConfig)
+        }
         branch_by_node = (
             {node_id: branch for branch in parallel.branches for node_id in branch.node_ids}
             if parallel is not None
@@ -369,7 +405,37 @@ class WorkflowGraphFactory:
             graph_node_id = graph_node_ids[node.id]
             edges = outgoing[node.id]
             branch = branch_by_node.get(node.id)
-            if parallel is not None and node.id == parallel.join_node_id:
+            if isinstance(node.config, SupervisorNodeConfig):
+                finish_target = outgoing[node.id][0].target
+                builder.add_node(
+                    graph_node_id,
+                    self._supervisor_action(
+                        runner,
+                        node,
+                        graph_node_ids,
+                        nodes_by_id,
+                        finish_target,
+                        max_handoffs,
+                    ),
+                    destinations=tuple(
+                        graph_node_ids[target]
+                        for target in (*node.config.allowed_targets, finish_target)
+                    ),
+                )
+            elif node.id in delegated_targets:
+                supervisor, target_config = delegated_targets[node.id]
+                builder.add_node(
+                    graph_node_id,
+                    self._delegated_agent_action(
+                        runner,
+                        node,
+                        supervisor,
+                        target_config,
+                        graph_node_ids[supervisor.id],
+                    ),
+                    destinations=(graph_node_ids[supervisor.id],),
+                )
+            elif parallel is not None and node.id == parallel.join_node_id:
                 builder.add_node(
                     graph_node_id,
                     self._parallel_join_action(runner, node, edges, parallel),
@@ -406,6 +472,9 @@ class WorkflowGraphFactory:
             graph_node_id = graph_node_ids[node.id]
             edges = outgoing[node.id]
             branch = branch_by_node.get(node.id)
+            if isinstance(node.config, SupervisorNodeConfig) or node.id in delegated_targets:
+                # Command returned by these nodes owns the dynamic transition.
+                continue
             if node.type == NodeType.CONDITION:
                 targets = {
                     edge.target: (
@@ -691,6 +760,128 @@ class WorkflowGraphFactory:
             if result.is_output:
                 update["output"] = result.output
             return update
+
+        return execute
+
+    @staticmethod
+    def _supervisor_action(
+        runner: WorkflowNodeRunner,
+        node: ValidatedWorkflowNode,
+        graph_node_ids: Mapping[str, str],
+        nodes_by_id: Mapping[str, ValidatedWorkflowNode],
+        finish_target: str,
+        max_handoffs: int,
+    ) -> Callable[[_GraphState], Awaitable[Command]]:
+        """Translate one validated supervisor decision into a native LangGraph command."""
+        config = node.config
+        if not isinstance(config, SupervisorNodeConfig):
+            raise TypeError(f"Node '{node.id}' has an inconsistent supervisor configuration.")
+
+        async def execute(state: _GraphState) -> Command:
+            active_target = state.get("active_target")
+            if active_target is not None and state.get("active_supervisor") == node.id:
+                await runner.record_event(
+                    "handoff.completed",
+                    nodes_by_id[active_target],
+                    {
+                        "supervisor_node_id": node.id,
+                        "target_node_id": active_target,
+                        "handoff_index": int(state.get("handoff_index", 0)),
+                    },
+                )
+            result = await runner.run(
+                node,
+                [],
+                state["data"],
+                tuple(state.get("executed_nodes", ())),
+            )
+            decision = result.supervisor_decision
+            if decision is None:
+                raise TypeError(f"Supervisor node '{node.id}' returned no decision.")
+            if isinstance(decision.root, FinishDecision):
+                updated = deepcopy(result.state)
+                set_path(updated, config.finish_output.to_state, deepcopy(decision.root.result))
+                return Command(
+                    update={
+                        "data": updated,
+                        "executed_nodes": result.executed_nodes,
+                        "handoff_task": None,
+                        "active_supervisor": None,
+                        "active_target": None,
+                    },
+                    goto=graph_node_ids[finish_target],
+                )
+
+            if not isinstance(decision.root, HandoffDecision):
+                raise TypeError(f"Supervisor node '{node.id}' returned an unknown decision.")
+            handoff_index = int(state.get("handoff_index", 0)) + 1
+            event_data = {
+                "supervisor_node_id": node.id,
+                "target_node_id": decision.root.target,
+                "handoff_index": handoff_index,
+            }
+            if handoff_index > max_handoffs:
+                await runner.record_event("handoff.limit_reached", node, event_data)
+                raise WorkflowExecutionError(
+                    WorkflowExecutionIssue(
+                        code="workflow.execution.handoff_limit_reached",
+                        message=f"Supervisor '{node.id}' exceeded {max_handoffs} handoffs.",
+                        workflow_id=runner.workflow.id,
+                        node_id=node.id,
+                        node_type=node.type,
+                    )
+                )
+            await runner.record_event("handoff.started", node, event_data)
+            return Command(
+                update={
+                    "data": result.state,
+                    "executed_nodes": result.executed_nodes,
+                    "handoff_index": handoff_index,
+                    "handoff_task": decision.root.task,
+                    "active_supervisor": node.id,
+                    "active_target": decision.root.target,
+                },
+                goto=graph_node_ids[decision.root.target],
+            )
+
+        return execute
+
+    @staticmethod
+    def _delegated_agent_action(
+        runner: WorkflowNodeRunner,
+        node: ValidatedWorkflowNode,
+        supervisor: ValidatedWorkflowNode,
+        target_config: SupervisorTargetConfig,
+        supervisor_graph_node_id: str,
+    ) -> Callable[[_GraphState], Awaitable[Command]]:
+        """Execute one delegated agent task and return control to its supervisor."""
+
+        async def execute(state: _GraphState) -> Command:
+            handoff_index = int(state.get("handoff_index", 0))
+            event_data = {
+                "supervisor_node_id": supervisor.id,
+                "target_node_id": node.id,
+                "handoff_index": handoff_index,
+            }
+            try:
+                result = await runner.run(
+                    node,
+                    [],
+                    state["data"],
+                    tuple(state.get("executed_nodes", ())),
+                    event_data,
+                    {target_config.task_field: state["handoff_task"]},
+                )
+            except Exception:
+                await runner.record_event("handoff.failed", node, event_data)
+                raise
+            return Command(
+                update={
+                    "data": result.state,
+                    "executed_nodes": result.executed_nodes,
+                },
+                goto=supervisor_graph_node_id,
+            )
 
         return execute
 
