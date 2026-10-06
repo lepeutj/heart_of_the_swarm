@@ -1,5 +1,9 @@
 # Heart of the Swarm
 
+<p align="center">
+  <img src="docs/screenshots/front_1.png" alt="Heart of the Swarm interface" width="48%">
+  <img src="docs/screenshots/front.png" alt="Heart of the Swarm workflow" width="48%">
+</p>
 Heart of the Swarm designs, validates, versions, and runs LangChain agents and LangGraph workflows.
 It includes a visual editor, OpenAI and OpenRouter providers, PostgreSQL persistence, structured
 audit logs, model-usage aggregation, portable Docker runtimes, and optional MLflow traces.
