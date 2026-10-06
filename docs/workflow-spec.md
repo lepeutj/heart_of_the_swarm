@@ -3,8 +3,9 @@
 `WorkflowSpec` is the portable executable graph edited by React and interpreted by LangGraph.
 It contains no layout, database records, framework objects, credentials, or executable source.
 
-Schema v1 remains frozen and acyclic. Schema v2 currently adds one bounded conditional back edge.
-Other V2 contracts are tracked in [`v2-runtime-semantics.md`](v2-runtime-semantics.md).
+Schema v1 remains frozen and acyclic. Schema v2 adds one bounded conditional back edge and immutable
+subworkflow composition. Other V2 contracts are tracked in
+[`v2-runtime-semantics.md`](v2-runtime-semantics.md).
 
 ## Nodes
 
@@ -13,6 +14,7 @@ Other V2 contracts are tracked in [`v2-runtime-semantics.md`](v2-runtime-semanti
 | `input` | Initialize and validate object input | Product adapter |
 | `agent` | Inline `AgentSpec` or immutable `AgentVersion`, named mappings | `AgentRunner` / `create_agent` |
 | `connector` | One registered capability invocation, named mappings | Capability registry |
+| `subworkflow` | Immutable `WorkflowVersion`, isolated named mappings | LangGraph subgraph |
 | `transform` | Restricted state assignments | Product adapter |
 | `condition` | Ordered conditional routes and one fallback | LangGraph routing |
 | `output` | Named workflow output mappings | Product adapter |
@@ -87,6 +89,28 @@ The first runtime accepts exactly one loop edge. Its source must be a condition,
 leave a DAG, and its target must reach its source through forward edges. The iteration counter is
 runtime-owned state, persists in LangGraph checkpoints, and exceeding the bound raises
 `workflow.execution.iteration_limit`. Nested and overlapping loops remain unsupported.
+
+## Immutable subworkflow (schema v2)
+
+`SUBWORKFLOW` references one published `WorkflowVersion`; it never embeds a draft or compiled
+graph. Parent and child exchange only explicitly mapped values:
+
+```yaml
+type: subworkflow
+config:
+  workflow_version_id: 8134eb0e-7d3b-4dd5-8fde-28d8e64336b1
+  inputs:
+    request: {from_state: $.request}
+  outputs:
+    summary: {to_state: $.research.summary}
+```
+
+The child is compiled as a native LangGraph subgraph in the same run and execution thread. Its
+business state is isolated, while checkpoint namespaces, trace context, and hierarchical event
+paths remain part of the parent execution. Publishing rejects invalid mappings, missing immutable
+versions, direct or indirect dependency recursion, and nesting beyond the configured bound. Runtime
+validation repeats these checks through an injected version resolver so the same compiler works in
+the worker, tests, and future artifact runtimes.
 
 ## Validation and execution
 

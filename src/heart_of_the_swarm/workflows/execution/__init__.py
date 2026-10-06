@@ -18,6 +18,7 @@ from heart_of_the_swarm.workflows.execution.version_runner import (
     WorkflowExecutionEvent,
     WorkflowVersionRunner,
 )
+from heart_of_the_swarm.workflows.execution.workflow_versions import WorkflowVersionResolver
 
 __all__ = [
     "AgentVersionResolver",
@@ -31,5 +32,6 @@ __all__ = [
     "WorkflowEventSink",
     "WorkflowExecutionEvent",
     "WorkflowVersionRunner",
+    "WorkflowVersionResolver",
     "validate_workflow_input",
 ]

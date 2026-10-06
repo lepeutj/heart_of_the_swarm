@@ -116,6 +116,19 @@ class ConnectorNodeConfig(NodeConfig):
         return self
 
 
+class SubworkflowNodeConfig(NodeConfig):
+    """Map isolated parent state through one immutable child workflow version."""
+
+    workflow_version_id: UUID
+    inputs: dict[DataFieldName, StateReference] = Field(default_factory=dict, max_length=50)
+    outputs: dict[DataFieldName, OutputBinding] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def valid_outputs(self) -> "SubworkflowNodeConfig":
+        _validate_distinct_destinations([binding.to_state for binding in self.outputs.values()])
+        return self
+
+
 class ConditionNodeConfig(NodeConfig):
     pass
 
@@ -148,6 +161,7 @@ WorkflowNodeConfig = (
     InputNodeConfig
     | AgentNodeConfig
     | ConnectorNodeConfig
+    | SubworkflowNodeConfig
     | ConditionNodeConfig
     | TransformNodeConfig
     | OutputNodeConfig
@@ -158,6 +172,7 @@ NODE_CONFIG_TYPES: dict[NodeType, type[NodeConfig]] = {
     NodeType.AGENT: AgentNodeConfig,
     NodeType.LLM: AgentNodeConfig,
     NodeType.CONNECTOR: ConnectorNodeConfig,
+    NodeType.SUBWORKFLOW: SubworkflowNodeConfig,
     NodeType.CONDITION: ConditionNodeConfig,
     NodeType.TRANSFORM: TransformNodeConfig,
     NodeType.OUTPUT: OutputNodeConfig,

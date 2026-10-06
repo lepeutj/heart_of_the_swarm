@@ -56,8 +56,7 @@ Published workflow versions freeze the capability identities and schema fingerpr
 They can be queued for durable worker execution, followed through ordered node lifecycle events,
 and inspected in the editor. Invocation input is validated before queueing. An already-loaded
 version can also be executed through the persistence-independent `WorkflowVersionRunner`, which is
-the shared boundary for workers, future artifacts, and remote runtimes. Parallel branches and joins,
-loops, checkpoints, and resume remain deferred until sequential composition is stable.
+the shared boundary for workers, artifacts, and remote runtimes.
 
 Typed manual, webhook, and interval-schedule trigger definitions can be persisted against an exact
 immutable agent or workflow version. Enabled workflow webhook triggers accept an external JSON
@@ -76,9 +75,11 @@ unavailable.
 The workflow runtime image has been built and invoked with a real read-only artifact. Its
 database-independent result and nested MLflow trace were verified through Docker. V1 is frozen.
 V2 first introduces execution policies, threads, durable LangGraph checkpoints, controlled cycles,
-subworkflows, and reducers. V2.1 durable execution threads and explicit resume are complete. V2.2a
-adds one checkpoint-safe bounded conditional back edge; immutable subworkflows are next.
-Multi-agent handoffs and interaction build on those primitives; secure
+subworkflows, and reducers. V2.1 durable execution threads and explicit resume are complete. V2.2
+supports one checkpoint-safe bounded conditional back edge and immutable nested workflow versions
+with isolated mappings, hierarchical events, recursion protection, and nested checkpoint resume.
+Standalone export of a parent with child workflow dependencies remains deferred. Parallel state,
+multi-agent handoffs, and interaction build on those primitives; secure
 remote execution and deployment lifecycle management follow after the runtime semantics are stable.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service

@@ -43,6 +43,14 @@ asked otherwise.
 
 ## Development
 
+- Follow KISS: choose the smallest clear implementation that satisfies the current contract. Avoid
+  speculative abstractions, duplicated framework features, and flexibility without an active use
+  case.
+- Document non-obvious business and runtime functions with concise, precise docstrings. Add a short
+  explanatory comment around a complex framework boundary or code block when its purpose or
+  constraint is not evident from the code. Explain responsibility and intent; do not restate syntax
+  or write long narratives. A human reviewer must be able to understand why the code exists and what
+  contract it preserves.
 - Use `uv`, never `pip install` instructions.
 - Justify new dependencies and avoid overlapping libraries.
 - Test meaningful behavior, invalid input, and important failures; every bug fix needs a regression

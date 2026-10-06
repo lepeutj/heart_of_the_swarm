@@ -414,6 +414,21 @@ async def test_interrupted_workflow_resumes_in_new_run_without_replaying_connect
         assert first_events[-1].event_type == "workflow.interrupted"
         assert recorded_values == ["once"]
 
+        assert checkpoints.saver is not None
+        checkpoint_ids = [
+            item.config["configurable"]["checkpoint_id"]
+            async for item in checkpoints.saver.alist(
+                {"configurable": {"thread_id": str(interrupted.thread_id)}}
+            )
+        ]
+        stale_checkpoint_id = next(
+            checkpoint_id
+            for checkpoint_id in checkpoint_ids
+            if checkpoint_id != interrupted.resume_checkpoint_id
+        )
+        with pytest.raises(ValueError, match="only the latest checkpoint"):
+            await service.resume(first.run_id, stale_checkpoint_id, "trace-stale")
+
         resumed = await service.resume(
             first.run_id,
             interrupted.resume_checkpoint_id,

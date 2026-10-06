@@ -59,12 +59,16 @@ selected checkpoint, and both traces share the product thread identifier.
 ## V2.2 — Controlled composition
 
 1. V2.2a: support one bounded conditional back edge without adding a `LOOP` node. **Implemented.**
-2. V2.2b: add immutable `SUBWORKFLOW` references with typed input/output mappings.
-3. Reject recursive subworkflow dependencies and bound nesting depth.
-4. Preserve execution counters, traces, and events across nested workflows.
+2. V2.2b: add immutable `SUBWORKFLOW` references with typed input/output mappings. **Implemented.**
+3. Reject recursive subworkflow dependencies and bound nesting depth. **Implemented.**
+4. Preserve checkpoint state, trace context, and hierarchical events across nested workflows.
+   **Implemented.**
 
 Exit criterion: the reference research/review workflow can loop at most three times and compose one
 versioned child workflow.
+
+Standalone artifact bundling for a subworkflow dependency tree is deferred; unsupported exports
+are rejected explicitly rather than producing incomplete runtimes.
 
 ## V2.3 — Parallel state
 

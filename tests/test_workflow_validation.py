@@ -223,6 +223,19 @@ def test_loop_contract_rejects_v1_forward_and_multiple_loop_edges() -> None:
     assert "workflow.loop.multiple_not_supported" in issue_codes(data)
 
 
+def test_subworkflow_requires_schema_v2() -> None:
+    data = workflow_data()
+    summarize = next(node for node in data["nodes"] if node["id"] == "summarize")
+    summarize["type"] = "subworkflow"
+    summarize["config"] = {
+        "workflow_version_id": "e49ace29-9a76-4c9a-a39c-3b6ee727159b",
+        "inputs": {"request": {"from_state": "$.request_copy"}},
+        "outputs": {"summary": {"to_state": "$.summary"}},
+    }
+
+    assert "workflow.subworkflow.requires_schema_v2" in issue_codes(data)
+
+
 def test_unreachable_node_and_path_without_output_are_rejected() -> None:
     data = workflow_data()
     data["nodes"].append(

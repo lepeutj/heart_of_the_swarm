@@ -11,6 +11,7 @@ from heart_of_the_swarm.workflows.configs import (
     AgentNodeConfig,
     ConnectorNodeConfig,
     InlineAgentSource,
+    SubworkflowNodeConfig,
     VersionedAgentSource,
 )
 from heart_of_the_swarm.workflows.documents import (
@@ -18,6 +19,11 @@ from heart_of_the_swarm.workflows.documents import (
     WorkflowDraftSave,
     WorkflowSummary,
     WorkflowVersionDetail,
+)
+from heart_of_the_swarm.workflows.spec import ValidatedWorkflowSpec
+from heart_of_the_swarm.workflows.subworkflows import (
+    MAX_SUBWORKFLOW_DEPTH,
+    validate_subworkflow_mappings,
 )
 
 
@@ -70,6 +76,12 @@ class WorkflowService:
         except ValidationError as exc:
             raise ValueError("workflow draft is not a valid WorkflowSpec") from exc
         validated = self.validator.validate(spec)
+        await self._validate_subworkflow_dependencies(
+            validated,
+            workflow_stack=(workflow_id,),
+            version_stack=(),
+            depth=0,
+        )
         capability_ids: set[str] = set()
         for node in validated.nodes:
             if isinstance(node.config, ConnectorNodeConfig):
@@ -95,6 +107,44 @@ class WorkflowService:
         async with self.database.session() as session:
             return await WorkflowRepository(session).create_version(
                 str(workflow_id), contracts, expected_revision=draft.revision
+            )
+
+    async def _validate_subworkflow_dependencies(
+        self,
+        workflow: ValidatedWorkflowSpec,
+        *,
+        workflow_stack: tuple[UUID, ...],
+        version_stack: tuple[UUID, ...],
+        depth: int,
+    ) -> None:
+        """Reject missing, incompatible, recursive, or excessively nested child versions."""
+        for node in workflow.nodes:
+            if not isinstance(node.config, SubworkflowNodeConfig):
+                continue
+            version_id = node.config.workflow_version_id
+            async with self.database.session() as session:
+                child = await WorkflowRepository(session).get_version(str(version_id))
+            if child is None:
+                raise ValueError(f"subworkflow version not found: {version_id}")
+            if child.workflow_id in workflow_stack or version_id in version_stack:
+                raise ValueError(f"subworkflow dependency is recursive at node '{node.id}'")
+            if depth + 1 > MAX_SUBWORKFLOW_DEPTH:
+                raise ValueError(
+                    f"subworkflow dependency exceeds depth {MAX_SUBWORKFLOW_DEPTH} at node "
+                    f"'{node.id}'"
+                )
+            child_workflow = self.validator.validate(child.spec)
+            try:
+                validate_subworkflow_mappings(node.config, child_workflow)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid subworkflow mappings at node '{node.id}': {exc}"
+                ) from exc
+            await self._validate_subworkflow_dependencies(
+                child_workflow,
+                workflow_stack=(*workflow_stack, child.workflow_id),
+                version_stack=(*version_stack, version_id),
+                depth=depth + 1,
             )
 
     @staticmethod

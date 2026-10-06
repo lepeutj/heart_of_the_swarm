@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { AgentOption, ToolCapability } from "../api";
+import type { AgentOption, ToolCapability, WorkflowVersion } from "../api";
 import type { EditorNode, JsonObject } from "../workflow";
 import { AgentDataFlowEditor, WorkflowOutputEditor } from "./DataFlowEditor";
 import { JsonEditor } from "./JsonEditor";
@@ -14,6 +14,7 @@ interface NodeInspectorProps {
   skillNames: string[];
   providerNames: string[];
   agentOptions: AgentOption[];
+  workflowVersions: WorkflowVersion[];
   canDetach: boolean;
   onChange: (update: Partial<EditorNode["data"]>) => void;
   onDetach: () => void;
@@ -326,6 +327,88 @@ function TransformEditor({ config, onChange }: {
   );
 }
 
+function SubworkflowEditor({ config, versions, onChange }: {
+  config: JsonObject;
+  versions: WorkflowVersion[];
+  onChange: (config: JsonObject) => void;
+}) {
+  const versionId = asString(config.workflow_version_id);
+  const inputs = asObject(config.inputs);
+  const outputs = asObject(config.outputs);
+
+  function selectVersion(nextId: string) {
+    const version = versions.find((item) => item.id === nextId);
+    if (!version) {
+      onChange({ ...config, workflow_version_id: nextId });
+      return;
+    }
+    const inputProperties = schemaProperties(version.spec.input_schema);
+    const outputProperties = schemaProperties(version.spec.output_schema ?? {});
+    onChange({
+      ...config,
+      workflow_version_id: nextId,
+      inputs: Object.fromEntries(
+        Object.keys(inputProperties).map((name) => [name, { from_state: `$.${name}` }]),
+      ),
+      outputs: Object.fromEntries(
+        Object.keys(outputProperties).map((name) => [name, { to_state: `$.${name}` }]),
+      ),
+    });
+  }
+
+  return (
+    <div className="typed-editor">
+      <p className="field-help">Run one immutable workflow version as an isolated LangGraph subgraph.</p>
+      <label>
+        Child workflow version
+        <select value={versionId} onChange={(event) => selectVersion(event.target.value)}>
+          <option value="">Select a published workflow</option>
+          {versionId && !versions.some((item) => item.id === versionId) && (
+            <option value={versionId}>{versionId} · unavailable</option>
+          )}
+          {versions.map((version) => (
+            <option key={version.id} value={version.id}>
+              {version.spec.name} · v{version.version}
+            </option>
+          ))}
+        </select>
+      </label>
+      <fieldset>
+        <legend>Child inputs</legend>
+        <p className="field-help">Map parent state paths to fields accepted by the child workflow.</p>
+        {Object.entries(inputs).map(([name, value]) => (
+          <label key={name}>
+            {name}
+            <input
+              value={asString(asObject(value).from_state)}
+              onChange={(event) => onChange({
+                ...config,
+                inputs: { ...inputs, [name]: { from_state: event.target.value } },
+              })}
+            />
+          </label>
+        ))}
+      </fieldset>
+      <fieldset>
+        <legend>Child outputs</legend>
+        <p className="field-help">Write selected child result fields into parent state.</p>
+        {Object.entries(outputs).map(([name, value]) => (
+          <label key={name}>
+            {name}
+            <input
+              value={asString(asObject(value).to_state)}
+              onChange={(event) => onChange({
+                ...config,
+                outputs: { ...outputs, [name]: { to_state: event.target.value } },
+              })}
+            />
+          </label>
+        ))}
+      </fieldset>
+    </div>
+  );
+}
+
 function schemaProperties(schema: Record<string, unknown>): Record<string, JsonObject> {
   const properties = schema.properties;
   if (typeof properties !== "object" || properties === null || Array.isArray(properties)) return {};
@@ -474,6 +557,7 @@ export function NodeInspector({
   skillNames,
   providerNames,
   agentOptions,
+  workflowVersions,
   canDetach,
   onChange,
   onDetach,
@@ -505,6 +589,13 @@ export function NodeInspector({
         <ConnectorEditor
           config={config}
           capabilities={capabilities}
+          onChange={(next) => onChange({ config: next })}
+        />
+      )}
+      {node.data.nodeType === "subworkflow" && (
+        <SubworkflowEditor
+          config={config}
+          versions={workflowVersions}
           onChange={(next) => onChange({ config: next })}
         />
       )}

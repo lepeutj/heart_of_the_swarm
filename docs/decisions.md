@@ -46,7 +46,8 @@ the normative field-level rules.
   loaded immutable version is executed by a persistence-independent runner.
 - **ADR-036 — Thread, run, checkpoint are distinct.** An `ExecutionThread` is logical continuity; a
   `WorkflowRun` is one attempt; LangGraph checkpoints are technical execution state. Resume creates
-  a new run in the same thread from an explicit checkpoint.
+  a new run in the same thread from the latest explicitly selected checkpoint; older checkpoints
+  are not time-travel resumes because they may replay external side effects.
 - **ADR-037 — Execution policy differs from deployment policy.** Time and recursion limits belong to
   execution; CPU, memory, network, filesystem, and placement belong to deployment.
 
@@ -61,7 +62,8 @@ the normative field-level rules.
 ## V2 composition
 
 - **ADR-039 — Immutable subworkflows.** Composition references a published `WorkflowVersion`, with
-  typed parent/child mappings, bounded nesting, and recursive dependencies rejected.
+  typed parent/child mappings, bounded nesting, and recursive dependencies rejected. The child is a
+  native LangGraph subgraph in the same run/thread, with contextual event paths and isolated state.
 - **ADR-009 — Human approval requires durable resume.** Approval builds on checkpoints and cannot be
   a blocking in-memory callback.
 - **ADR-040 — Security is cross-cutting.** Identity, authorization, secret references, bounded
@@ -71,7 +73,7 @@ the normative field-level rules.
 ## Current implementation limits
 
 - Schema v2 supports one bounded conditional back edge; nested or overlapping loops are deferred.
-- Subworkflows, parallel reducers, dynamic handoffs, human approval, remote control, and deployment
-  lifecycle remain roadmap items.
+- Subworkflow artifact bundling, parallel reducers, dynamic handoffs, human approval, remote
+  control, and deployment lifecycle remain roadmap items.
 - Do not add a second capability catalogue, custom agent loop, custom traversal engine, or duplicate
   technical tracing pipeline.

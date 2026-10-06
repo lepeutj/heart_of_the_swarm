@@ -68,6 +68,8 @@ class WorkflowNodeRunner:
         workflow_run_id: str | None = None,
         event_sink: Callable[[str, ValidatedWorkflowNode, dict[str, Any]], Awaitable[None]]
         | None = None,
+        workflow_version_id: str | None = None,
+        execution_path: str = "root",
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -76,6 +78,8 @@ class WorkflowNodeRunner:
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
         self.capabilities = capabilities
+        self.workflow_version_id = workflow_version_id
+        self.execution_path = execution_path
 
     async def run(
         self,
@@ -148,6 +152,28 @@ class WorkflowNodeRunner:
 
         await self._record_node("node.completed", node)
         return result
+
+    async def record_started(self, node: ValidatedWorkflowNode) -> None:
+        """Record the start of a framework-managed composite node."""
+        await self._record_node("node.started", node)
+
+    async def record_completed(self, node: ValidatedWorkflowNode) -> None:
+        """Record the completion of a framework-managed composite node."""
+        await self._record_node("node.completed", node)
+
+    async def record_failed(
+        self,
+        node: ValidatedWorkflowNode,
+        *,
+        error_code: str,
+        safe_message: str,
+    ) -> None:
+        """Record a normalized failure for a framework-managed composite node."""
+        await self._record_node(
+            "node.failed",
+            node,
+            {"error_code": error_code, "safe_message": safe_message},
+        )
 
     def reject_non_object_input(self, node: ValidatedWorkflowNode) -> NoReturn:
         """Raise the stable workflow error used for non-object input."""
@@ -434,9 +460,11 @@ class WorkflowNodeRunner:
         """Build metadata shared by workflow-node and nested agent events."""
         return {
             "workflow_id": str(self.workflow.id),
+            "workflow_version_id": self.workflow_version_id,
             "workflow_run_id": self.workflow_run_id,
             "node_id": node.id,
             "node_type": str(node.type),
+            "execution_path": f"{self.execution_path}/{node.id}",
         }
 
     async def _record_node(

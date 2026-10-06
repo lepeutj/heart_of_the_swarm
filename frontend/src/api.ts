@@ -8,7 +8,7 @@ export interface NodeCapability {
 }
 
 export interface WorkflowCapabilities {
-  schema_version: "1";
+  schema_version: "2";
   workflow_schema: Record<string, unknown>;
   nodes: NodeCapability[];
 }

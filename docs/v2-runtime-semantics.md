@@ -39,7 +39,7 @@ ExecutionThread
   `resume_checkpoint_id`.
 - The product creates the thread ID and passes it to LangGraph as `thread_id`.
 - Resume creates a new run and MLflow trace in the same thread; an old run is never reopened.
-- The selected checkpoint must belong to the same thread and workflow version.
+- The selected checkpoint must be the latest checkpoint in the same thread and workflow version.
 - The checkpointer is injected into `WorkflowVersionRunner`; the runner does not load repositories.
 - SQLite and PostgreSQL use official LangGraph checkpointer implementations.
 - A crash never starts an automatic replay. Explicit resume uses a committed checkpoint.
@@ -76,7 +76,7 @@ Rules:
 
 Nested and overlapping loops are deferred.
 
-## V2.2b — Immutable subworkflow (next)
+## V2.2b — Immutable subworkflow (implemented)
 
 ```yaml
 - id: research
@@ -89,14 +89,21 @@ Nested and overlapping loops are deferred.
       summary: {to_state: $.research.summary}
 ```
 
-Required before support can be claimed:
+Runtime contract:
 
 - reference only immutable `WorkflowVersion` records;
 - validate mappings against parent and child schemas;
-- freeze the referenced child version when publishing the parent;
+- retain the exact referenced child version ID when publishing the parent;
 - reject direct and indirect recursive dependencies and bound nesting depth;
 - propagate thread/run context, execution counters, events, and trace correlation;
 - namespace child state and checkpoints; never serialize a compiled child graph.
+
+The child is compiled as a native LangGraph subgraph and remains in the parent's `WorkflowRun` and
+`ExecutionThread`. Event `execution_path` values are contextual (for example,
+`root/research/review`) and never enter business state. Resume uses the latest selected checkpoint
+without creating a LangGraph time-travel fork, so a completed child connector is not replayed.
+Standalone artifacts reject subworkflow dependencies until an export can bundle the complete
+immutable dependency tree.
 
 ## V2.3+ deferred contracts
 

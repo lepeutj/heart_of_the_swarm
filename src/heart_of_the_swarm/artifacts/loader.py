@@ -95,6 +95,8 @@ def validate_workflow_portability(workflow: WorkflowArtifactPayload) -> None:
             + ", ".join(sorted(remote))
         )
     for node in workflow.spec.nodes:
+        if node.type == NodeType.SUBWORKFLOW:
+            raise ValueError("standalone workflow artifacts do not yet bundle subworkflow versions")
         if node.type not in {NodeType.AGENT, NodeType.LLM}:
             continue
         config = AgentNodeConfig.model_validate(node.config)

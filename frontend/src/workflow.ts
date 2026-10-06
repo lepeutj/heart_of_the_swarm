@@ -3,6 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 export type NodeType =
   | "input"
   | "agent"
+  | "subworkflow"
   | "connector"
   | "condition"
   | "transform"
@@ -88,7 +89,10 @@ export function toWorkflowSpec(
   edges: EditorEdge[],
 ): WorkflowSpec {
   return {
-    schema_version: edges.some((edge) => edge.data?.loop) ? "2" : "1",
+    schema_version: (
+      edges.some((edge) => edge.data?.loop)
+      || nodes.some((node) => node.data.nodeType === "subworkflow")
+    ) ? "2" : "1",
     id: document.id,
     name: document.name,
     description: document.description,
@@ -133,6 +137,12 @@ export function defaultConfig(nodeType: NodeType, defaultProvider = "openai"): J
       return {
         capability_id: "http_get_json",
         inputs: { url: { from_state: "$.url" } },
+        outputs: { result: { to_state: "$.result" } },
+      };
+    case "subworkflow":
+      return {
+        workflow_version_id: "",
+        inputs: { request: { from_state: "$.request" } },
         outputs: { result: { to_state: "$.result" } },
       };
     case "transform":

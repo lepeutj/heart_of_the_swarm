@@ -82,6 +82,7 @@ export default function App() {
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
   const [savedWorkflows, setSavedWorkflows] = useState<WorkflowSummary[]>([]);
+  const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([]);
   const [publishedVersion, setPublishedVersion] = useState<WorkflowVersion | null>(null);
   const [runNodeStates, setRunNodeStates] = useState<Record<string, string>>({});
   const [revision, setRevision] = useState<number | null>(null);
@@ -122,13 +123,19 @@ export default function App() {
       loadAgents(),
       loadWorkflows(),
     ])
-      .then(([catalogue, loadedTools, skills, providers, agents, workflows]) => {
+      .then(async ([catalogue, loadedTools, skills, providers, agents, workflows]) => {
+        const versions = (await Promise.all(
+          workflows
+            .filter((workflow) => workflow.latest_version > 0)
+            .map((workflow) => loadLatestWorkflowVersion(workflow.id)),
+        )).filter((version): version is WorkflowVersion => version !== null);
         setCapabilities(catalogue);
         setTools(loadedTools);
         setSkillNames(skills);
         setProviderNames(providers);
         setAgentOptions(agents);
         setSavedWorkflows(workflows);
+        setWorkflowVersions(versions);
         setStatus("Editor ready");
       })
       .catch((error: Error) => setStatus(error.message));
@@ -315,6 +322,10 @@ export default function App() {
     try {
       const version = await createWorkflowVersion(saved.id);
       setPublishedVersion(version);
+      setWorkflowVersions((current) => [
+        ...current.filter((item) => item.workflow_id !== version.workflow_id),
+        version,
+      ]);
       setRunNodeStates({});
       setSavedWorkflows(await loadWorkflows());
       setStatus(`Workflow version ${version.version} created`);
@@ -567,6 +578,9 @@ export default function App() {
               skillNames={skillNames}
               providerNames={providerNames}
               agentOptions={agentOptions}
+              workflowVersions={workflowVersions.filter(
+                (version) => version.workflow_id !== workflowId.current,
+              )}
               canDetach={canDetachSelectedNode}
               onChange={updateSelectedNode}
               onDetach={detachSelectedNode}

@@ -11,6 +11,7 @@ from heart_of_the_swarm.workflows.configs import (
     AgentNodeConfig,
     ConnectorNodeConfig,
     InlineAgentSource,
+    SubworkflowNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
@@ -382,6 +383,16 @@ class WorkflowValidator:
                     "workflow.output.missing",
                     "The workflow requires at least one output node.",
                     field="nodes",
+                )
+            )
+        if spec.schema_version == "1" and any(
+            isinstance(node.config, SubworkflowNodeConfig) for node in nodes
+        ):
+            issues.append(
+                _issue(
+                    "workflow.subworkflow.requires_schema_v2",
+                    "Subworkflow nodes require workflow schema version 2.",
+                    field="schema_version",
                 )
             )
         issues.extend(_schema_errors(spec.input_schema, "input_schema"))

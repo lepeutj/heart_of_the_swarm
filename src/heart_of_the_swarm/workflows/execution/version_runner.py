@@ -11,6 +11,7 @@ from heart_of_the_swarm.workflows.execution.graph_factory import WorkflowGraphFa
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
 from heart_of_the_swarm.workflows.execution.validation import validate_workflow_input
 from heart_of_the_swarm.workflows.spec import ValidatedWorkflowNode
+from heart_of_the_swarm.workflows.subworkflows import MAX_SUBWORKFLOW_DEPTH
 from heart_of_the_swarm.workflows.validation import WorkflowValidator
 
 
@@ -21,6 +22,7 @@ class ExecutionPolicy(BaseModel):
 
     timeout_seconds: float = Field(gt=0, le=3_600)
     recursion_limit: int = Field(ge=2, le=10_000)
+    max_subworkflow_depth: int = Field(default=MAX_SUBWORKFLOW_DEPTH, ge=1, le=32)
 
 
 class WorkflowExecutionEvent(BaseModel):
@@ -67,11 +69,14 @@ class WorkflowVersionRunner:
         self.capabilities.verify_contracts(version.capability_contracts)
         workflow = self.validator.validate(version.spec)
         validate_workflow_input(workflow, input_data)
-        graph = self.graphs.create(
+        graph = await self.graphs.acreate(
             workflow,
             workflow_run_id=execution_id,
             event_sink=self._event_adapter(event_sink),
             checkpointer=checkpointer,
+            workflow_version_id=str(version.id),
+            max_subworkflow_depth=policy.max_subworkflow_depth,
+            interrupt_after=tuple(path for path in interrupt_after if "/" in path),
         )
 
         async with asyncio.timeout(policy.timeout_seconds):
@@ -80,7 +85,7 @@ class WorkflowVersionRunner:
                 recursion_limit=policy.recursion_limit,
                 thread_id=thread_id,
                 checkpoint_id=checkpoint_id,
-                interrupt_after=interrupt_after,
+                interrupt_after=tuple(path for path in interrupt_after if "/" not in path),
             )
         if result.checkpoint_id and event_sink is not None:
             await event_sink.emit(

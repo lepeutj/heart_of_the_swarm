@@ -13,6 +13,7 @@ from heart_of_the_swarm.repositories import WorkflowRepository, WorkflowRunRepos
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflow_agent_versions import DatabaseAgentVersionResolver
+from heart_of_the_swarm.workflow_version_resolver import DatabaseWorkflowVersionResolver
 from heart_of_the_swarm.workflows import (
     ExecutionPolicy,
     WorkflowExecutionEvent,
@@ -88,6 +89,12 @@ class WorkflowRunService:
         }
         if await saver.aget_tuple(config) is None:
             raise ValueError("checkpoint not found for execution thread")
+        latest = await saver.aget_tuple({"configurable": {"thread_id": str(previous.thread_id)}})
+        latest_checkpoint_id = (
+            latest.config.get("configurable", {}).get("checkpoint_id") if latest else None
+        )
+        if latest_checkpoint_id != checkpoint_id:
+            raise ValueError("only the latest checkpoint can be resumed")
         async with self.database.session() as session:
             return await WorkflowRunRepository(session).resume(
                 str(run_id),
@@ -151,6 +158,8 @@ class WorkflowExecutor:
             WorkflowGraphFactory(
                 agent_runner=agent_runner,
                 agent_versions=DatabaseAgentVersionResolver(database),
+                workflow_versions=DatabaseWorkflowVersionResolver(database),
+                validator=validator,
                 capabilities=tools,
             ),
         )

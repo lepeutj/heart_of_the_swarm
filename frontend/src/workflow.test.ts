@@ -73,6 +73,35 @@ describe("toWorkflowSpec", () => {
     expect(spec.edges[0].loop).toEqual({ id: "revision", max_iterations: 3 });
   });
 
+  it("uses schema V2 for an immutable subworkflow node", () => {
+    const config = defaultConfig("subworkflow");
+    const nodes: EditorNode[] = [{
+      id: "research",
+      position: { x: 0, y: 0 },
+      data: { label: "Research", nodeType: "subworkflow", config },
+    }];
+
+    const spec = toWorkflowSpec(
+      {
+        id: "47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+        name: "Composed workflow",
+        description: "Test",
+        inputSchema: { type: "object" },
+        outputSchema: null,
+        entrypoint: "research",
+      },
+      nodes,
+      [],
+    );
+
+    expect(spec.schema_version).toBe("2");
+    expect(config).toEqual({
+      workflow_version_id: "",
+      inputs: { request: { from_state: "$.request" } },
+      outputs: { result: { to_state: "$.result" } },
+    });
+  });
+
   it("configures an inline agent with the shared AgentSpec", () => {
     expect(defaultConfig("agent", "openrouter")).toMatchObject({
       source: {

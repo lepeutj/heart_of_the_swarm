@@ -17,6 +17,7 @@ from heart_of_the_swarm.workflows.execution import (
     WorkflowExecutionIssue,
     WorkflowGraph,
     WorkflowGraphFactory,
+    WorkflowVersionResolver,
     WorkflowVersionRunner,
     validate_workflow_input,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "WorkflowEventSink",
     "WorkflowExecutionEvent",
     "WorkflowVersionRunner",
+    "WorkflowVersionResolver",
     "WorkflowNodeCapability",
     "WorkflowNode",
     "WorkflowSpec",
