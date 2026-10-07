@@ -91,6 +91,11 @@ the normative field-level rules.
   identities. Context never elevates permissions, missing policy is denied, and human approval
   creates one expiring request-bound grant rather than a reusable permission. The normative
   contract is in `docs/security.md`.
+- **ADR-046 — HTTP authentication produces a user principal.** V2.6b accepts only bearer tokens
+  through either an explicit development provider or a validating JWT provider. JWT claims establish
+  identity but carry no product authorization. All control-plane API routes are protected, while
+  health and static UI routes remain public. Authenticated SSE uses `fetch`, never URL tokens. The
+  normative contract is in `docs/authentication.md`.
 
 ## Current implementation limits
 

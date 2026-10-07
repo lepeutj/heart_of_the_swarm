@@ -73,3 +73,7 @@ An `AuthorizationRequest` combines one principal, a closed action, one resource,
 execution context. Missing policy is denied. `approval_required` produces a single-use,
 request-bound `ApprovalGrant`; it never grants a reusable role. See `docs/security.md` for the
 normative contract.
+
+An `AuthenticatedUser` is the verified HTTP identity returned by a development or JWT
+authentication provider. It maps to a user principal but carries no roles or permissions. It is an
+authentication boundary object, not a persisted product user in V2.6b.

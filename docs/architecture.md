@@ -118,7 +118,8 @@ workflow-node principal. Capabilities are protected resources rather than identi
 
 The API, agent construction, capability invocation, credential resolution, and trace access are
 separate enforcement points. No layer inherits broader permissions from its caller, and missing
-policy is denied. The complete V2.6 contract is defined in [`security.md`](security.md).
+policy is denied. The authorization contract is defined in [`security.md`](security.md); the HTTP
+user-authentication adapter is defined in [`authentication.md`](authentication.md).
 
 ## Deployment architecture
 

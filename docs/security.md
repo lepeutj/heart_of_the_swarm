@@ -180,3 +180,6 @@ V2.6a defines and tests the pure authorization value objects and evaluator bound
 add JWT validation, OAuth, user management, policy persistence, remote-runtime authentication,
 credential storage, or a general-purpose IAM language. Those adapters follow only after this
 contract is implemented and verified.
+
+V2.6b user authentication is defined separately in `authentication.md`. It converts a validated
+HTTP bearer credential into a user principal without placing roles or permissions in the token.
