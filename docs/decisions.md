@@ -86,6 +86,11 @@ the normative field-level rules.
 - **ADR-040 — Security is cross-cutting.** Identity, authorization, secret references, bounded
   execution, safe errors, and secure trace/result transport apply across V2; credentials never
   enter specifications.
+- **ADR-045 — Principals request actions on resources.** The closed principal kinds are user,
+  immutable agent version, immutable workflow node, and runtime. Capabilities are resources, not
+  identities. Context never elevates permissions, missing policy is denied, and human approval
+  creates one expiring request-bound grant rather than a reusable permission. The normative
+  contract is in `docs/security.md`.
 
 ## Current implementation limits
 

@@ -99,6 +99,12 @@ list and read interruption state and accept one boolean response. React editing 
 now expose a typed approval node, show pending requests, submit approve/reject decisions, and follow
 the returned continuation run while preserving prior attempt events.
 
+V2.5b-1 replaces React run polling with reconnectable SSE over durable product events. PostgreSQL
+remains the product event source and does not store model-token streams. V2.6a now has a documented
+default-deny authorization contract separating user, agent-version, workflow-node, and runtime
+principals from protected capabilities and credential references; implementation follows that
+contract before JWT, OAuth, or remote-runtime adapters are selected.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

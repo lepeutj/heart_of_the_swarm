@@ -109,6 +109,17 @@ unit-of-work boundary rather than nested repository commits.
 
 Structured application logs remain operational diagnostics, not a second tracing platform.
 
+## Security boundary
+
+Authentication establishes a user or runtime identity. Authorization separately evaluates a
+principal, action, resource, and non-authorizing execution context. Saved agents execute as their
+immutable agent-version principal; inline agents and connectors execute as their immutable
+workflow-node principal. Capabilities are protected resources rather than identities.
+
+The API, agent construction, capability invocation, credential resolution, and trace access are
+separate enforcement points. No layer inherits broader permissions from its caller, and missing
+policy is denied. The complete V2.6 contract is defined in [`security.md`](security.md).
+
 ## Deployment architecture
 
 ```text

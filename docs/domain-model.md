@@ -61,3 +61,15 @@ An `AgentArtifactManifest` identifies one immutable `AgentVersion`, its provider
 runtime version, and the SHA-256 hash of `agent.json`. Exported artifacts contain no credentials and
 require no database after export. The generic Docker runtime validates the artifact, resolves its
 trusted capabilities, and rebuilds the agent with `create_agent`.
+
+## Authorization
+
+Authorization uses four principal kinds: user, immutable agent version, immutable workflow node,
+and runtime. A connector and an inline agent execute as their published workflow-node principal; a
+saved agent executes as its agent-version principal. Capabilities and credentials are protected
+resources, not principals.
+
+An `AuthorizationRequest` combines one principal, a closed action, one resource, and non-authorizing
+execution context. Missing policy is denied. `approval_required` produces a single-use,
+request-bound `ApprovalGrant`; it never grants a reusable role. See `docs/security.md` for the
+normative contract.

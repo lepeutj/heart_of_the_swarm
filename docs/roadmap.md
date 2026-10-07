@@ -151,11 +151,17 @@ part of the architecture.
 
 ## V2.6 — Security and remote execution
 
-1. Add API/runtime identity and authorization.
-2. Apply execution, request, concurrency, network, and state-size limits.
-3. Add credential references for MCP and providers without storing secrets in specs.
-4. Secure remote result, heartbeat, and MLflow trace transport.
-5. Prefer outbound runtime communication when the remote host is behind NAT.
+1. V2.6a: implement the closed principal/action/resource contract, default-deny evaluator boundary,
+   authorization checkpoints, and request-bound approval grants defined in `docs/security.md`.
+2. V2.6b: authenticate users and protect control-plane API operations.
+3. V2.6c: enforce agent-version and workflow-node capability policies at tool exposure and
+   invocation boundaries.
+4. V2.6d: authenticate runtime instances independently from users and agents.
+5. V2.6e: resolve credential references for authorized runtimes without storing secrets in specs.
+6. V2.6f: integrate `approval_required` decisions with durable human approval.
+7. Apply execution, request, concurrency, network, and state-size limits.
+8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
+   communication when the remote host is behind NAT.
 
 Basic secret handling, allow-lists, safe errors, SSRF protection, and execution bounds are
 cross-cutting requirements and must not wait for this milestone.
