@@ -153,6 +153,8 @@ part of the architecture.
 
 1. V2.6a: implement the closed principal/action/resource contract, default-deny evaluator boundary,
    authorization checkpoints, and request-bound approval grants defined in `docs/security.md`.
+   **Pure value objects and exact-match policy evaluation are implemented; runtime enforcement is
+   intentionally deferred to the following increments.**
 2. V2.6b: authenticate users and protect control-plane API operations.
 3. V2.6c: enforce agent-version and workflow-node capability policies at tool exposure and
    invocation boundaries.

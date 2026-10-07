@@ -102,8 +102,11 @@ the returned continuation run while preserving prior attempt events.
 V2.5b-1 replaces React run polling with reconnectable SSE over durable product events. PostgreSQL
 remains the product event source and does not store model-token streams. V2.6a now has a documented
 default-deny authorization contract separating user, agent-version, workflow-node, and runtime
-principals from protected capabilities and credential references; implementation follows that
-contract before JWT, OAuth, or remote-runtime adapters are selected.
+principals from protected capabilities and credential references.
+
+The pure V2.6a authorization value objects and exact-match `PolicyEvaluator` are now implemented.
+They reject unknown contract values, deny missing policy, apply restrictive decision precedence,
+and remain independent from FastAPI, JWT, persistence, LangGraph, credentials, and remote runtimes.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
