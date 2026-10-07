@@ -46,6 +46,8 @@ workflow.execute
 agent.read
 agent.edit
 agent.execute
+capability.read
+capability.manage
 capability.invoke
 credential.resolve
 trace.read
@@ -183,3 +185,5 @@ contract is implemented and verified.
 
 V2.6b user authentication is defined separately in `authentication.md`. It converts a validated
 HTTP bearer credential into a user principal without placing roles or permissions in the token.
+V2.6c user HTTP authorization is defined in `user-authorization.md`. It maps authenticated control
+plane requests to exact actions and resources through an injected policy source.

@@ -156,12 +156,13 @@ part of the architecture.
    **Pure value objects and exact-match policy evaluation are implemented; runtime enforcement is
    intentionally deferred to the following increments.**
 2. V2.6b: authenticate users and protect control-plane API operations through the development and
-   JWT provider contract in `docs/authentication.md`. Native `EventSource` must be replaced by an
-   authenticated `fetch` SSE client before protecting run streams.
-3. V2.6c: enforce agent-version and workflow-node capability policies at tool exposure and
+   JWT provider contract in `docs/authentication.md`. **Implemented and validated through Docker.**
+3. V2.6c: enforce exact user policies on control-plane HTTP operations as defined in
+   `docs/user-authorization.md`.
+4. V2.6d: enforce agent-version and workflow-node capability policies at tool exposure and
    invocation boundaries.
-4. V2.6d: authenticate runtime instances independently from users and agents.
-5. V2.6e: resolve credential references for authorized runtimes without storing secrets in specs.
+5. V2.6e: authenticate runtime instances and resolve credential references without storing secrets
+   in specs.
 6. V2.6f: integrate `approval_required` decisions with durable human approval.
 7. Apply execution, request, concurrency, network, and state-size limits.
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime

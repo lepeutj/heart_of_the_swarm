@@ -96,6 +96,11 @@ the normative field-level rules.
   identity but carry no product authorization. All control-plane API routes are protected, while
   health and static UI routes remain public. Authenticated SSE uses `fetch`, never URL tokens. The
   normative contract is in `docs/authentication.md`.
+- **ADR-047 — HTTP authorization uses exact product policies.** Every protected control-plane
+  operation maps the authenticated user to one closed action and exact resource. Collection
+  resources are named sentinels rather than wildcards. An injected policy source feeds the shared
+  evaluator; development mode bootstraps explicit in-memory policies and never bypasses evaluation.
+  The normative endpoint matrix is in `docs/user-authorization.md`.
 
 ## Current implementation limits
 
