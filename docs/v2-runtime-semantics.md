@@ -341,13 +341,71 @@ Normative scenarios:
 Free-text input, multiple choice, forms, expiry, delegation, human handoffs, bulk approvals, and UI
 notifications remain deferred. V2.5a also does not add streaming.
 
-## V2.5b+ deferred contracts
+## V2.5b — Streaming contracts
 
-### Streaming
+### V2.5b-1 — Durable run event SSE
 
-Adapt LangGraph streaming to stable SSE events for messages, updates, interrupts, custom progress,
-and subgraph paths. Reconnection must use sequence IDs and must not reconstruct state by replaying
-side effects.
+The first streaming increment exposes the durable product events already written by the worker:
+
+```text
+GET /api/v1/workflow-runs/{run_id}/stream
+```
+
+The API first emits stored events after the requested cursor, then tails newly persisted events
+until the run reaches `completed`, `failed`, `timed_out`, `cancelled`, or `interrupted`. An
+interrupted attempt is terminal for that stream; the continuation has a new run ID and therefore a
+new stream.
+
+Each SSE item uses the persisted event sequence as its SSE `id` and carries one stable envelope:
+
+```json
+{
+  "event_id": "...",
+  "run_id": "...",
+  "thread_id": "...",
+  "sequence": 12,
+  "event_type": "node.completed",
+  "data": {},
+  "created_at": "..."
+}
+```
+
+The client reconnects with `Last-Event-ID`; the server emits only greater sequences. Late clients
+receive the durable backlog before live events. Keepalive comments may preserve idle connections,
+but disconnecting a client never cancels or changes the run. Unknown runs fail with `404` before
+streaming starts, and invalid cursors fail with `422`.
+
+Only product lifecycle and audit events belong in this stream: run and node lifecycle, checkpoints,
+supervisor decisions, handoffs, approvals, interruptions, resumes, and terminal status. Payloads
+must not expose checkpoint contents, credentials, hidden model reasoning, or unrestricted workflow
+state. PostgreSQL remains the durable product event source; MLflow remains the technical trace
+source.
+
+React may replace status polling with this stream and perform one final run read for the canonical
+result. Implement this with the existing HTTP stack; do not add a broker or streaming dependency
+for V2.5b-1.
+
+Normative scenarios:
+
+1. A subscriber receives backlog and then newly persisted events in ascending sequence order.
+2. Reconnection with `Last-Event-ID` produces no gaps or duplicates.
+3. A terminal or interrupted run flushes its remaining events and closes the stream.
+4. A disconnected client does not cancel the worker or the run.
+5. A resumed approval run is followed through its new run ID.
+6. Stream payloads contain safe product events, not technical trace or checkpoint data.
+
+### V2.5b-2 — Native LangGraph live streams
+
+Messages, tokens, state updates, custom progress, and subgraph paths require a live transport from
+the worker process to the API process. Before this increment, choose and document that transport
+explicitly. Do not persist every model token in `workflow_run_events` and do not execute the graph
+inside the API merely to obtain `astream()` output. LangGraph remains the producer of native stream
+modes; Heart of the Swarm only adapts them to a stable external contract.
+
+Reconnection for ephemeral model output must define its own delivery guarantee. It must never
+reconstruct output by replaying workflow side effects.
+
+## V2.6+ deferred contracts
 
 ### Security and remote execution
 

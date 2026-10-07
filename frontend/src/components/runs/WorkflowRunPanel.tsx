@@ -4,7 +4,7 @@ import {
   createWorkflowRun,
   loadWorkflowInterruptions,
   loadWorkflowRun,
-  loadWorkflowRunEvents,
+  openWorkflowRunEventStream,
   respondToWorkflowInterruption,
   type WorkflowInterruption,
   type WorkflowRun,
@@ -14,7 +14,14 @@ import {
 import { buildRunInput } from "../../runInput";
 
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "timed_out"]);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "timed_out"]);
+const TERMINAL_EVENTS = new Set([
+  "workflow.completed",
+  "workflow.failed",
+  "workflow.cancelled",
+  "workflow.timed_out",
+  "workflow.interrupted",
+]);
 
 export function mergeRunEvents(
   current: WorkflowRunEvent[],
@@ -64,20 +71,13 @@ export function WorkflowRunPanel({
   useEffect(() => {
     if (!runId) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stream: EventSource | null = null;
 
-    async function poll() {
+    async function refreshRun() {
       try {
-        const [nextRun, nextEvents] = await Promise.all([
-          loadWorkflowRun(runId!),
-          loadWorkflowRunEvents(runId!),
-        ]);
+        const nextRun = await loadWorkflowRun(runId!);
         if (cancelled) return;
         setRun(nextRun);
-        const combinedEvents = mergeRunEvents(eventHistoryRef.current, nextEvents);
-        eventHistoryRef.current = combinedEvents;
-        setEvents(combinedEvents);
-        onEventsRef.current(combinedEvents);
         setMessage(`Run ${nextRun.status}`);
         if (nextRun.status === "interrupted") {
           const pending = await loadWorkflowInterruptions("pending");
@@ -88,21 +88,36 @@ export function WorkflowRunPanel({
           setActive(false);
         } else if (TERMINAL_STATUSES.has(nextRun.status)) {
           setActive(false);
-        } else {
-          timer = setTimeout(poll, 750);
         }
       } catch (error) {
         if (!cancelled) {
-          setMessage(error instanceof Error ? error.message : "Run polling failed");
-          timer = setTimeout(poll, 1500);
+          setMessage(error instanceof Error ? error.message : "Could not load workflow run");
         }
       }
     }
 
-    void poll();
+    stream = openWorkflowRunEventStream(
+      runId,
+      (event) => {
+        if (cancelled) return;
+        const combinedEvents = mergeRunEvents(eventHistoryRef.current, [event]);
+        eventHistoryRef.current = combinedEvents;
+        setEvents(combinedEvents);
+        onEventsRef.current(combinedEvents);
+        setMessage(`Run event · ${event.event_type}`);
+        if (TERMINAL_EVENTS.has(event.event_type)) {
+          stream?.close();
+          void refreshRun();
+        }
+      },
+      () => {
+        if (!cancelled) setMessage("Run event stream reconnecting…");
+      },
+    );
+    void refreshRun();
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      stream?.close();
     };
   }, [runId]);
 

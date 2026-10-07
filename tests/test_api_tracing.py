@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -21,7 +22,12 @@ from heart_of_the_swarm.workflows.interruptions import (
     WorkflowInterruptionDetail,
     WorkflowInterruptionStatus,
 )
-from heart_of_the_swarm.workflows.runs import WorkflowRunAccepted
+from heart_of_the_swarm.workflows.runs import (
+    WorkflowRunAccepted,
+    WorkflowRunDetail,
+    WorkflowRunEvent,
+    WorkflowRunEventBatch,
+)
 
 
 @asynccontextmanager
@@ -250,6 +256,96 @@ def test_workflow_interruption_http_errors_are_safe_and_structured() -> None:
     assert missing.json()["detail"] == "workflow interruption not found"
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["message"] == "workflow interruption is not pending"
+
+
+def test_workflow_run_stream_resumes_after_durable_event_cursor() -> None:
+    run_id = UUID("293ce849-ef4a-468b-ae41-21c92bcdd10e")
+    thread_id = UUID("3f0f3f50-37c8-481b-bd78-c3c6757a1f11")
+    version_id = UUID("11850612-0402-418e-bee3-f4603a72d4eb")
+    workflow_id = UUID("cfdf2142-76c3-4bba-939c-b61a4cfd4932")
+    completed = WorkflowRunDetail(
+        run_id=run_id,
+        trace_id="trace-stream",
+        workflow_id=workflow_id,
+        workflow_version_id=version_id,
+        workflow_version=2,
+        status="completed",
+        thread_id=thread_id,
+        input={},
+        output={"result": "done"},
+        attempt=1,
+        queued_at=datetime(2026, 10, 7, tzinfo=UTC),
+        completed_at=datetime(2026, 10, 7, tzinfo=UTC),
+    )
+    final_event = WorkflowRunEvent(
+        id="c0306fd9-10be-412c-bca4-ac03f3a1fd1f",
+        workflow_run_id=run_id,
+        sequence=2,
+        event_type="workflow.completed",
+        data={"executed_nodes": ["output"]},
+        created_at=datetime(2026, 10, 7, tzinfo=UTC),
+    )
+
+    class FakeWorkflowRuns:
+        async def get(self, received_run_id):
+            assert received_run_id == run_id
+            return completed
+
+        async def event_batch(self, received_run_id, after_sequence=0):
+            assert received_run_id == run_id
+            assert after_sequence == 1
+            return WorkflowRunEventBatch(
+                status="completed",
+                thread_id=thread_id,
+                events=(final_event,),
+            )
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_runs=FakeWorkflowRuns()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"/api/v1/workflow-runs/{run_id}/stream",
+                headers={"Last-Event-ID": "1"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "id: 2\nevent: workflow.event\n" in response.text
+    data_line = next(line for line in response.text.splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload == {
+        "event_id": str(final_event.id),
+        "run_id": str(run_id),
+        "thread_id": str(thread_id),
+        "sequence": 2,
+        "event_type": "workflow.completed",
+        "data": {"executed_nodes": ["output"]},
+        "created_at": "2026-10-07T00:00:00+00:00",
+    }
+
+
+def test_unknown_workflow_run_stream_returns_not_found_before_streaming() -> None:
+    class FakeWorkflowRuns:
+        async def get(self, _run_id):
+            return None
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_runs=FakeWorkflowRuns()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/v1/workflow-runs/293ce849-ef4a-468b-ae41-21c92bcdd10e/stream"
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "workflow run not found"
 
 
 def test_invalid_workflow_input_is_rejected_synchronously() -> None:

@@ -71,3 +71,11 @@ class WorkflowRunEvent(BaseModel):
     event_type: str
     data: dict[str, Any]
     created_at: datetime
+
+
+class WorkflowRunEventBatch(BaseModel):
+    """Minimal consistent snapshot used to tail one durable run event stream."""
+
+    status: RunStatus
+    thread_id: UUID | None = None
+    events: tuple[WorkflowRunEvent, ...] = ()

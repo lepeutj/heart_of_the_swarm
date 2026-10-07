@@ -1,3 +1,5 @@
+import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -5,8 +7,8 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -32,6 +34,7 @@ from heart_of_the_swarm.spec import (
     DesignResponse,
     ModelDescriptor,
     RunEvent,
+    RunStatus,
     TrajectoryStep,
     UsageSummary,
     ValidationResponse,
@@ -80,6 +83,15 @@ from heart_of_the_swarm.workflows.runs import (
 
 PACKAGE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
+WORKFLOW_STREAM_TERMINAL_STATUSES = {
+    RunStatus.COMPLETED,
+    RunStatus.FAILED,
+    RunStatus.CANCELLED,
+    RunStatus.TIMED_OUT,
+    RunStatus.INTERRUPTED,
+}
+WORKFLOW_STREAM_POLL_SECONDS = 0.25
+WORKFLOW_STREAM_KEEPALIVE_POLLS = 60
 
 
 @lru_cache
@@ -434,6 +446,62 @@ async def list_workflow_run_events(
     if events is None:
         raise HTTPException(status_code=404, detail="workflow run not found")
     return events
+
+
+@app.get("/api/v1/workflow-runs/{run_id}/stream")
+async def stream_workflow_run_events(
+    run_id: UUID,
+    runtime: Runtime,
+    last_event_id: Annotated[int | None, Header(alias="Last-Event-ID", ge=0)] = None,
+) -> StreamingResponse:
+    """Stream ordered durable run events and support SSE cursor reconnection."""
+    run = await runtime.workflow_runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="workflow run not found")
+    cursor = last_event_id or 0
+
+    async def event_stream():
+        nonlocal cursor
+        idle_polls = 0
+        while True:
+            batch = await runtime.workflow_runs.event_batch(run_id, cursor)
+            if batch is None:
+                return
+            for event in batch.events:
+                cursor = event.sequence
+                envelope = {
+                    "event_id": str(event.id),
+                    "run_id": str(event.workflow_run_id),
+                    "thread_id": str(batch.thread_id) if batch.thread_id else None,
+                    "sequence": event.sequence,
+                    "event_type": event.event_type,
+                    "data": event.data,
+                    "created_at": event.created_at.isoformat(),
+                }
+                yield (
+                    f"id: {event.sequence}\n"
+                    "event: workflow.event\n"
+                    f"data: {json.dumps(envelope, separators=(',', ':'))}\n\n"
+                )
+            if batch.status in WORKFLOW_STREAM_TERMINAL_STATUSES:
+                return
+            if batch.events:
+                idle_polls = 0
+            else:
+                idle_polls += 1
+                if idle_polls >= WORKFLOW_STREAM_KEEPALIVE_POLLS:
+                    yield ": keepalive\n\n"
+                    idle_polls = 0
+            await asyncio.sleep(WORKFLOW_STREAM_POLL_SECONDS)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get(

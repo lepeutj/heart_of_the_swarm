@@ -79,6 +79,10 @@ the normative field-level rules.
   contract, and resolution lifecycle. No worker blocks while waiting. An accepted response is
   validated and claimed once, then creates a new run in the same execution thread and resumes
   LangGraph with `Command(resume=...)` without replaying completed nodes.
+- **ADR-044 — Stream durable product events before native tokens.** V2.5b-1 exposes ordered,
+  reconnectable SSE from persisted `WorkflowRunEvent` records. PostgreSQL does not store model token
+  streams or raw LangGraph state. Native LangGraph streaming requires a separately selected live
+  worker-to-API transport and remains V2.5b-2.
 - **ADR-040 — Security is cross-cutting.** Identity, authorization, secret references, bounded
   execution, safe errors, and secure trace/result transport apply across V2; credentials never
   enter specifications.
@@ -86,10 +90,10 @@ the normative field-level rules.
 ## Current implementation limits
 
 - Schema v2 supports one bounded conditional back edge; nested or overlapping loops are deferred.
-- Subworkflow artifact bundling, nested parallel regions, multi-target handoffs, human approval,
-  remote control, and deployment lifecycle remain roadmap items. One validated fan-out/fan-in
-  region uses native LangGraph scheduling, isolated branch frames, deterministic reducers, and
-  checkpoint-safe resume. V2.4a implements one bounded single-target supervisor through native
-  LangGraph commands.
+- Subworkflow artifact bundling, nested parallel regions, multi-target handoffs, native model-token
+  streaming, remote control, and deployment lifecycle remain roadmap items. One validated
+  fan-out/fan-in region uses native LangGraph scheduling, isolated branch frames, deterministic
+  reducers, and checkpoint-safe resume. V2.4a implements one bounded single-target supervisor
+  through native LangGraph commands.
 - Do not add a second capability catalogue, custom agent loop, custom traversal engine, or duplicate
   technical tracing pipeline.

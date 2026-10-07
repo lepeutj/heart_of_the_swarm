@@ -115,9 +115,11 @@ export interface WorkflowVersion {
 export type WorkflowRunStatus =
   | "queued"
   | "running"
+  | "cancel_requested"
   | "interrupted"
   | "completed"
   | "failed"
+  | "cancelled"
   | "timed_out";
 
 export interface WorkflowRun {
@@ -170,6 +172,16 @@ export interface WorkflowInterruption {
 export interface WorkflowRunEvent {
   id: string;
   workflow_run_id: string;
+  sequence: number;
+  event_type: string;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+interface WorkflowRunStreamEnvelope {
+  event_id: string;
+  run_id: string;
+  thread_id: string | null;
   sequence: number;
   event_type: string;
   data: Record<string, unknown>;
@@ -322,8 +334,29 @@ export function loadWorkflowRun(runId: string): Promise<WorkflowRun> {
   return request(`/api/v1/workflow-runs/${runId}`);
 }
 
-export function loadWorkflowRunEvents(runId: string): Promise<WorkflowRunEvent[]> {
-  return request(`/api/v1/workflow-runs/${runId}/events`);
+export function parseWorkflowRunStreamEvent(data: string): WorkflowRunEvent {
+  const envelope = JSON.parse(data) as WorkflowRunStreamEnvelope;
+  return {
+    id: envelope.event_id,
+    workflow_run_id: envelope.run_id,
+    sequence: envelope.sequence,
+    event_type: envelope.event_type,
+    data: envelope.data,
+    created_at: envelope.created_at,
+  };
+}
+
+export function openWorkflowRunEventStream(
+  runId: string,
+  onEvent: (event: WorkflowRunEvent) => void,
+  onError: () => void,
+): EventSource {
+  const source = new EventSource(`/api/v1/workflow-runs/${runId}/stream`);
+  source.addEventListener("workflow.event", (message) => {
+    onEvent(parseWorkflowRunStreamEvent((message as MessageEvent<string>).data));
+  });
+  source.onerror = onError;
+  return source;
 }
 
 export function loadWorkflowInterruptions(

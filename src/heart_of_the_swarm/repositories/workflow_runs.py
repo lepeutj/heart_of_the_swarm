@@ -21,6 +21,7 @@ from heart_of_the_swarm.workflows.runs import (
     WorkflowRunAccepted,
     WorkflowRunDetail,
     WorkflowRunEvent,
+    WorkflowRunEventBatch,
     WorkflowRunOrigin,
 )
 
@@ -216,10 +217,18 @@ class WorkflowRunRepository(RepositoryBase):
         version = await WorkflowRepository(self.session).get_version(run.workflow_version_id)
         return self._detail(run, version) if version else None
 
-    async def list_events(self, run_id: str) -> list[WorkflowRunEvent]:
+    async def list_events(
+        self,
+        run_id: str,
+        after_sequence: int = 0,
+    ) -> list[WorkflowRunEvent]:
+        """Return persisted events after a cursor in their durable run order."""
         statement = (
             select(WorkflowRunEventRecord)
-            .where(WorkflowRunEventRecord.workflow_run_id == run_id)
+            .where(
+                WorkflowRunEventRecord.workflow_run_id == run_id,
+                WorkflowRunEventRecord.sequence > after_sequence,
+            )
             .order_by(WorkflowRunEventRecord.sequence)
         )
         events = (await self.session.execute(statement)).scalars()
@@ -234,6 +243,21 @@ class WorkflowRunRepository(RepositoryBase):
             )
             for event in events
         ]
+
+    async def event_batch(
+        self,
+        run_id: str,
+        after_sequence: int,
+    ) -> WorkflowRunEventBatch | None:
+        """Read run status and subsequent events without loading the immutable version."""
+        run = await self.session.get(WorkflowRunRecord, run_id)
+        if run is None:
+            return None
+        return WorkflowRunEventBatch(
+            status=run.status,
+            thread_id=run.thread_id,
+            events=tuple(await self.list_events(run_id, after_sequence)),
+        )
 
     async def add_event(
         self,

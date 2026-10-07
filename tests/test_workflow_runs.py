@@ -311,11 +311,14 @@ async def test_workflow_run_executes_version_and_persists_node_events() -> None:
 
         run = await service.get(queued.run_id)
         events = await service.events(queued.run_id)
+        events_after_cursor = await service.events(queued.run_id, after_sequence=8)
         assert run is not None
         assert run.status == "completed"
         assert run.output == "hello"
         assert events is not None
         assert [event.sequence for event in events] == list(range(1, 11))
+        assert events_after_cursor is not None
+        assert [event.sequence for event in events_after_cursor] == [9, 10]
         assert [event.event_type for event in events] == [
             "thread.created",
             "workflow.queued",

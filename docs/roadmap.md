@@ -136,10 +136,18 @@ continuation-run tracking.
 4. Expose pending/resolved/cancelled approval state through the API and React run observation.
    **Implemented for pending approval and response; historical state remains available through the
    API.**
-5. V2.5b: adapt LangGraph streaming to SSE for messages, updates, interrupts, and subgraphs.
+5. V2.5b-1: expose durable run events through reconnectable SSE and replace React polling.
+   **Implemented and validated through Docker.**
+6. V2.5b-2: adapt native LangGraph messages, updates, custom progress, and subgraph streams only
+   after selecting an explicit live transport between workers and API processes.
 
 Exit criterion: an operator can observe, approve, and resume a long-running workflow without
 restarting it. **Achieved for V2.5a.**
+
+V2.5b-1 streams the product events already persisted by the worker. It does not store
+model tokens or raw LangGraph state in PostgreSQL. Native token/message streaming remains a separate
+increment because the API and worker are different processes and no live event broker is currently
+part of the architecture.
 
 ## V2.6 — Security and remote execution
 

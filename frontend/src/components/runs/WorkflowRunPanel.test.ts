@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkflowRunEvent } from "../../api";
+import { parseWorkflowRunStreamEvent, type WorkflowRunEvent } from "../../api";
 import { mergeRunEvents } from "./WorkflowRunPanel";
 
 function event(id: string, runId: string, sequence: number): WorkflowRunEvent {
@@ -26,5 +26,28 @@ describe("workflow run event history", () => {
       "output",
     ]);
     expect(mergeRunEvents(interrupted, interrupted)).toEqual(interrupted);
+  });
+
+  it("adapts the stable SSE envelope to the existing run event model", () => {
+    expect(
+      parseWorkflowRunStreamEvent(
+        JSON.stringify({
+          event_id: "event-1",
+          run_id: "run-1",
+          thread_id: "thread-1",
+          sequence: 3,
+          event_type: "workflow.completed",
+          data: { executed_nodes: ["output"] },
+          created_at: "2026-10-07T00:00:00Z",
+        }),
+      ),
+    ).toEqual({
+      id: "event-1",
+      workflow_run_id: "run-1",
+      sequence: 3,
+      event_type: "workflow.completed",
+      data: { executed_nodes: ["output"] },
+      created_at: "2026-10-07T00:00:00Z",
+    });
   });
 });

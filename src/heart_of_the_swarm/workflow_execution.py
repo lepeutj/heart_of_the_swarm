@@ -31,6 +31,7 @@ from heart_of_the_swarm.workflows.runs import (
     WorkflowRunAccepted,
     WorkflowRunDetail,
     WorkflowRunEvent,
+    WorkflowRunEventBatch,
     WorkflowRunOrigin,
 )
 
@@ -118,12 +119,29 @@ class WorkflowRunService:
         async with self.database.session() as session:
             return await WorkflowRunRepository(session).get(str(run_id))
 
-    async def events(self, run_id: UUID) -> list[WorkflowRunEvent] | None:
+    async def events(
+        self,
+        run_id: UUID,
+        after_sequence: int = 0,
+    ) -> list[WorkflowRunEvent] | None:
+        """Read durable run events after the supplied reconnection cursor."""
         async with self.database.session() as session:
             repository = WorkflowRunRepository(session)
             if await repository.get(str(run_id)) is None:
                 return None
-            return await repository.list_events(str(run_id))
+            return await repository.list_events(str(run_id), after_sequence)
+
+    async def event_batch(
+        self,
+        run_id: UUID,
+        after_sequence: int,
+    ) -> WorkflowRunEventBatch | None:
+        """Read the minimal run snapshot needed by a reconnectable event stream."""
+        async with self.database.session() as session:
+            return await WorkflowRunRepository(session).event_batch(
+                str(run_id),
+                after_sequence,
+            )
 
 
 class _DatabaseWorkflowEventSink:
