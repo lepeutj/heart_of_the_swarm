@@ -188,6 +188,18 @@ interface WorkflowRunStreamEnvelope {
   created_at: string;
 }
 
+let authenticationToken: string | null = null;
+
+export function setAuthenticationToken(token: string | null): void {
+  authenticationToken = token?.trim() || null;
+}
+
+function authenticatedHeaders(existing?: HeadersInit): Headers {
+  const headers = new Headers(existing);
+  if (authenticationToken) headers.set("Authorization", `Bearer ${authenticationToken}`);
+  return headers;
+}
+
 function errorMessage(response: Response, body: unknown): string {
   if (typeof body === "string" && body.trim()) return body;
   if (typeof body === "object" && body !== null && "detail" in body) {
@@ -203,9 +215,11 @@ function errorMessage(response: Response, body: unknown): string {
 }
 
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers = authenticatedHeaders(options?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers,
   });
   const text = await response.text();
   let body: unknown = null;
@@ -350,13 +364,77 @@ export function openWorkflowRunEventStream(
   runId: string,
   onEvent: (event: WorkflowRunEvent) => void,
   onError: () => void,
-): EventSource {
-  const source = new EventSource(`/api/v1/workflow-runs/${runId}/stream`);
-  source.addEventListener("workflow.event", (message) => {
-    onEvent(parseWorkflowRunStreamEvent((message as MessageEvent<string>).data));
-  });
-  source.onerror = onError;
-  return source;
+): WorkflowRunEventStream {
+  const controller = new AbortController();
+  let closed = false;
+  let lastEventId: string | null = null;
+
+  async function connect(): Promise<void> {
+    while (!closed) {
+      try {
+        const headers = authenticatedHeaders({ Accept: "text/event-stream" });
+        if (lastEventId) headers.set("Last-Event-ID", lastEventId);
+        const response = await fetch(`/api/v1/workflow-runs/${runId}/stream`, {
+          headers,
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error(`SSE request failed: ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!closed) {
+          const { done, value } = await reader.read();
+          buffer = (buffer + decoder.decode(value, { stream: !done })).replaceAll("\r\n", "\n");
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary >= 0) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const parsed = parseEventStreamFrame(frame);
+            if (parsed?.event === "workflow.event") {
+              if (parsed.id) lastEventId = parsed.id;
+              onEvent(parseWorkflowRunStreamEvent(parsed.data));
+            }
+            boundary = buffer.indexOf("\n\n");
+          }
+          if (done) break;
+        }
+      } catch (error) {
+        if (closed || (error instanceof DOMException && error.name === "AbortError")) return;
+        onError();
+      }
+      if (!closed) await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    }
+  }
+
+  void connect();
+  return {
+    close() {
+      closed = true;
+      controller.abort();
+    },
+  };
+}
+
+export interface WorkflowRunEventStream {
+  close(): void;
+}
+
+export function parseEventStreamFrame(
+  frame: string,
+): { id: string | null; event: string; data: string } | null {
+  if (!frame || frame.startsWith(":")) return null;
+  let id: string | null = null;
+  let event = "message";
+  const data: string[] = [];
+  for (const line of frame.split("\n")) {
+    const separator = line.indexOf(":");
+    const field = separator >= 0 ? line.slice(0, separator) : line;
+    const value = separator >= 0 ? line.slice(separator + 1).replace(/^ /, "") : "";
+    if (field === "id") id = value;
+    if (field === "event") event = value;
+    if (field === "data") data.push(value);
+  }
+  return data.length ? { id, event, data: data.join("\n") } : null;
 }
 
 export function loadWorkflowInterruptions(

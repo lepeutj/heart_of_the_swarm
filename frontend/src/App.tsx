@@ -21,6 +21,7 @@ import {
   loadWorkflow,
   loadWorkflows,
   saveWorkflow,
+  setAuthenticationToken,
   uploadSkill,
   validateWorkflow,
   type AgentOption,
@@ -76,7 +77,59 @@ const initialEdges: EditorEdge[] = [
   { id: "input-output", source: "input", target: "output", data: {} },
 ];
 
+const AUTH_TOKEN_KEY = "heart-of-the-swarm.auth-token";
+
 export default function App() {
+  const [token, setToken] = useState(() => sessionStorage.getItem(AUTH_TOKEN_KEY) ?? "");
+  const [draft, setDraft] = useState("");
+
+  if (!token) {
+    return (
+      <main className="authentication-screen">
+        <form
+          className="authentication-card"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const nextToken = draft.trim();
+            if (!nextToken) return;
+            sessionStorage.setItem(AUTH_TOKEN_KEY, nextToken);
+            setAuthenticationToken(nextToken);
+            setToken(nextToken);
+          }}
+        >
+          <p className="eyebrow">Heart of the Swarm</p>
+          <h1>Authenticate</h1>
+          <p className="field-help">
+            Enter the development token or a JWT supplied by your identity provider.
+          </p>
+          <label>
+            Bearer token
+            <input
+              type="password"
+              autoComplete="off"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </label>
+          <button type="submit" className="primary">Open workflow editor</button>
+        </form>
+      </main>
+    );
+  }
+
+  setAuthenticationToken(token);
+  return (
+    <WorkflowEditor
+      onLogout={() => {
+        sessionStorage.removeItem(AUTH_TOKEN_KEY);
+        setAuthenticationToken(null);
+        setToken("");
+      }}
+    />
+  );
+}
+
+function WorkflowEditor({ onLogout }: { onLogout: () => void }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<EditorNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<EditorEdge>(initialEdges);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof loadCapabilities>> | null>(null);
@@ -479,6 +532,7 @@ export default function App() {
         </div>
         <div className="topbar-actions">
           <a href="/">Overview</a>
+          <button type="button" onClick={onLogout}>Sign out</button>
           <button type="button" onClick={validate}>Validate</button>
           <button type="button" onClick={saveDraft}>Save draft</button>
           <button type="button" onClick={publishVersion}>Create version</button>

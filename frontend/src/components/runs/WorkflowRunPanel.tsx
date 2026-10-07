@@ -9,6 +9,7 @@ import {
   type WorkflowInterruption,
   type WorkflowRun,
   type WorkflowRunEvent,
+  type WorkflowRunEventStream,
   type WorkflowVersion,
 } from "../../api";
 import { buildRunInput } from "../../runInput";
@@ -71,7 +72,7 @@ export function WorkflowRunPanel({
   useEffect(() => {
     if (!runId) return;
     let cancelled = false;
-    let stream: EventSource | null = null;
+    let stream: WorkflowRunEventStream | null = null;
 
     async function refreshRun() {
       try {

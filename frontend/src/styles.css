@@ -11,6 +11,8 @@ button, input, select, textarea { font: inherit; }
 button, a { transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
 
 .app-shell { min-height: 100vh; background: #0c100e; }
+.authentication-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #0c100e; }
+.authentication-card { width: min(420px, 100%); display: grid; gap: 16px; padding: 28px; border: 1px solid #324039; border-radius: 14px; background: #151b18; }
 .topbar {
   height: 76px;
   display: flex;

@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from langchain_core.tools import tool
 
 from heart_of_the_swarm import __version__
-from heart_of_the_swarm.api import app, get_application
+from heart_of_the_swarm.api import app, authenticate_request, get_application
+from heart_of_the_swarm.authentication import AuthenticatedUser, AuthenticationMethod
 from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.spec import AgentRunAccepted
 from heart_of_the_swarm.tools import RegisteredCapability, ToolRegistry
@@ -40,6 +41,11 @@ async def isolated_lifespan(_app):
 def isolate_application_lifespan():
     original = app.router.lifespan_context
     app.router.lifespan_context = isolated_lifespan
+    app.dependency_overrides[authenticate_request] = lambda: AuthenticatedUser(
+        subject="test-user",
+        issuer="tests",
+        method=AuthenticationMethod.DEVELOPMENT,
+    )
     try:
         yield
     finally:

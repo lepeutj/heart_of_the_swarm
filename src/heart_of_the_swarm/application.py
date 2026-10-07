@@ -1,6 +1,7 @@
 from typing import Literal
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.authentication import create_authentication_provider
 from heart_of_the_swarm.config import Settings, get_settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.execution import AgentExecutor, RunService
@@ -27,6 +28,9 @@ class Application:
         self, settings: Settings | None = None, process: Literal["api", "worker"] = "api"
     ) -> None:
         self.settings = settings or get_settings()
+        self.authentication = (
+            create_authentication_provider(self.settings) if process == "api" else None
+        )
         log_file = self.settings.api_log_file if process == "api" else self.settings.worker_log_file
         configure_audit_logging(
             log_file,

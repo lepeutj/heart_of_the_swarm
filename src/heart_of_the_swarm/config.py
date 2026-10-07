@@ -1,6 +1,7 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +16,15 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_site_url: str | None = None
     openrouter_app_name: str = "Heart of the Swarm"
+
+    auth_mode: Literal["development", "jwt"] = "development"
+    development_auth_token: SecretStr | None = None
+    development_auth_user_id: str | None = None
+    jwt_verification_key: SecretStr | None = None
+    jwt_algorithm: str = "RS256"
+    jwt_issuer: str | None = None
+    jwt_audience: str | None = None
+    jwt_clock_skew_seconds: int = Field(default=0, ge=0, le=300)
 
     builder_provider: str = "openai"
     builder_model: str = "gpt-4.1-mini"
@@ -64,7 +74,13 @@ class Settings(BaseSettings):
             return json.loads(value)
         return value
 
-    @field_validator("openai_api_key", "openrouter_api_key", mode="before")
+    @field_validator(
+        "openai_api_key",
+        "openrouter_api_key",
+        "development_auth_token",
+        "jwt_verification_key",
+        mode="before",
+    )
     @classmethod
     def empty_secrets_are_unset(cls, value: object) -> object:
         return None if value == "" else value

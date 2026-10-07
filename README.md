@@ -13,7 +13,8 @@ threads, checkpoints, controlled cycles, subworkflows, reducers, handoffs, and s
 
 ## Docker pack
 
-Copy the environment file, add at least one provider key, and start the stack:
+Copy the environment file, set `DEVELOPMENT_AUTH_TOKEN`, add at least one provider key, and start
+the stack. The workflow editor asks for that token and keeps it in browser session storage only.
 Commands that differ are shown for Linux/macOS first and Windows PowerShell second. Commands not
 split by platform use the same syntax on both.
 

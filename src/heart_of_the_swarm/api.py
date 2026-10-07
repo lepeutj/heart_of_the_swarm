@@ -7,14 +7,16 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 from heart_of_the_swarm import __version__
 from heart_of_the_swarm.application import Application
+from heart_of_the_swarm.authentication import AuthenticatedUser, AuthenticationError
 from heart_of_the_swarm.observability import (
     audit_event,
     audit_exception,
@@ -147,6 +149,41 @@ async def trace_requests(request: Request, call_next):
 
 
 Runtime = Annotated[Application, Depends(get_application)]
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def authenticate_request(
+    request: Request,
+    runtime: Runtime,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+) -> AuthenticatedUser:
+    """Authenticate one protected request and expose its user principal to adapters."""
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        reason = "missing_bearer_token"
+    else:
+        try:
+            user = runtime.authentication.authenticate(credentials.credentials)
+        except AuthenticationError as exc:
+            reason = exc.reason
+        else:
+            principal = user.to_principal()
+            request.state.authenticated_user = user
+            request.state.user_principal = principal
+            audit_event(
+                "http.authentication.succeeded",
+                principal_kind=principal.kind,
+                principal_id=principal.id,
+            )
+            return user
+    audit_event("http.authentication.failed", level=logging.WARNING, reason=reason)
+    raise HTTPException(
+        status_code=401,
+        detail="invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+api_router = APIRouter(dependencies=[Depends(authenticate_request)])
 
 
 def api_error(exc: Exception, status_code: int = 400) -> HTTPException:
@@ -188,12 +225,12 @@ async def ready(runtime: Runtime) -> dict[str, str]:
     return {"status": "ready", "database": "ready", "schema_revision": revision}
 
 
-@app.get("/api/v1/providers")
+@api_router.get("/api/v1/providers")
 async def providers(runtime: Runtime) -> list[dict[str, str | bool]]:
     return runtime.providers.statuses()
 
 
-@app.get("/api/v1/models", response_model=list[ModelDescriptor])
+@api_router.get("/api/v1/models", response_model=list[ModelDescriptor])
 async def models(runtime: Runtime, provider: str = Query(...)) -> list[ModelDescriptor]:
     try:
         return await runtime.providers.list_models(provider)
@@ -201,7 +238,7 @@ async def models(runtime: Runtime, provider: str = Query(...)) -> list[ModelDesc
         raise api_error(exc) from exc
 
 
-@app.get("/api/v1/tools", response_model=ToolCatalogueResponse)
+@api_router.get("/api/v1/tools", response_model=ToolCatalogueResponse)
 async def tools(runtime: Runtime) -> ToolCatalogueResponse:
     return ToolCatalogueResponse(
         tools=runtime.tools.names,
@@ -221,7 +258,7 @@ def _mcp_server_view(
     return MCPServerView(**server.model_dump(), status=status)
 
 
-@app.get("/api/v1/mcp/servers", response_model=list[MCPServerView])
+@api_router.get("/api/v1/mcp/servers", response_model=list[MCPServerView])
 async def list_mcp_servers(runtime: Runtime) -> list[MCPServerView]:
     return [
         _mcp_server_view(server, runtime.mcp_tools.statuses)
@@ -229,7 +266,7 @@ async def list_mcp_servers(runtime: Runtime) -> list[MCPServerView]:
     ]
 
 
-@app.post("/api/v1/mcp/servers", response_model=MCPServerView, status_code=201)
+@api_router.post("/api/v1/mcp/servers", response_model=MCPServerView, status_code=201)
 async def create_mcp_server(source: MCPServerCreate, runtime: Runtime) -> MCPServerView:
     try:
         server = await runtime.mcp_servers.create(source)
@@ -239,7 +276,7 @@ async def create_mcp_server(source: MCPServerCreate, runtime: Runtime) -> MCPSer
     return _mcp_server_view(server, runtime.mcp_tools.statuses)
 
 
-@app.post("/api/v1/mcp/servers/{server_id}/test", response_model=MCPServerTestResult)
+@api_router.post("/api/v1/mcp/servers/{server_id}/test", response_model=MCPServerTestResult)
 async def test_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerTestResult:
     server = await runtime.mcp_servers.get(str(server_id))
     if server is None:
@@ -255,7 +292,7 @@ async def test_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerTestRes
     return MCPServerTestResult(name=server.name, reachable=True, tools=names)
 
 
-@app.post("/api/v1/mcp/servers/{server_id}/refresh", response_model=MCPServerView)
+@api_router.post("/api/v1/mcp/servers/{server_id}/refresh", response_model=MCPServerView)
 async def refresh_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerView:
     server = await runtime.mcp_servers.get(str(server_id))
     if server is None:
@@ -266,12 +303,12 @@ async def refresh_mcp_server(server_id: UUID, runtime: Runtime) -> MCPServerView
     return _mcp_server_view(server, runtime.mcp_tools.statuses)
 
 
-@app.get("/api/v1/skills")
+@api_router.get("/api/v1/skills")
 async def skills(runtime: Runtime) -> dict[str, tuple[str, ...]]:
     return {"skills": runtime.skills.names}
 
 
-@app.post("/api/v1/skills", status_code=201)
+@api_router.post("/api/v1/skills", status_code=201)
 async def upload_skill(skill: SkillDocument, runtime: Runtime) -> SkillDocument:
     try:
         runtime.skills.save(skill)
@@ -280,12 +317,12 @@ async def upload_skill(skill: SkillDocument, runtime: Runtime) -> SkillDocument:
     return skill
 
 
-@app.get("/api/v1/workflows/capabilities", response_model=WorkflowCapabilities)
+@api_router.get("/api/v1/workflows/capabilities", response_model=WorkflowCapabilities)
 async def workflow_capability_catalogue() -> WorkflowCapabilities:
     return workflow_capabilities()
 
 
-@app.post("/api/v1/workflows/validate", response_model=WorkflowValidationResponse)
+@api_router.post("/api/v1/workflows/validate", response_model=WorkflowValidationResponse)
 async def validate_workflow(
     payload: dict[str, Any], runtime: Runtime
 ) -> WorkflowValidationResponse:
@@ -324,12 +361,12 @@ async def validate_workflow(
     return WorkflowValidationResponse(valid=True, issues=[])
 
 
-@app.get("/api/v1/workflows", response_model=list[WorkflowSummary])
+@api_router.get("/api/v1/workflows", response_model=list[WorkflowSummary])
 async def list_workflows(runtime: Runtime) -> list[WorkflowSummary]:
     return await runtime.workflows.list()
 
 
-@app.put("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
+@api_router.put("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
 async def save_workflow(
     workflow_id: UUID,
     draft: WorkflowDraftSave,
@@ -343,7 +380,7 @@ async def save_workflow(
         raise api_error(exc, 422) from exc
 
 
-@app.get("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
+@api_router.get("/api/v1/workflows/{workflow_id}", response_model=WorkflowDraftDetail)
 async def get_workflow(workflow_id: UUID, runtime: Runtime) -> WorkflowDraftDetail:
     workflow = await runtime.workflows.get(workflow_id)
     if workflow is None:
@@ -351,7 +388,7 @@ async def get_workflow(workflow_id: UUID, runtime: Runtime) -> WorkflowDraftDeta
     return workflow
 
 
-@app.post(
+@api_router.post(
     "/api/v1/workflows/{workflow_id}/versions",
     response_model=WorkflowVersionDetail,
     status_code=201,
@@ -371,7 +408,7 @@ async def create_workflow_version(
     return version
 
 
-@app.get(
+@api_router.get(
     "/api/v1/workflows/{workflow_id}/versions/latest",
     response_model=WorkflowVersionDetail | None,
 )
@@ -382,7 +419,7 @@ async def get_latest_workflow_version(
     return await runtime.workflows.latest_version(workflow_id)
 
 
-@app.post(
+@api_router.post(
     "/api/v1/workflow-versions/{version_id}/runs",
     response_model=WorkflowRunAccepted,
     status_code=202,
@@ -405,7 +442,7 @@ async def run_workflow_version(
         raise api_error(exc, 422) from exc
 
 
-@app.get("/api/v1/workflow-runs/{run_id}", response_model=WorkflowRunDetail)
+@api_router.get("/api/v1/workflow-runs/{run_id}", response_model=WorkflowRunDetail)
 async def get_workflow_run(run_id: UUID, runtime: Runtime) -> WorkflowRunDetail:
     run = await runtime.workflow_runs.get(run_id)
     if run is None:
@@ -413,7 +450,7 @@ async def get_workflow_run(run_id: UUID, runtime: Runtime) -> WorkflowRunDetail:
     return run
 
 
-@app.post(
+@api_router.post(
     "/api/v1/workflow-runs/{run_id}/resume",
     response_model=WorkflowRunAccepted,
     status_code=202,
@@ -434,7 +471,7 @@ async def resume_workflow_run(
         raise api_error(exc, status_code) from exc
 
 
-@app.get(
+@api_router.get(
     "/api/v1/workflow-runs/{run_id}/events",
     response_model=list[WorkflowRunEvent],
 )
@@ -448,7 +485,7 @@ async def list_workflow_run_events(
     return events
 
 
-@app.get("/api/v1/workflow-runs/{run_id}/stream")
+@api_router.get("/api/v1/workflow-runs/{run_id}/stream")
 async def stream_workflow_run_events(
     run_id: UUID,
     runtime: Runtime,
@@ -504,7 +541,7 @@ async def stream_workflow_run_events(
     )
 
 
-@app.get(
+@api_router.get(
     "/api/v1/workflow-interruptions",
     response_model=list[WorkflowInterruptionDetail],
 )
@@ -515,7 +552,7 @@ async def list_workflow_interruptions(
     return await runtime.workflow_approvals.list(status)
 
 
-@app.get(
+@api_router.get(
     "/api/v1/workflow-interruptions/{interruption_id}",
     response_model=WorkflowInterruptionDetail,
 )
@@ -529,7 +566,7 @@ async def get_workflow_interruption(
     return interruption
 
 
-@app.post(
+@api_router.post(
     "/api/v1/workflow-interruptions/{interruption_id}/response",
     response_model=WorkflowRunAccepted,
     status_code=202,
@@ -550,7 +587,7 @@ async def respond_to_workflow_interruption(
         raise api_error(exc, status_code) from exc
 
 
-@app.post("/api/v1/triggers", response_model=TriggerDetail, status_code=201)
+@api_router.post("/api/v1/triggers", response_model=TriggerDetail, status_code=201)
 async def create_trigger(spec: TriggerSpec, runtime: Runtime) -> TriggerDetail:
     try:
         return await runtime.triggers.create(spec)
@@ -558,12 +595,12 @@ async def create_trigger(spec: TriggerSpec, runtime: Runtime) -> TriggerDetail:
         raise api_error(exc, 422) from exc
 
 
-@app.get("/api/v1/triggers", response_model=list[TriggerDetail])
+@api_router.get("/api/v1/triggers", response_model=list[TriggerDetail])
 async def list_triggers(runtime: Runtime) -> list[TriggerDetail]:
     return await runtime.triggers.list()
 
 
-@app.get("/api/v1/triggers/{trigger_id}", response_model=TriggerDetail)
+@api_router.get("/api/v1/triggers/{trigger_id}", response_model=TriggerDetail)
 async def get_trigger(trigger_id: UUID, runtime: Runtime) -> TriggerDetail:
     trigger = await runtime.triggers.get(trigger_id)
     if trigger is None:
@@ -571,7 +608,7 @@ async def get_trigger(trigger_id: UUID, runtime: Runtime) -> TriggerDetail:
     return trigger
 
 
-@app.post(
+@api_router.post(
     "/api/v1/hooks/{trigger_id}",
     response_model=WorkflowRunAccepted,
     status_code=202,
@@ -597,7 +634,7 @@ async def invoke_webhook(
         raise api_error(exc, 422) from exc
 
 
-@app.post("/api/v1/agents/design", response_model=DesignResponse)
+@api_router.post("/api/v1/agents/design", response_model=DesignResponse)
 async def design_agent(request: DesignRequest, runtime: Runtime) -> DesignResponse:
     try:
         return await runtime.agents.design(request)
@@ -605,13 +642,13 @@ async def design_agent(request: DesignRequest, runtime: Runtime) -> DesignRespon
         raise api_error(exc, 502) from exc
 
 
-@app.post("/api/v1/agents/validate", response_model=ValidationResponse)
+@api_router.post("/api/v1/agents/validate", response_model=ValidationResponse)
 async def validate_agent(spec: AgentSpec, runtime: Runtime) -> ValidationResponse:
     errors = await runtime.agents.validation_errors(spec)
     return ValidationResponse(valid=not errors, errors=errors)
 
 
-@app.post("/api/v1/agents", response_model=AgentDetail, status_code=201)
+@api_router.post("/api/v1/agents", response_model=AgentDetail, status_code=201)
 async def create_agent(spec: AgentSpec, runtime: Runtime) -> AgentDetail:
     try:
         return await runtime.agents.create_agent(spec)
@@ -619,12 +656,12 @@ async def create_agent(spec: AgentSpec, runtime: Runtime) -> AgentDetail:
         raise api_error(exc, 422) from exc
 
 
-@app.get("/api/v1/agents", response_model=list[AgentSummary])
+@api_router.get("/api/v1/agents", response_model=list[AgentSummary])
 async def list_agents(runtime: Runtime) -> list[AgentSummary]:
     return await runtime.agents.list_agents()
 
 
-@app.post("/api/v1/agents/{agent_id}/versions", response_model=AgentDetail, status_code=201)
+@api_router.post("/api/v1/agents/{agent_id}/versions", response_model=AgentDetail, status_code=201)
 async def add_agent_version(agent_id: str, spec: AgentSpec, runtime: Runtime) -> AgentDetail:
     try:
         agent = await runtime.agents.add_version(agent_id, spec)
@@ -635,7 +672,7 @@ async def add_agent_version(agent_id: str, spec: AgentSpec, runtime: Runtime) ->
     return agent
 
 
-@app.get("/api/v1/agents/{agent_id}", response_model=AgentDetail)
+@api_router.get("/api/v1/agents/{agent_id}", response_model=AgentDetail)
 async def get_agent(agent_id: str, runtime: Runtime) -> AgentDetail:
     agent = await runtime.agents.get_agent(agent_id)
     if agent is None:
@@ -643,7 +680,7 @@ async def get_agent(agent_id: str, runtime: Runtime) -> AgentDetail:
     return agent
 
 
-@app.post(
+@api_router.post(
     "/api/v1/agents/{agent_id}/runs",
     response_model=AgentRunAccepted,
     status_code=202,
@@ -661,7 +698,7 @@ async def run_agent(agent_id: str, request: AgentRunRequest, runtime: Runtime) -
         ) from exc
 
 
-@app.get("/api/v1/runs/{run_id}", response_model=AgentRunDetail)
+@api_router.get("/api/v1/runs/{run_id}", response_model=AgentRunDetail)
 async def get_run(run_id: str, runtime: Runtime) -> AgentRunDetail:
     run = await runtime.runs.get(run_id)
     if run is None:
@@ -669,12 +706,12 @@ async def get_run(run_id: str, runtime: Runtime) -> AgentRunDetail:
     return run
 
 
-@app.get("/api/v1/agents/{agent_id}/runs", response_model=list[AgentRunDetail])
+@api_router.get("/api/v1/agents/{agent_id}/runs", response_model=list[AgentRunDetail])
 async def list_agent_runs(agent_id: str, runtime: Runtime) -> list[AgentRunDetail]:
     return await runtime.runs.list_runs(agent_id)
 
 
-@app.get("/api/v1/runs/{run_id}/events", response_model=list[RunEvent])
+@api_router.get("/api/v1/runs/{run_id}/events", response_model=list[RunEvent])
 async def list_run_events(run_id: str, runtime: Runtime) -> list[RunEvent]:
     events = await runtime.runs.events(run_id)
     if events is None:
@@ -682,7 +719,7 @@ async def list_run_events(run_id: str, runtime: Runtime) -> list[RunEvent]:
     return events
 
 
-@app.get("/api/v1/runs/{run_id}/trajectory", response_model=list[TrajectoryStep])
+@api_router.get("/api/v1/runs/{run_id}/trajectory", response_model=list[TrajectoryStep])
 async def get_run_trajectory(run_id: str, runtime: Runtime) -> list[TrajectoryStep]:
     trajectory = await runtime.runs.trajectory(run_id)
     if trajectory is None:
@@ -690,7 +727,7 @@ async def get_run_trajectory(run_id: str, runtime: Runtime) -> list[TrajectorySt
     return trajectory
 
 
-@app.post("/api/v1/runs/{run_id}/cancel", response_model=AgentRunDetail)
+@api_router.post("/api/v1/runs/{run_id}/cancel", response_model=AgentRunDetail)
 async def cancel_run(run_id: str, runtime: Runtime) -> AgentRunDetail:
     run = await runtime.runs.cancel(run_id)
     if run is None:
@@ -698,6 +735,9 @@ async def cancel_run(run_id: str, runtime: Runtime) -> AgentRunDetail:
     return run
 
 
-@app.get("/api/v1/usage/summary", response_model=list[UsageSummary])
+@api_router.get("/api/v1/usage/summary", response_model=list[UsageSummary])
 async def usage_summary(runtime: Runtime) -> list[UsageSummary]:
     return await runtime.agents.usage_summary()
+
+
+app.include_router(api_router)
