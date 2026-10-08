@@ -121,6 +121,10 @@ the normative field-level rules.
   fingerprint. Sequential workflow agents preserve a selected tool call through native LangChain
   middleware and inherited LangGraph checkpointing; direct and standalone agents continue to deny.
   The normative contract is in `docs/capability-approvals.md`.
+- **ADR-052 — Limits follow their owning boundary.** Per-execution time, graph, call, and shared-state
+  budgets belong to `ExecutionPolicy`; process concurrency belongs to `RuntimePolicy`; inbound body
+  size belongs to `HTTPPolicy`. Continuation runs share logical call budgets, while active-attempt
+  timeout excludes human waiting. The normative contract is in `docs/runtime-limits.md`.
 
 ## Current implementation limits
 
