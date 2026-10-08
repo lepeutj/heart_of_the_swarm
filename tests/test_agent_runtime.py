@@ -3,9 +3,20 @@ from typing import Any
 import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import BaseTool, tool
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.authorization import (
+    AuthorizationContext,
+    AuthorizationService,
+    ConfiguredCapabilityPolicySource,
+)
+from heart_of_the_swarm.capability_authorization import (
+    CapabilityAuthorizer,
+    ExecutionSecurityContext,
+)
 from heart_of_the_swarm.spec import AgentSpec
+from heart_of_the_swarm.tools import ToolRegistry
 
 _MISSING = object()
 
@@ -58,7 +69,16 @@ class FakeGraph:
 class RecordingFactory:
     def __init__(self, graph: FakeGraph) -> None:
         self.graph = graph
-        self.call: tuple[AgentSpec, object, str | None, dict[str, Any] | None] | None = None
+        self.call: (
+            tuple[
+                AgentSpec,
+                object,
+                str | None,
+                dict[str, Any] | None,
+                list[BaseTool] | None,
+            ]
+            | None
+        ) = None
 
     def create(
         self,
@@ -66,8 +86,9 @@ class RecordingFactory:
         model: object,
         system_prompt: str | None = None,
         response_schema: dict[str, Any] | None = None,
+        tools: list[BaseTool] | None = None,
     ) -> FakeGraph:
-        self.call = (spec, model, system_prompt, response_schema)
+        self.call = (spec, model, system_prompt, response_schema, tools)
         return self.graph
 
 
@@ -92,7 +113,7 @@ async def test_runner_validates_builds_and_invokes_agent() -> None:
     assert output == "Answer"
     assert validator.spec is spec
     assert providers.config is spec.model
-    assert factory.call == (spec, model, "Stored prompt", None)
+    assert factory.call == (spec, model, "Stored prompt", None, None)
     assert graph.input == {"messages": [{"role": "user", "content": "Question"}]}
     assert graph.config == {
         "callbacks": [callback],
@@ -134,6 +155,41 @@ async def test_runner_returns_langchain_structured_response() -> None:
     assert output == {"answer": "Structured answer"}
     assert factory.call is not None
     assert factory.call[3] == schema
+
+
+async def test_runner_exposes_only_tools_allowed_for_this_execution() -> None:
+    @tool
+    async def web_search(query: str) -> str:
+        """Search the web."""
+        return query
+
+    spec = make_spec().model_copy(update={"tools": ["web_search"]})
+    principal = CapabilityAuthorizer.agent_version_principal("version-a")
+    authorizer = CapabilityAuthorizer(
+        AuthorizationService(
+            ConfiguredCapabilityPolicySource({"agent_version:version-a": ["web_search"]})
+        )
+    )
+    factory = RecordingFactory(FakeGraph([AIMessage(content="Answer")]))
+    factory.registry = ToolRegistry([web_search])
+    runner = AgentRunner(  # type: ignore[arg-type]
+        RecordingProviders(object()),
+        RecordingValidator(),
+        factory,
+        authorizer,
+    )
+
+    await runner.invoke(
+        spec,
+        "Question",
+        security=ExecutionSecurityContext(
+            principal=principal,
+            authorization=AuthorizationContext(),
+        ),
+    )
+
+    assert factory.call is not None
+    assert [item.name for item in factory.call[4] or []] == ["web_search"]
 
 
 async def test_runner_rejects_null_structured_response() -> None:

@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/heart_of_the_swarm.db"
     connector_databases: dict[str, str] = Field(default_factory=dict)
     mcp_servers: dict[str, str] = Field(default_factory=dict)
+    capability_policies: dict[str, list[str]] = Field(default_factory=dict)
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     max_document_bytes: int = Field(default=1_000_000, ge=1_000, le=5_000_000)
 
@@ -67,7 +68,7 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
-    @field_validator("connector_databases", "mcp_servers", mode="before")
+    @field_validator("connector_databases", "mcp_servers", "capability_policies", mode="before")
     @classmethod
     def parse_json_mapping(cls, value: object) -> object:
         if isinstance(value, str):

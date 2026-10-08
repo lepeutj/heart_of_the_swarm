@@ -10,6 +10,11 @@ from jsonschema.validators import validator_for
 from pydantic import BaseModel
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.authorization import AuthorizationContext
+from heart_of_the_swarm.capability_authorization import (
+    CapabilityAuthorizer,
+    ExecutionSecurityContext,
+)
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.conditions import ConditionEvaluationError, evaluate_condition
@@ -75,6 +80,7 @@ class WorkflowNodeRunner:
         workflow_version_id: str | None = None,
         execution_path: str = "root",
         runtime_context: dict[str, Any] | None = None,
+        capability_authorizer: CapabilityAuthorizer | None = None,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -86,6 +92,7 @@ class WorkflowNodeRunner:
         self.workflow_version_id = workflow_version_id
         self.execution_path = execution_path
         self.runtime_context = dict(runtime_context or {})
+        self.capability_authorizer = capability_authorizer
 
     async def run(
         self,
@@ -318,6 +325,7 @@ class WorkflowNodeRunner:
         if isinstance(source, InlineAgentSource):
             spec = source.agent
             system_prompt = None
+            security = self._workflow_security(node)
         else:
             if not isinstance(source, VersionedAgentSource):
                 raise TypeError(f"Node '{node.id}' has an inconsistent agent source.")
@@ -336,16 +344,18 @@ class WorkflowNodeRunner:
                 )
             spec = resolved.spec
             system_prompt = resolved.system_prompt
+            security = self._agent_security(node, str(source.agent_version_id))
 
         try:
-            output = await self.agent_runner.invoke(
-                spec,
-                agent_input,
-                system_prompt=system_prompt,
-                callbacks=[self.callback] if self.callback is not None else [],
-                metadata=self._node_context(node, event_context),
-                response_schema=response_schema,
-            )
+            invocation_options: dict[str, Any] = {
+                "system_prompt": system_prompt,
+                "callbacks": [self.callback] if self.callback is not None else [],
+                "metadata": self._node_context(node, event_context),
+                "response_schema": response_schema,
+            }
+            if security is not None:
+                invocation_options["security"] = security
+            output = await self.agent_runner.invoke(spec, agent_input, **invocation_options)
         except WorkflowExecutionError:
             raise
         except Exception as exc:
@@ -475,6 +485,13 @@ class WorkflowNodeRunner:
             )
         try:
             arguments = {name: resolve_value(value, state) for name, value in config.inputs.items()}
+            if self.capability_authorizer is not None:
+                security = self._workflow_security(node)
+                await self.capability_authorizer.require_invocation(
+                    security.principal,
+                    config.capability_id,
+                    context=security.authorization,
+                )
             result = await self.capabilities.invoke_one(
                 config.capability_id,
                 arguments,
@@ -507,6 +524,41 @@ class WorkflowNodeRunner:
                 node=node,
                 cause=exc,
             )
+
+    def _workflow_security(self, node: ValidatedWorkflowNode) -> ExecutionSecurityContext | None:
+        """Build the immutable workflow-node identity when runtime authorization is enabled."""
+        if self.capability_authorizer is None:
+            return None
+        if self.workflow_version_id is None:
+            raise RuntimeError("capability authorization requires a workflow version id")
+        return ExecutionSecurityContext(
+            principal=self.capability_authorizer.workflow_node_principal(
+                self.workflow_version_id,
+                node.id,
+            ),
+            authorization=self._authorization_context(node),
+        )
+
+    def _agent_security(
+        self,
+        node: ValidatedWorkflowNode,
+        agent_version_id: str,
+    ) -> ExecutionSecurityContext | None:
+        """Build a saved-agent identity while retaining its invoking workflow as context."""
+        if self.capability_authorizer is None:
+            return None
+        return ExecutionSecurityContext(
+            principal=self.capability_authorizer.agent_version_principal(agent_version_id),
+            authorization=self._authorization_context(node),
+        )
+
+    def _authorization_context(self, node: ValidatedWorkflowNode) -> AuthorizationContext:
+        """Project trusted workflow execution identifiers into authorization metadata."""
+        return AuthorizationContext(
+            workflow_version_id=self.workflow_version_id,
+            node_id=node.id,
+            run_id=self.workflow_run_id,
+        )
 
     def _apply_transform(
         self,

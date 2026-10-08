@@ -9,6 +9,8 @@ from heart_of_the_swarm.authorization import (
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationService,
+    CompositePolicySource,
+    ConfiguredCapabilityPolicySource,
     DevelopmentPolicySource,
     PolicyEvaluator,
     Principal,
@@ -192,3 +194,65 @@ async def test_capability_catalogue_actions_are_closed_contract_values() -> None
             )
         )
         assert decision == AuthorizationDecision.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_configured_capability_source_grants_only_exact_runtime_principals() -> None:
+    source = ConfiguredCapabilityPolicySource(
+        {
+            "agent_version:version-a": ["web_search"],
+            "workflow_node:version-b/fetch": ["database.read"],
+        }
+    )
+    service = AuthorizationService(source)
+
+    allowed = AuthorizationRequest(
+        principal=principal(PrincipalKind.AGENT_VERSION, "version-a"),
+        action=AuthorizationAction.CAPABILITY_INVOKE,
+        resource="capability:web_search",
+    )
+
+    assert await service.decide(allowed) == AuthorizationDecision.ALLOW
+    assert (
+        await service.decide(allowed.model_copy(update={"resource": "capability:database.read"}))
+        == AuthorizationDecision.DENY
+    )
+    assert (
+        await service.decide(
+            allowed.model_copy(
+                update={"principal": principal(PrincipalKind.AGENT_VERSION, "version-b")}
+            )
+        )
+        == AuthorizationDecision.DENY
+    )
+
+
+def test_configured_capability_source_rejects_unsupported_principals() -> None:
+    with pytest.raises(ValueError, match="agent_version or workflow_node"):
+        ConfiguredCapabilityPolicySource({"user:developer": ["web_search"]})
+
+
+@pytest.mark.asyncio
+async def test_composite_source_preserves_restrictive_decision_precedence() -> None:
+    request = AuthorizationRequest(
+        principal=principal(PrincipalKind.AGENT_VERSION, "version-a"),
+        action=AuthorizationAction.CAPABILITY_INVOKE,
+        resource="capability:web_search",
+    )
+
+    class Source:
+        def __init__(self, decision: AuthorizationDecision) -> None:
+            self.decision = decision
+
+        async def policies_for(self, requested: AuthorizationRequest):
+            key = (requested.principal, requested.action, requested.resource)
+            return {key: self.decision}
+
+    service = AuthorizationService(
+        CompositePolicySource(
+            Source(AuthorizationDecision.ALLOW),
+            Source(AuthorizationDecision.DENY),
+        )
+    )
+
+    assert await service.decide(request) == AuthorizationDecision.DENY

@@ -9,6 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.configs import (
@@ -196,12 +197,14 @@ class WorkflowGraphFactory:
         workflow_versions: WorkflowVersionResolver | None = None,
         validator: WorkflowValidator | None = None,
         capabilities: ToolRegistry | None = None,
+        capability_authorizer: CapabilityAuthorizer | None = None,
     ) -> None:
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
         self.workflow_versions = workflow_versions
         self.validator = validator
         self.capabilities = capabilities
+        self.capability_authorizer = capability_authorizer
 
     def create(
         self,
@@ -404,6 +407,7 @@ class WorkflowGraphFactory:
             workflow_version_id=workflow_version_id,
             execution_path=execution_path,
             runtime_context=runtime_context,
+            capability_authorizer=self.capability_authorizer,
         )
         outgoing = self._outgoing_edges(workflow)
         nodes_by_id = {node.id: node for node in workflow.nodes}

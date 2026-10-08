@@ -1,7 +1,10 @@
 import asyncio
 import time
+from uuid import UUID
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.authorization import AuthorizationContext
+from heart_of_the_swarm.capability_authorization import ExecutionSecurityContext
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.observability import (
@@ -121,6 +124,16 @@ class AgentExecutor:
                     context.input,
                     system_prompt=context.agent.system_prompt,
                     callbacks=[usage],
+                    security=(
+                        ExecutionSecurityContext(
+                            principal=self.runner.capability_authorizer.agent_version_principal(
+                                context.agent.version_id
+                            ),
+                            authorization=AuthorizationContext(run_id=UUID(run_id)),
+                        )
+                        if self.runner.capability_authorizer is not None
+                        else None
+                    ),
                 )
                 if await self._cancelled(run_id):
                     await self._persist_observability(context, usage)

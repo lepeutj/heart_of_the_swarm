@@ -45,6 +45,16 @@ docker compose up --build
 PostgreSQL and MLflow artifacts use named Docker volumes. Application audit logs are written to
 the host `logs` directory.
 
+Runtime capability access is default-deny. After publishing a version, add exact grants to `.env`
+and restart the worker before executing tools:
+
+```ini
+CAPABILITY_POLICIES={"agent_version:AGENT_VERSION_UUID":["web_search"],"workflow_node:WORKFLOW_VERSION_UUID/fetch":["rss_reader"]}
+```
+
+The requested tools in an `AgentSpec` do not grant permission. The policy key must identify the
+immutable saved agent version or published workflow node that performs the invocation.
+
 `/health` is a process liveness check. `/ready` verifies the database connection, required tables,
 and expected Alembic revision; Docker uses readiness when deciding whether the API is healthy.
 

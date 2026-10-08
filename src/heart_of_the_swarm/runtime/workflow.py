@@ -3,6 +3,8 @@ from uuid import uuid4
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.artifacts import WorkflowArtifact, load_workflow_artifact
+from heart_of_the_swarm.authorization import AuthorizationService, ConfiguredCapabilityPolicySource
+from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import audit_event, trace_context
@@ -29,18 +31,26 @@ class StandaloneWorkflowRuntime:
         self.tools = create_default_registry(settings)
         self.skills = SkillRegistry(settings.skills_dir)
         self.providers = ProviderRegistry(settings)
+        capability_authorizer = CapabilityAuthorizer(
+            AuthorizationService(ConfiguredCapabilityPolicySource(settings.capability_policies))
+        )
         agent_validator = AgentSpecValidator(self.tools, self.providers, self.skills)
         agent_runner = AgentRunner(
             self.providers,
             agent_validator,
             AgentFactory(self.tools, self.skills),
+            capability_authorizer,
         )
         workflow_validator = WorkflowValidator(
             lambda: self.tools.names,
             self.providers.names,
             lambda: self.skills.names,
         )
-        graphs = WorkflowGraphFactory(agent_runner=agent_runner, capabilities=self.tools)
+        graphs = WorkflowGraphFactory(
+            agent_runner=agent_runner,
+            capabilities=self.tools,
+            capability_authorizer=capability_authorizer,
+        )
         self.runner = WorkflowVersionRunner(workflow_validator, self.tools, graphs)
         self.telemetry = Telemetry(settings)
         self.artifact: WorkflowArtifact | None = None

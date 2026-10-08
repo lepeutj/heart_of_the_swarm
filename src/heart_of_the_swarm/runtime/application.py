@@ -2,6 +2,15 @@ from uuid import uuid4
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.artifacts import AgentArtifact, load_agent_artifact
+from heart_of_the_swarm.authorization import (
+    AuthorizationContext,
+    AuthorizationService,
+    ConfiguredCapabilityPolicySource,
+)
+from heart_of_the_swarm.capability_authorization import (
+    CapabilityAuthorizer,
+    ExecutionSecurityContext,
+)
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import RuntimeCallbackHandler, audit_event, trace_context
@@ -21,7 +30,15 @@ class StandaloneAgentRuntime:
         self.mcp_tools = MCPToolLoader(self.tools, settings.mcp_servers)
         self.providers = ProviderRegistry(settings)
         self.validator = AgentSpecValidator(self.tools, self.providers)
-        self.runner = AgentRunner(self.providers, self.validator, AgentFactory(self.tools))
+        self.capability_authorizer = CapabilityAuthorizer(
+            AuthorizationService(ConfiguredCapabilityPolicySource(settings.capability_policies))
+        )
+        self.runner = AgentRunner(
+            self.providers,
+            self.validator,
+            AgentFactory(self.tools),
+            self.capability_authorizer,
+        )
         self.telemetry = Telemetry(settings)
         self.artifact: AgentArtifact | None = None
 
@@ -96,6 +113,12 @@ class StandaloneAgentRuntime:
                     "agent_id": str(artifact.agent.agent_id),
                     "agent_version_id": str(artifact.agent.agent_version_id),
                 },
+                security=ExecutionSecurityContext(
+                    principal=self.capability_authorizer.agent_version_principal(
+                        artifact.agent.agent_version_id
+                    ),
+                    authorization=AuthorizationContext(run_id=run_id),
+                ),
             )
             self.telemetry.set_outputs(span, {"output": output})
         return InvokeResponse(

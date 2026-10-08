@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 import pytest
+from langchain_core.tools import tool
 
 from heart_of_the_swarm.authorization import (
     AuthorizationAction,
@@ -16,7 +17,9 @@ from heart_of_the_swarm.authorization import (
 from heart_of_the_swarm.capability_authorization import (
     CapabilityAuthorizationError,
     CapabilityAuthorizer,
+    ExecutionSecurityContext,
 )
+from heart_of_the_swarm.tools import ToolRegistry, authorized_tool_view
 
 
 class StaticPolicySource:
@@ -116,3 +119,53 @@ def test_capability_ids_are_validated_by_the_shared_resource_contract() -> None:
 
     with pytest.raises(ValueError):
         CapabilityAuthorizer.request(principal, "invalid capability")
+
+
+@pytest.mark.asyncio
+async def test_authorized_tool_views_are_isolated_and_recheck_before_invocation() -> None:
+    calls: list[str] = []
+
+    @tool
+    async def web_search(query: str) -> str:
+        """Search the web."""
+        calls.append(query)
+        return f"result:{query}"
+
+    registry = ToolRegistry([web_search])
+    allowed_principal = CapabilityAuthorizer.agent_version_principal(uuid4())
+    denied_principal = CapabilityAuthorizer.agent_version_principal(uuid4())
+    source = StaticPolicySource(
+        dict([policy(allowed_principal, "web_search", AuthorizationDecision.ALLOW)])
+    )
+    service = CapabilityAuthorizer(AuthorizationService(source))
+    allowed_security = ExecutionSecurityContext(
+        principal=allowed_principal,
+        authorization=AuthorizationContext(run_id=uuid4()),
+    )
+    denied_security = ExecutionSecurityContext(
+        principal=denied_principal,
+        authorization=AuthorizationContext(run_id=uuid4()),
+    )
+
+    allowed_view = await authorized_tool_view(
+        registry,
+        ["web_search"],
+        service,
+        allowed_security,
+    )
+    denied_view = await authorized_tool_view(
+        registry,
+        ["web_search"],
+        service,
+        denied_security,
+    )
+
+    assert [item.name for item in allowed_view] == ["web_search"]
+    assert denied_view == []
+    assert registry.names == ("web_search",)
+    assert await allowed_view[0].ainvoke({"query": "first"}) == "result:first"
+
+    source.policies.clear()
+    with pytest.raises(CapabilityAuthorizationError):
+        await allowed_view[0].ainvoke({"query": "blocked"})
+    assert calls == ["first"]

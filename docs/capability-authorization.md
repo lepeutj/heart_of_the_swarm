@@ -70,6 +70,20 @@ The worker and standalone runtime must receive an explicit `PolicySource`. Missi
 default deny. Development configuration may bootstrap exact allows for immutable principals, but
 must do so as concrete policies through the same evaluator. There is no permissive runtime bypass.
 
+The initial adapter reads exact allows from `CAPABILITY_POLICIES`:
+
+```json
+{
+  "agent_version:VERSION_UUID": ["web_search"],
+  "workflow_node:WORKFLOW_VERSION_UUID/fetch": ["database.read"]
+}
+```
+
+This configuration is intentionally small: it supports only immutable agent-version and
+workflow-node principals, exact capability IDs, and `allow`. Missing entries are denied. Restrictive
+and approval policies remain available in the evaluator contract but require a future managed
+policy source.
+
 Persistent policy administration, roles, workspaces, and wildcard policy syntax remain deferred.
 
 ## Framework boundary

@@ -114,6 +114,12 @@ persisted and newly created resources; it uses the same default-deny evaluator a
 policy sources. Denied requests return a safe `403`, emit an audit decision, and perform no protected
 side effect.
 
+V2.6d now propagates immutable `agent_version` and `workflow_node` principals into workers and
+standalone runtimes. Agents receive isolated model-facing tool views filtered before
+`create_agent`, every tool and connector invocation is checked again, and the shared registry is
+never mutated per run. Exact runtime allows currently come from `CAPABILITY_POLICIES`; missing
+policy is denied, while managed policy persistence remains deferred.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

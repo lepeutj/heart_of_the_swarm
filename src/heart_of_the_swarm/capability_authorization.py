@@ -1,6 +1,8 @@
 from collections.abc import Iterable
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict
+
 from heart_of_the_swarm.authorization import (
     AuthorizationAction,
     AuthorizationContext,
@@ -10,6 +12,16 @@ from heart_of_the_swarm.authorization import (
     Principal,
     PrincipalKind,
 )
+from heart_of_the_swarm.observability import audit_event
+
+
+class ExecutionSecurityContext(BaseModel):
+    """Trusted immutable identity and metadata for one runtime execution boundary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    principal: Principal
+    authorization: AuthorizationContext
 
 
 class CapabilityAuthorizationError(PermissionError):
@@ -58,7 +70,9 @@ class CapabilityAuthorizer:
         allowed: list[str] = []
         for capability_id in capability_ids:
             request = self.request(principal, capability_id, context=context)
-            if await self.authorization.decide(request) == AuthorizationDecision.ALLOW:
+            decision = await self.authorization.decide(request)
+            self._audit(request, decision, boundary="exposure")
+            if decision == AuthorizationDecision.ALLOW:
                 allowed.append(capability_id)
         return tuple(allowed)
 
@@ -72,6 +86,7 @@ class CapabilityAuthorizer:
         """Require an explicit allow immediately before one capability invocation."""
         request = self.request(principal, capability_id, context=context)
         decision = await self.authorization.decide(request)
+        self._audit(request, decision, boundary="invocation")
         if decision != AuthorizationDecision.ALLOW:
             raise CapabilityAuthorizationError(request, decision)
         return request
@@ -89,4 +104,30 @@ class CapabilityAuthorizer:
             action=AuthorizationAction.CAPABILITY_INVOKE,
             resource=f"capability:{capability_id}",
             context=context or AuthorizationContext(),
+        )
+
+    @staticmethod
+    def _audit(
+        request: AuthorizationRequest,
+        decision: AuthorizationDecision,
+        *,
+        boundary: str,
+    ) -> None:
+        """Record one safe runtime decision without capability arguments or workflow state."""
+        context = request.context
+        audit_event(
+            "authorization.runtime_decision",
+            principal_kind=request.principal.kind,
+            principal_id=request.principal.id,
+            action=request.action,
+            resource=request.resource,
+            decision=decision,
+            boundary=boundary,
+            run_id=str(context.run_id) if context.run_id is not None else None,
+            workflow_version_id=(
+                str(context.workflow_version_id)
+                if context.workflow_version_id is not None
+                else None
+            ),
+            node_id=context.node_id,
         )

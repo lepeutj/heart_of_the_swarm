@@ -6,6 +6,7 @@ from uuid import UUID
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.observability import audit_event, audit_exception, trace_context
@@ -174,6 +175,7 @@ class WorkflowExecutor:
         agent_runner: AgentRunner,
         telemetry: Telemetry,
         checkpoints: WorkflowCheckpointProvider | None = None,
+        capability_authorizer: CapabilityAuthorizer | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -188,6 +190,7 @@ class WorkflowExecutor:
                 workflow_versions=DatabaseWorkflowVersionResolver(database),
                 validator=validator,
                 capabilities=tools,
+                capability_authorizer=capability_authorizer,
             ),
         )
         self.policy = ExecutionPolicy(

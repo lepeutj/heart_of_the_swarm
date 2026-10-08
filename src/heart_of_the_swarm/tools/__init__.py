@@ -1,4 +1,5 @@
 from heart_of_the_swarm.config import Settings, get_settings
+from heart_of_the_swarm.tools.authorized import AuthorizedTool, authorized_tool_view
 from heart_of_the_swarm.tools.builtin import (
     calculator,
     create_database_query,
@@ -47,5 +48,7 @@ __all__ = [
     "RegisteredCapability",
     "ToolCatalogueResponse",
     "ToolRegistry",
+    "AuthorizedTool",
+    "authorized_tool_view",
     "create_default_registry",
 ]

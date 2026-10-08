@@ -135,7 +135,13 @@ async def test_standalone_workflow_api_executes_artifact_without_database(
     tmp_path: Path,
 ) -> None:
     artifact = await export_calculator_workflow(tmp_path)
-    settings = Settings(workflow_artifact_dir=tmp_path, mlflow_enabled=False)
+    settings = Settings(
+        workflow_artifact_dir=tmp_path,
+        mlflow_enabled=False,
+        capability_policies={
+            f"workflow_node:{artifact.workflow.workflow_version_id}/calculate": ["calculator"]
+        },
+    )
     app = create_app(
         lambda: StandaloneWorkflowRuntime(settings),
         title="Test Workflow Runtime",

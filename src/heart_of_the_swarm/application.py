@@ -4,9 +4,11 @@ from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.authentication import create_authentication_provider
 from heart_of_the_swarm.authorization import (
     AuthorizationService,
+    CompositePolicySource,
+    ConfiguredCapabilityPolicySource,
     DevelopmentPolicySource,
-    EmptyPolicySource,
 )
+from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings, get_settings
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.development_authorization import bootstrap_development_policies
@@ -44,7 +46,16 @@ class Application:
             and self.settings.development_auth_user_id
             else None
         )
-        self.authorization = AuthorizationService(self.policy_source or EmptyPolicySource())
+        self.capability_policy_source = ConfiguredCapabilityPolicySource(
+            self.settings.capability_policies
+        )
+        sources = (
+            (self.policy_source, self.capability_policy_source)
+            if self.policy_source is not None
+            else (self.capability_policy_source,)
+        )
+        self.authorization = AuthorizationService(CompositePolicySource(*sources))
+        self.capability_authorizer = CapabilityAuthorizer(self.authorization)
         log_file = self.settings.api_log_file if process == "api" else self.settings.worker_log_file
         configure_audit_logging(
             log_file,
@@ -62,7 +73,12 @@ class Application:
         self.mcp_servers = MCPServerService(self.database)
         self.telemetry = Telemetry(self.settings)
         self.factory = AgentFactory(self.tools, self.skills)
-        self.agent_runner = AgentRunner(self.providers, self.validator, self.factory)
+        self.agent_runner = AgentRunner(
+            self.providers,
+            self.validator,
+            self.factory,
+            self.capability_authorizer,
+        )
         self.workflow_validator = WorkflowValidator(
             lambda: self.tools.names, self.providers.names, lambda: self.skills.names
         )
@@ -105,6 +121,7 @@ class Application:
             self.agent_runner,
             self.telemetry,
             self.workflow_checkpoints,
+            self.capability_authorizer,
         )
 
     async def initialize(self) -> None:

@@ -131,6 +131,60 @@ class EmptyPolicySource:
         return {}
 
 
+class CompositePolicySource:
+    """Combine independent exact policy sources without adding inheritance or wildcards."""
+
+    def __init__(self, *sources: PolicySource) -> None:
+        self.sources = sources
+
+    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
+        combined: dict[PolicyKey, list[AuthorizationDecision]] = {}
+        for source in self.sources:
+            for key, configured in (await source.policies_for(request)).items():
+                decisions = (
+                    (configured,)
+                    if isinstance(configured, AuthorizationDecision)
+                    else tuple(configured)
+                )
+                combined.setdefault(key, []).extend(decisions)
+        return combined
+
+
+class ConfiguredCapabilityPolicySource:
+    """Expose exact capability allows supplied by trusted runtime configuration."""
+
+    def __init__(self, grants: Mapping[str, Iterable[str]]) -> None:
+        self._policies: dict[PolicyKey, AuthorizationDecision] = {}
+        for principal_reference, capability_ids in grants.items():
+            principal = self._parse_principal(principal_reference)
+            for capability_id in capability_ids:
+                request = AuthorizationRequest(
+                    principal=principal,
+                    action=AuthorizationAction.CAPABILITY_INVOKE,
+                    resource=f"capability:{capability_id}",
+                )
+                self._policies[(request.principal, request.action, request.resource)] = (
+                    AuthorizationDecision.ALLOW
+                )
+
+    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
+        key = (request.principal, request.action, request.resource)
+        decision = self._policies.get(key)
+        return {} if decision is None else {key: decision}
+
+    @staticmethod
+    def _parse_principal(reference: str) -> Principal:
+        kind, separator, identifier = reference.partition(":")
+        if not separator or kind not in {
+            PrincipalKind.AGENT_VERSION,
+            PrincipalKind.WORKFLOW_NODE,
+        }:
+            raise ValueError(
+                "capability policy principals must be agent_version or workflow_node references"
+            )
+        return Principal(kind=PrincipalKind(kind), id=identifier)
+
+
 class DevelopmentPolicySource:
     """Process-local exact policies for one explicitly configured development user."""
 
