@@ -50,6 +50,7 @@ and restart the worker before executing tools:
 
 ```ini
 CAPABILITY_POLICIES={"agent_version:AGENT_VERSION_UUID":["web_search"],"workflow_node:WORKFLOW_VERSION_UUID/fetch":["rss_reader"]}
+CAPABILITY_APPROVAL_POLICIES={"workflow_node:WORKFLOW_VERSION_UUID/publish":["remote.publish"]}
 ```
 
 The requested tools in an `AgentSpec` do not grant permission. The policy key must identify the

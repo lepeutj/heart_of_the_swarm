@@ -9,7 +9,16 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
-from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
+from heart_of_the_swarm.approval_grants import (
+    ApprovalGrantConsumer,
+    CapabilityApprovalInterruptResponse,
+    CapabilityApprovalRequest,
+    CapabilityApprovalResume,
+)
+from heart_of_the_swarm.capability_authorization import (
+    CapabilityApprovalRequired,
+    CapabilityAuthorizer,
+)
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.configs import (
@@ -183,6 +192,7 @@ class WorkflowGraph:
             node_id=value.get("node_id"),
             prompt=value.get("prompt"),
             response_schema=item.response_schema or {},
+            request=value.get("request"),
         )
 
 
@@ -198,6 +208,7 @@ class WorkflowGraphFactory:
         validator: WorkflowValidator | None = None,
         capabilities: ToolRegistry | None = None,
         capability_authorizer: CapabilityAuthorizer | None = None,
+        approval_grants: ApprovalGrantConsumer | None = None,
     ) -> None:
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
@@ -205,6 +216,7 @@ class WorkflowGraphFactory:
         self.validator = validator
         self.capabilities = capabilities
         self.capability_authorizer = capability_authorizer
+        self.approval_grants = approval_grants
 
     def create(
         self,
@@ -408,6 +420,7 @@ class WorkflowGraphFactory:
             execution_path=execution_path,
             runtime_context=runtime_context,
             capability_authorizer=self.capability_authorizer,
+            approval_grants=(self.approval_grants if execution_path == "root" else None),
         )
         outgoing = self._outgoing_edges(workflow)
         nodes_by_id = {node.id: node for node in workflow.nodes}
@@ -458,6 +471,11 @@ class WorkflowGraphFactory:
                 builder.add_node(
                     graph_node_id,
                     self._human_approval_action(runner, node),
+                )
+            elif node.type == NodeType.CONNECTOR and branch is None:
+                builder.add_node(
+                    graph_node_id,
+                    self._connector_action(runner, node, edges),
                 )
             elif node.id in delegated_targets:
                 supervisor, target_config = delegated_targets[node.id]
@@ -827,6 +845,69 @@ class WorkflowGraphFactory:
             return {
                 "data": updated,
                 "executed_nodes": (*tuple(state.get("executed_nodes", ())), node.id),
+            }
+
+        return execute
+
+    @staticmethod
+    def _connector_action(
+        runner: WorkflowNodeRunner,
+        node: ValidatedWorkflowNode,
+        outgoing_edges: list[WorkflowEdge],
+    ) -> Callable[[_GraphState], Awaitable[_GraphState]]:
+        """Suspend an approval-required connector and consume its grant on resume."""
+
+        async def execute(state: _GraphState) -> _GraphState:
+            executed_nodes = tuple(state.get("executed_nodes", ()))
+            try:
+                result = await runner.run(
+                    node,
+                    outgoing_edges,
+                    state["data"],
+                    executed_nodes,
+                )
+            except CapabilityApprovalRequired as pending:
+                request = CapabilityApprovalRequest(
+                    authorization=pending.request,
+                    arguments_fingerprint=pending.arguments_fingerprint,
+                )
+                response = interrupt(
+                    {
+                        "kind": "capability_approval",
+                        "node_id": node.id,
+                        "prompt": f"Allow {pending.request.resource} for this request?",
+                        "request": request.model_dump(mode="json"),
+                    },
+                    response_schema=CapabilityApprovalInterruptResponse,
+                )
+                approval = CapabilityApprovalResume.model_validate(
+                    response.model_dump()
+                    if isinstance(response, CapabilityApprovalInterruptResponse)
+                    else response
+                )
+                if not approval.approved or approval.grant_id is None:
+                    issue = WorkflowExecutionIssue(
+                        code="workflow.execution.capability_approval_rejected",
+                        message=f"Capability approval for connector '{node.id}' was rejected.",
+                        workflow_id=runner.workflow.id,
+                        node_id=node.id,
+                        node_type=node.type,
+                    )
+                    await runner.record_failed(
+                        node,
+                        error_code=issue.code,
+                        safe_message=issue.message,
+                    )
+                    raise WorkflowExecutionError(issue) from pending
+                result = await runner.resume_connector(
+                    node,
+                    state["data"],
+                    executed_nodes,
+                    approval.grant_id,
+                )
+            return {
+                "data": result.state,
+                "executed_nodes": result.executed_nodes,
             }
 
         return execute

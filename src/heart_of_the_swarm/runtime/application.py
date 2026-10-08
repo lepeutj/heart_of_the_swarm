@@ -39,7 +39,9 @@ class StandaloneAgentRuntime:
         self.validator = AgentSpecValidator(self.tools, self.providers)
         authorization = AuthorizationService(
             CompositePolicySource(
-                ConfiguredCapabilityPolicySource(settings.capability_policies),
+                ConfiguredCapabilityPolicySource(
+                    settings.capability_policies,
+                ),
                 ConfiguredCredentialPolicySource(settings.credential_policies),
             )
         )

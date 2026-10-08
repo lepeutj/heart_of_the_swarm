@@ -29,14 +29,19 @@ An `ApprovalGrant` contains only trusted identifiers and a hash:
 
 ```text
 id
-run_id
+interruption_id
+source_run_id
+continuation_run_id
 node_id
 principal
 action
 resource
 arguments_fingerprint
 approved_by
+status: active | consumed
+created_at
 expires_at
+consumed_by_run_id
 consumed_at
 ```
 
@@ -54,6 +59,15 @@ Changing one argument, capability, principal, node, or run requires a new approv
 rejection create no grant. Consumption must be atomic with the decision that releases the external
 side effect.
 
+An approval grant is not a distributed transaction. A crash before consumption leaves the grant
+active and no external call has started. A crash after consumption may leave the external effect
+unknown; the runtime must not retry automatically. Capability-specific idempotency keys may be
+added later where an external system supports them.
+
+Authorization is always re-evaluated before grant lookup. A current `deny` takes precedence over
+an existing grant. A grant can satisfy only a current `approval_required` decision; it never
+bypasses or replaces normal policy evaluation.
+
 ## Argument fingerprint
 
 Trusted runtime code computes SHA-256 over canonical JSON-compatible validated capability
@@ -66,9 +80,10 @@ does. The fingerprint is audit correlation, not encryption for secrets supplied 
 
 ## Persistence and events
 
-The future durable adapter will link a grant to the capability interruption that created it. It
-must create the continuation run and grant in one transaction, then atomically consume the grant
-before invocation.
+The durable adapter links each grant to the capability interruption that created it. Resolution,
+continuation-run creation, grant creation, thread transition, and lifecycle events share one
+database transaction. A conditional update atomically consumes the exact active, unexpired grant
+for the continuation run before invocation.
 
 Safe product events may include grant ID, capability resource, decision, and fingerprint. They
 must not contain capability arguments, credentials, workflow state, or hidden model reasoning.
@@ -76,9 +91,18 @@ must not contain capability arguments, credentials, workflow state, or hidden mo
 ## V2.6f increments
 
 1. Pure `ApprovalGrant` and canonical fingerprint contract.
-2. Durable grant persistence linked to capability interruptions.
-3. LangGraph interrupt/resume integration for workflow connectors and agent tools.
-4. Thin API and React reuse of the existing approval interaction.
+2. Durable grant persistence linked to capability interruptions. **Implemented.**
+3. LangGraph interrupt/resume integration for sequential deterministic workflow connectors.
+   **Implemented.**
+4. Thin API and React reuse of the existing approval interaction. **Implemented through the shared
+   interruption endpoints and run panel.**
+
+Agent-selected tools remain denied when policy returns `approval_required` until model-call replay
+and durable agent-loop resumption have an explicit contract.
+
+Approval-required connectors inside parallel regions or nested subworkflows remain denied until
+their interruption namespaces and branch-resume semantics are explicitly validated. Sequential
+root-workflow connectors are the V2.6f runtime contract.
 
 Multi-approver rules, delegation, quorum, long-lived grants, wildcard grants, and standalone
 approval brokers are deferred.

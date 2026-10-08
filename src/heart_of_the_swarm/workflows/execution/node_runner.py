@@ -4,14 +4,21 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, NoReturn
+from uuid import UUID
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
 from pydantic import BaseModel
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
-from heart_of_the_swarm.authorization import AuthorizationContext
+from heart_of_the_swarm.approval_grants import (
+    ApprovalGrantConsumer,
+    fingerprint_capability_arguments,
+)
+from heart_of_the_swarm.authorization import AuthorizationContext, AuthorizationDecision
 from heart_of_the_swarm.capability_authorization import (
+    CapabilityApprovalRequired,
+    CapabilityAuthorizationError,
     CapabilityAuthorizer,
     ExecutionSecurityContext,
 )
@@ -81,6 +88,7 @@ class WorkflowNodeRunner:
         execution_path: str = "root",
         runtime_context: dict[str, Any] | None = None,
         capability_authorizer: CapabilityAuthorizer | None = None,
+        approval_grants: ApprovalGrantConsumer | None = None,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -93,6 +101,7 @@ class WorkflowNodeRunner:
         self.execution_path = execution_path
         self.runtime_context = dict(runtime_context or {})
         self.capability_authorizer = capability_authorizer
+        self.approval_grants = approval_grants
 
     async def run(
         self,
@@ -102,6 +111,7 @@ class WorkflowNodeRunner:
         executed_nodes: tuple[str, ...],
         event_context: dict[str, Any] | None = None,
         agent_input_overrides: dict[str, Any] | None = None,
+        approval_grant_id: UUID | None = None,
     ) -> NodeExecution:
         """Execute one node with normalized errors and trajectory events."""
         current_execution = (*executed_nodes, node.id)
@@ -131,7 +141,12 @@ class WorkflowNodeRunner:
                 )
             elif isinstance(node.config, ConnectorNodeConfig):
                 result = NodeExecution(
-                    await self._invoke_connector(node, state, event_context),
+                    await self._invoke_connector(
+                        node,
+                        state,
+                        event_context,
+                        approval_grant_id,
+                    ),
                     current_execution,
                 )
             elif isinstance(node.config, ConditionNodeConfig):
@@ -181,6 +196,28 @@ class WorkflowNodeRunner:
 
         await self._record_node("node.completed", node, context=event_context)
         return result
+
+    async def resume_connector(
+        self,
+        node: ValidatedWorkflowNode,
+        state: WorkflowState,
+        executed_nodes: tuple[str, ...],
+        grant_id: UUID,
+        event_context: dict[str, Any] | None = None,
+    ) -> NodeExecution:
+        """Complete an already-started connector node with one approved exact grant."""
+        try:
+            updated = await self._invoke_connector(node, state, event_context, grant_id)
+        except WorkflowExecutionError as exc:
+            await self.record_failed(
+                node,
+                error_code=exc.issue.code,
+                safe_message=exc.issue.message,
+                context=event_context,
+            )
+            raise
+        await self.record_completed(node, event_context)
+        return NodeExecution(updated, (*executed_nodes, node.id))
 
     async def record_started(
         self,
@@ -474,6 +511,7 @@ class WorkflowNodeRunner:
         node: ValidatedWorkflowNode,
         state: WorkflowState,
         event_context: dict[str, Any] | None = None,
+        approval_grant_id: UUID | None = None,
     ) -> WorkflowState:
         """Invoke one registered capability and project its result into state."""
         config = self._require_config(node, ConnectorNodeConfig)
@@ -487,11 +525,28 @@ class WorkflowNodeRunner:
             arguments = {name: resolve_value(value, state) for name, value in config.inputs.items()}
             if self.capability_authorizer is not None:
                 security = self._workflow_security(node)
-                await self.capability_authorizer.require_invocation(
+                request, decision = await self.capability_authorizer.invocation_decision(
                     security.principal,
                     config.capability_id,
                     context=security.authorization,
                 )
+                if decision == AuthorizationDecision.DENY:
+                    raise CapabilityAuthorizationError(request, decision)
+                if decision == AuthorizationDecision.APPROVAL_REQUIRED:
+                    fingerprint = fingerprint_capability_arguments(arguments)
+                    if approval_grant_id is None:
+                        if self.approval_grants is None or (
+                            event_context is not None and event_context.get("branch_id") is not None
+                        ):
+                            raise CapabilityAuthorizationError(request, decision)
+                        raise CapabilityApprovalRequired(request, fingerprint)
+                    if self.approval_grants is None:
+                        raise CapabilityAuthorizationError(request, decision)
+                    await self.approval_grants.consume(
+                        approval_grant_id,
+                        request,
+                        fingerprint,
+                    )
             result = await self.capabilities.invoke_one(
                 config.capability_id,
                 arguments,
@@ -514,6 +569,8 @@ class WorkflowNodeRunner:
                 set_path(updated, binding.to_state, deepcopy(values[name]))
             return updated
         except WorkflowExecutionError:
+            raise
+        except CapabilityApprovalRequired:
             raise
         except Exception as exc:
             self._raise(

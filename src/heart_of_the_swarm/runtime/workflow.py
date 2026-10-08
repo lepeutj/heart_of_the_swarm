@@ -39,7 +39,9 @@ class StandaloneWorkflowRuntime:
         self.providers = ProviderRegistry(settings)
         authorization = AuthorizationService(
             CompositePolicySource(
-                ConfiguredCapabilityPolicySource(settings.capability_policies),
+                ConfiguredCapabilityPolicySource(
+                    settings.capability_policies,
+                ),
                 ConfiguredCredentialPolicySource(settings.credential_policies),
             )
         )

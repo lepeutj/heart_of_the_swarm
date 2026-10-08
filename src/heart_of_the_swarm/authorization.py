@@ -153,9 +153,27 @@ class CompositePolicySource:
 class ConfiguredCapabilityPolicySource:
     """Expose exact capability allows supplied by trusted runtime configuration."""
 
-    def __init__(self, grants: Mapping[str, Iterable[str]]) -> None:
-        self._policies: dict[PolicyKey, AuthorizationDecision] = {}
-        for principal_reference, capability_ids in grants.items():
+    def __init__(
+        self,
+        grants: Mapping[str, Iterable[str]],
+        approvals: Mapping[str, Iterable[str]] | None = None,
+    ) -> None:
+        self._policies: dict[PolicyKey, list[AuthorizationDecision]] = {}
+        self._add(grants, AuthorizationDecision.ALLOW)
+        self._add(approvals or {}, AuthorizationDecision.APPROVAL_REQUIRED)
+
+    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
+        key = (request.principal, request.action, request.resource)
+        decisions = self._policies.get(key)
+        return {} if decisions is None else {key: tuple(decisions)}
+
+    def _add(
+        self,
+        configured: Mapping[str, Iterable[str]],
+        decision: AuthorizationDecision,
+    ) -> None:
+        """Expand trusted exact configuration without introducing roles or wildcards."""
+        for principal_reference, capability_ids in configured.items():
             principal = self._parse_principal(principal_reference)
             for capability_id in capability_ids:
                 request = AuthorizationRequest(
@@ -163,14 +181,8 @@ class ConfiguredCapabilityPolicySource:
                     action=AuthorizationAction.CAPABILITY_INVOKE,
                     resource=f"capability:{capability_id}",
                 )
-                self._policies[(request.principal, request.action, request.resource)] = (
-                    AuthorizationDecision.ALLOW
-                )
-
-    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
-        key = (request.principal, request.action, request.resource)
-        decision = self._policies.get(key)
-        return {} if decision is None else {key: decision}
+                key = (request.principal, request.action, request.resource)
+                self._policies.setdefault(key, []).append(decision)
 
     @staticmethod
     def _parse_principal(reference: str) -> Principal:

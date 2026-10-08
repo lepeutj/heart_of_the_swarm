@@ -6,6 +6,8 @@ from uuid import UUID
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.approval_grant_service import DatabaseApprovalGrantConsumer
+from heart_of_the_swarm.approval_grants import CapabilityApprovalRequest
 from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
@@ -191,6 +193,7 @@ class WorkflowExecutor:
                 validator=validator,
                 capabilities=tools,
                 capability_authorizer=capability_authorizer,
+                approval_grants=DatabaseApprovalGrantConsumer(database),
             ),
         )
         self.policy = ExecutionPolicy(
@@ -261,11 +264,21 @@ class WorkflowExecutor:
                         if result.checkpoint_id is None:
                             raise RuntimeError("interrupted workflow has no durable checkpoint")
                         if result.interruption is not None:
-                            await WorkflowInterruptionRepository(session).create_approval(
-                                run_id,
-                                result.interruption.node_id,
-                                result.checkpoint_id,
-                            )
+                            interruptions = WorkflowInterruptionRepository(session)
+                            if result.interruption.kind == "capability_approval":
+                                await interruptions.create_capability_approval(
+                                    run_id,
+                                    result.checkpoint_id,
+                                    CapabilityApprovalRequest.model_validate(
+                                        result.interruption.request
+                                    ),
+                                )
+                            else:
+                                await interruptions.create_approval(
+                                    run_id,
+                                    result.interruption.node_id,
+                                    result.checkpoint_id,
+                                )
                         else:
                             await repository.interrupt(
                                 run_id,

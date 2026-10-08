@@ -49,7 +49,8 @@ class Application:
             else None
         )
         self.capability_policy_source = ConfiguredCapabilityPolicySource(
-            self.settings.capability_policies
+            self.settings.capability_policies,
+            self.settings.capability_approval_policies,
         )
         self.credential_policy_source = ConfiguredCredentialPolicySource(
             self.settings.credential_policies

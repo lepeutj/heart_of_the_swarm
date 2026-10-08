@@ -52,7 +52,11 @@ def connector_workflow() -> WorkflowSpec:
     )
 
 
-def graph(grants: dict[str, list[str]], calls: list[str]):
+def graph(
+    grants: dict[str, list[str]],
+    calls: list[str],
+    approvals: dict[str, list[str]] | None = None,
+):
     @tool
     async def record_call(value: str) -> dict[str, str]:
         """Record one authorized side effect."""
@@ -62,7 +66,7 @@ def graph(grants: dict[str, list[str]], calls: list[str]):
     registry = ToolRegistry([record_call])
     workflow = WorkflowValidator(registry.names, []).validate(connector_workflow())
     authorizer = CapabilityAuthorizer(
-        AuthorizationService(ConfiguredCapabilityPolicySource(grants))
+        AuthorizationService(ConfiguredCapabilityPolicySource(grants, approvals))
     )
     return WorkflowGraphFactory(
         capabilities=registry,
@@ -86,6 +90,21 @@ async def test_connector_allow_invokes_the_capability() -> None:
 async def test_connector_deny_has_no_capability_side_effect() -> None:
     calls: list[str] = []
     runtime = graph({}, calls)
+
+    with pytest.raises(WorkflowExecutionError) as caught:
+        await runtime.ainvoke({})
+
+    assert caught.value.issue.code == "workflow.execution.connector_failed"
+    assert calls == []
+
+
+async def test_connector_approval_without_durable_consumer_is_a_safe_denial() -> None:
+    calls: list[str] = []
+    runtime = graph(
+        {},
+        calls,
+        {f"workflow_node:{WORKFLOW_VERSION_ID}/fetch": ["record_call"]},
+    )
 
     with pytest.raises(WorkflowExecutionError) as caught:
         await runtime.ainvoke({})

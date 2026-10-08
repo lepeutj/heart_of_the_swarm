@@ -12,10 +12,11 @@ class ExecutionInterruption(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     interrupt_id: str
-    kind: Literal["approval"]
+    kind: Literal["approval", "capability_approval"]
     node_id: str
     prompt: str
     response_schema: dict[str, Any]
+    request: dict[str, Any] | None = None
 
 
 class ExecutionResult(BaseModel):

@@ -126,9 +126,12 @@ an exact `credential.resolve` allow and inject the value directly into FastMCP's
 control-plane API receives no local secret store, and authenticated catalogue synchronization back
 to that API remains a documented follow-up.
 
-V2.6f starts with a pure request-bound `ApprovalGrant` contract and canonical capability-argument
-fingerprinting. Grants are exact, expiring, single-use permissions for one continuation run and
-node; durable persistence and LangGraph interruption consumption remain the next increment.
+V2.6f now has canonical capability-argument fingerprints and durable request-bound grants. An
+approved capability interruption creates its continuation run and exact expiring grant in one
+transaction. Sequential deterministic `CONNECTOR` nodes now suspend through LangGraph when policy
+requires approval, recheck policy on resume, consume the exact grant atomically, and only then
+invoke the capability. Agent-selected tools and approvals inside parallel regions or nested
+subworkflows remain deferred.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow

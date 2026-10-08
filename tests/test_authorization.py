@@ -227,6 +227,23 @@ async def test_configured_capability_source_grants_only_exact_runtime_principals
     )
 
 
+@pytest.mark.asyncio
+async def test_configured_capability_approval_takes_precedence_over_allow() -> None:
+    request = AuthorizationRequest(
+        principal=principal(PrincipalKind.WORKFLOW_NODE, "version-a/publish"),
+        action=AuthorizationAction.CAPABILITY_INVOKE,
+        resource="capability:remote.publish",
+    )
+    source = ConfiguredCapabilityPolicySource(
+        {"workflow_node:version-a/publish": ["remote.publish"]},
+        {"workflow_node:version-a/publish": ["remote.publish"]},
+    )
+
+    assert await AuthorizationService(source).decide(request) == (
+        AuthorizationDecision.APPROVAL_REQUIRED
+    )
+
+
 def test_configured_capability_source_rejects_unsupported_principals() -> None:
     with pytest.raises(ValueError, match="agent_version or workflow_node"):
         ConfiguredCapabilityPolicySource({"user:developer": ["web_search"]})

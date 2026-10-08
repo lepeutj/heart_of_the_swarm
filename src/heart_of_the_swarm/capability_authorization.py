@@ -37,6 +37,15 @@ class CapabilityAuthorizationError(PermissionError):
         super().__init__(f"capability invocation is {decision.value}: {request.resource}")
 
 
+class CapabilityApprovalRequired(PermissionError):
+    """Signal that one exact invocation must cross a durable approval boundary."""
+
+    def __init__(self, request: AuthorizationRequest, arguments_fingerprint: str) -> None:
+        self.request = request
+        self.arguments_fingerprint = arguments_fingerprint
+        super().__init__(f"capability invocation requires approval: {request.resource}")
+
+
 class CapabilityAuthorizer:
     """Apply the shared policy evaluator to immutable runtime capability identities."""
 
@@ -84,12 +93,27 @@ class CapabilityAuthorizer:
         context: AuthorizationContext | None = None,
     ) -> AuthorizationRequest:
         """Require an explicit allow immediately before one capability invocation."""
-        request = self.request(principal, capability_id, context=context)
-        decision = await self.authorization.decide(request)
-        self._audit(request, decision, boundary="invocation")
+        request, decision = await self.invocation_decision(
+            principal,
+            capability_id,
+            context=context,
+        )
         if decision != AuthorizationDecision.ALLOW:
             raise CapabilityAuthorizationError(request, decision)
         return request
+
+    async def invocation_decision(
+        self,
+        principal: Principal,
+        capability_id: str,
+        *,
+        context: AuthorizationContext | None = None,
+    ) -> tuple[AuthorizationRequest, AuthorizationDecision]:
+        """Evaluate and audit one invocation without interpreting approval workflow policy."""
+        request = self.request(principal, capability_id, context=context)
+        decision = await self.authorization.decide(request)
+        self._audit(request, decision, boundary="invocation")
+        return request, decision
 
     @staticmethod
     def request(

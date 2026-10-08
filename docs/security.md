@@ -130,7 +130,8 @@ a role or reusable permission.
 
 ```text
 ApprovalGrant
-├── run_id
+├── source_run_id
+├── continuation_run_id
 ├── node_id
 ├── principal
 ├── action
@@ -143,6 +144,10 @@ ApprovalGrant
 The grant allows execution only when it is unresolved, unexpired, belongs to the current run and
 node, and matches the principal, action, resource, and canonical argument fingerprint. Otherwise
 the decision is `deny`. A grant is consumed at most once.
+
+Policy is re-evaluated before grant consumption, so a current `deny` always wins. Consumption
+provides at-most-once authorization, not exactly-once external side effects; a crash after
+consumption produces an unknown external outcome and must not trigger an automatic retry.
 
 The argument fingerprint must be computed by trusted product code from the exact validated request.
 Raw credentials and secret values are never fingerprint inputs, approval payloads, audit fields, or
