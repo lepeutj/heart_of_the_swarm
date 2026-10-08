@@ -171,7 +171,9 @@ part of the architecture.
    connector interrupt/resume flow are implemented. Sequential root-workflow agents now preserve
    and resume one model-selected approval-gated tool call without model replay. Batched, parallel,
    nested, and standalone approvals remain deferred.**
-7. Apply execution, request, concurrency, network, and state-size limits.
+7. Apply execution, request, concurrency, network, and state-size limits. **The outbound network
+   policy is implemented for MCP HTTP discovery, refresh, connection tests, and calls through a
+   DNS-resolved, IP-pinned transport. Other limit families remain pending.**
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
    communication when the remote host is behind NAT.
 

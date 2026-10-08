@@ -21,6 +21,7 @@ from heart_of_the_swarm.credentials import (
     RuntimeIdentity,
 )
 from heart_of_the_swarm.factory import AgentFactory
+from heart_of_the_swarm.network_policy import NetworkPolicyEnforcer
 from heart_of_the_swarm.observability import RuntimeCallbackHandler, audit_event, trace_context
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
@@ -67,6 +68,7 @@ class StandaloneAgentRuntime:
             self.tools,
             mcp_sources,
             credential_resolver=self.credential_resolver,
+            network_policy=NetworkPolicyEnforcer(settings.outbound_network_policy()),
         )
         self.runner = AgentRunner(
             self.providers,

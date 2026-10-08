@@ -6,6 +6,8 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from heart_of_the_swarm.network_policy import NetworkPolicy
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", enable_decoding=False)
@@ -44,6 +46,13 @@ class Settings(BaseSettings):
     local_secrets: dict[str, SecretStr] = Field(default_factory=dict)
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     max_document_bytes: int = Field(default=1_000_000, ge=1_000, le=5_000_000)
+    network_allow_public: bool = True
+    network_allow_private: bool = False
+    network_allowed_cidrs: list[str] = Field(default_factory=list)
+    network_denied_cidrs: list[str] = Field(default_factory=list)
+    network_allow_loopback: bool = False
+    network_allow_link_local: bool = False
+    network_allow_metadata: bool = False
 
     api_log_file: str = "logs/api.jsonl"
     worker_log_file: str = "logs/worker.jsonl"
@@ -70,6 +79,15 @@ class Settings(BaseSettings):
     @classmethod
     def parse_models(cls, value: object) -> object:
         if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("network_allowed_cidrs", "network_denied_cidrs", mode="before")
+    @classmethod
+    def parse_cidrs(cls, value: object) -> object:
+        if isinstance(value, str):
+            if value.lstrip().startswith("["):
+                return json.loads(value)
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
@@ -108,6 +126,18 @@ class Settings(BaseSettings):
         if unknown_mcp_credentials:
             raise ValueError("MCP bearer credentials must reference configured MCP servers")
         return self
+
+    def outbound_network_policy(self) -> NetworkPolicy:
+        """Build the runtime-only outbound policy without placing it in product specifications."""
+        return NetworkPolicy(
+            allow_public=self.network_allow_public,
+            allow_private=self.network_allow_private,
+            allowed_cidrs=tuple(self.network_allowed_cidrs),
+            denied_cidrs=tuple(self.network_denied_cidrs),
+            allow_loopback=self.network_allow_loopback,
+            allow_link_local=self.network_allow_link_local,
+            allow_metadata=self.network_allow_metadata,
+        )
 
 
 @lru_cache

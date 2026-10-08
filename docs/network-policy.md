@@ -75,6 +75,12 @@ persisted MCP source
 This preserves the existing capability architecture. It does not create another MCP catalogue or
 network-aware tool registry.
 
+The runtime implementation resolves and validates the complete address set before resolving MCP
+credentials. It then connects through an IP-literal URL while preserving the validated HTTP host
+and TLS server name. Environment proxies and automatic client redirects are disabled on this pinned
+transport. MCP's same-origin relative redirect handling therefore remains on the already pinned
+address; a redirect cannot trigger a new unvalidated hostname lookup.
+
 ## Relationship to authorization
 
 Authorization and network policy are independent gates:

@@ -17,6 +17,7 @@ from heart_of_the_swarm.development_authorization import bootstrap_development_p
 from heart_of_the_swarm.execution import AgentExecutor, RunService
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.mcp_service import MCPServerService
+from heart_of_the_swarm.network_policy import NetworkPolicyEnforcer
 from heart_of_the_swarm.observability import configure_audit_logging
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.service import AgentService
@@ -90,6 +91,7 @@ class Application:
             self.tools,
             {},
             credential_resolver=self.credential_resolver,
+            network_policy=NetworkPolicyEnforcer(self.settings.outbound_network_policy()),
         )
         self.skills = SkillRegistry(self.settings.skills_dir)
         self.providers = ProviderRegistry(self.settings)

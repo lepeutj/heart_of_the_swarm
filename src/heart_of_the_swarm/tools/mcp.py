@@ -10,6 +10,7 @@ from typing import Protocol, Self
 from langchain_core.tools import BaseTool
 
 from heart_of_the_swarm.credentials import CredentialRef, CredentialResolver
+from heart_of_the_swarm.network_policy import NetworkPolicyEnforcer, PinnedNetworkDestination
 from heart_of_the_swarm.observability import audit_event
 from heart_of_the_swarm.tools.models import MCPServerStatus
 from heart_of_the_swarm.tools.registry import RegisteredCapability, ToolRegistry
@@ -32,15 +33,36 @@ class MCPConnection:
 
 
 def create_mcp_adapter(
-    url: str,
+    target: PinnedNetworkDestination,
     headers: Mapping[str, str] | None = None,
 ) -> MCPAdapterProtocol:
-    """Create LangChain's MCP adapter with optional runtime-resolved HTTP headers."""
+    """Create an MCP adapter whose HTTP connection is pinned to an authorized address."""
+    import httpx2
     from fastmcp.client.transports import StreamableHttpTransport
     from langchain.mcp import MCPAdapter
 
-    target = StreamableHttpTransport(url, headers=dict(headers)) if headers else url
-    return MCPAdapter(target)
+    merged_headers = dict(headers or {})
+    merged_headers["Host"] = target.host_header
+
+    async def apply_tls_name(request: httpx2.Request) -> None:
+        if target.tls_server_name is not None:
+            request.extensions["sni_hostname"] = target.tls_server_name
+
+    def client_factory(**kwargs) -> httpx2.AsyncClient:
+        # The IP-literal URL pins routing. Disable environment proxies and automatic redirects so
+        # neither can silently replace the destination validated by NetworkPolicyEnforcer.
+        kwargs["follow_redirects"] = False
+        kwargs["trust_env"] = False
+        event_hooks = dict(kwargs.pop("event_hooks", {}))
+        event_hooks.setdefault("request", []).append(apply_tls_name)
+        return httpx2.AsyncClient(event_hooks=event_hooks, **kwargs)
+
+    transport = StreamableHttpTransport(
+        target.url,
+        headers=merged_headers,
+        httpx_client_factory=client_factory,
+    )
+    return MCPAdapter(transport)
 
 
 class MCPToolLoader:
@@ -50,15 +72,16 @@ class MCPToolLoader:
         self,
         registry: ToolRegistry,
         servers: Mapping[str, str | MCPConnection],
-        adapter_factory: Callable[[str, Mapping[str, str] | None], MCPAdapterProtocol] = (
-            create_mcp_adapter
-        ),
+        adapter_factory: Callable[[str, Mapping[str, str] | None], MCPAdapterProtocol]
+        | None = None,
         credential_resolver: CredentialResolver | None = None,
+        network_policy: NetworkPolicyEnforcer | None = None,
     ) -> None:
         self.registry = registry
         self.servers = self._normalize_servers(servers)
         self.adapter_factory = adapter_factory
         self.credential_resolver = credential_resolver
+        self.network_policy = network_policy
         self._stacks: dict[str, AsyncExitStack] = {}
         self._retired_stacks: list[AsyncExitStack] = []
         self._statuses: dict[str, MCPServerStatus] = {}
@@ -120,9 +143,10 @@ class MCPToolLoader:
 
             stack = AsyncExitStack()
             try:
+                target = await self._network_target(connection)
                 headers = await self._authentication_headers(connection)
                 adapter = await stack.enter_async_context(
-                    self.adapter_factory(connection.url, headers)
+                    self._adapter(target, connection, headers)
                 )
                 tools = await adapter.list_tools(cache_mode="refresh")
                 capabilities = tuple(self._registered_tool(server_name, tool) for tool in tools)
@@ -165,8 +189,9 @@ class MCPToolLoader:
     async def test(self, server_name: str, source: str | MCPConnection) -> tuple[str, ...]:
         """Test discovery without changing the live registry or retaining the adapter."""
         connection = self._normalize_connection(source)
+        target = await self._network_target(connection)
         headers = await self._authentication_headers(connection)
-        async with self.adapter_factory(connection.url, headers) as adapter:
+        async with self._adapter(target, connection, headers) as adapter:
             tools = await adapter.list_tools(cache_mode="refresh")
         return tuple(self._capability_id(server_name, tool.name) for tool in tools)
 
@@ -182,6 +207,25 @@ class MCPToolLoader:
             raise PermissionError("credential resolution is unavailable in this process")
         secret = await self.credential_resolver.resolve(reference)
         return {"Authorization": f"Bearer {secret.get_secret_value()}"}
+
+    async def _network_target(self, connection: MCPConnection) -> PinnedNetworkDestination | None:
+        """Authorize and pin production HTTP destinations before credentials are resolved."""
+        if self.network_policy is None:
+            return None
+        return (await self.network_policy.validate(connection.url)).pin()
+
+    def _adapter(
+        self,
+        target: PinnedNetworkDestination | None,
+        connection: MCPConnection,
+        headers: Mapping[str, str] | None,
+    ) -> MCPAdapterProtocol:
+        """Keep custom in-process test adapters separate from the pinned production transport."""
+        if self.adapter_factory is not None:
+            return self.adapter_factory(connection.url, headers)
+        if target is None:
+            raise RuntimeError("MCP HTTP transport requires an outbound network policy")
+        return create_mcp_adapter(target, headers)
 
     async def close(self) -> None:
         for stack in [*self._stacks.values(), *self._retired_stacks]:
