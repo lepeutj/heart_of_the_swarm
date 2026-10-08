@@ -175,7 +175,8 @@ part of the architecture.
    policy is implemented for MCP HTTP discovery, refresh, connection tests, and calls through a
    DNS-resolved, IP-pinned transport. HTTP body limits are enforced before parsing in the main and
    standalone APIs. The remaining ownership and failure contracts are defined in
-   `docs/runtime-limits.md`; direct-agent timeout, concurrency, state, and call budgets remain.**
+   `docs/runtime-limits.md`; persisted direct agent runs now have terminal active-attempt timeouts,
+   while concurrency, state, and call budgets remain.**
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
    communication when the remote host is behind NAT.
 

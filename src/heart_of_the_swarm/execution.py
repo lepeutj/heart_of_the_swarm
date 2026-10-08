@@ -24,6 +24,16 @@ from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.validator import AgentSpecValidator
 
 
+class AgentExecutionTimeoutError(TimeoutError):
+    """Stable failure raised only when Heart's direct-agent deadline expires."""
+
+    code = "agent.execution_timeout"
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.timeout_seconds = timeout_seconds
+        super().__init__(f"agent execution exceeded {timeout_seconds:g} seconds")
+
+
 class RunService:
     def __init__(self, database: Database, validator: AgentSpecValidator) -> None:
         self.database = database
@@ -119,21 +129,9 @@ class AgentExecutor:
                     observability_persisted = True
                     await self._mark_cancelled(run_id)
                     return
-                output = await self.runner.invoke(
-                    context.agent.spec,
-                    context.input,
-                    system_prompt=context.agent.system_prompt,
-                    callbacks=[usage],
-                    security=(
-                        ExecutionSecurityContext(
-                            principal=self.runner.capability_authorizer.agent_version_principal(
-                                context.agent.version_id
-                            ),
-                            authorization=AuthorizationContext(run_id=UUID(run_id)),
-                        )
-                        if self.runner.capability_authorizer is not None
-                        else None
-                    ),
+                output = await self._invoke_with_timeout(
+                    context,
+                    usage,
                 )
                 if await self._cancelled(run_id):
                     await self._persist_observability(context, usage)
@@ -151,6 +149,16 @@ class AgentExecutor:
                     duration_ms=round((time.perf_counter() - started) * 1000, 2),
                     output_characters=len(output),
                 )
+            except AgentExecutionTimeoutError as exc:
+                audit_exception(
+                    "agent.execution.timed_out",
+                    run_id=run_id,
+                    timeout_seconds=exc.timeout_seconds,
+                )
+                if not observability_persisted:
+                    await self._persist_observability(context, usage)
+                async with self.database.session() as session:
+                    await RunRepository(session).fail(run_id, exc, timed_out=True)
             except Exception as exc:
                 audit_exception("agent.execution.failed", run_id=run_id)
                 if not observability_persisted:
@@ -160,6 +168,36 @@ class AgentExecutor:
             finally:
                 stop_heartbeat.set()
                 await heartbeat
+
+    async def _invoke_with_timeout(
+        self,
+        context: ExecutionContext,
+        usage: RuntimeCallbackHandler,
+    ) -> str:
+        """Bound the real agent invocation while preserving inner provider timeout failures."""
+        deadline = asyncio.timeout(self.settings.agent_timeout_seconds)
+        try:
+            async with deadline:
+                return await self.runner.invoke(
+                    context.agent.spec,
+                    context.input,
+                    system_prompt=context.agent.system_prompt,
+                    callbacks=[usage],
+                    security=(
+                        ExecutionSecurityContext(
+                            principal=self.runner.capability_authorizer.agent_version_principal(
+                                context.agent.version_id
+                            ),
+                            authorization=AuthorizationContext(run_id=UUID(context.run_id)),
+                        )
+                        if self.runner.capability_authorizer is not None
+                        else None
+                    ),
+                )
+        except TimeoutError as exc:
+            if deadline.expired():
+                raise AgentExecutionTimeoutError(self.settings.agent_timeout_seconds) from exc
+            raise
 
     async def _persist_observability(
         self, context: ExecutionContext, callback: RuntimeCallbackHandler

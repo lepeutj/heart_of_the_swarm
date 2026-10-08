@@ -8,7 +8,7 @@ quota or billing system.
 
 | Concern | Current behavior | Gap |
 | --- | --- | --- |
-| Run timeout | `ExecutionPolicy.timeout_seconds` bounds one active workflow attempt. | Direct agent execution is not yet bounded by the same timeout. |
+| Run timeout | Workflow attempts and direct persisted agent runs both bound active execution. | Standalone invocation policy remains a runtime concern. |
 | Graph steps | LangGraph receives `ExecutionPolicy.recursion_limit`. | No separate limit is needed; this is the graph-step safety bound. |
 | Subworkflows | `max_subworkflow_depth` is enforced. | None for the supported contract. |
 | Supervisor routing | `max_handoffs` is enforced. | None for the supported contract. |
@@ -46,7 +46,9 @@ duplicate the same responsibility.
 Timeout is measured per active `WorkflowRun` attempt. Human waiting time between an interruption
 and its continuation does not consume it. Model- and tool-call counters apply across the complete
 `ExecutionThread`, including continuation runs, so an interruption cannot reset a budget. A direct
-agent run has no thread and owns its counters for that run.
+agent run has no thread and owns its counters for that run. Direct agent runs default to a
+configurable ten-minute timeout; longer work belongs in durable workflows with checkpoints and
+resume rather than one worker-bound invocation.
 
 Calls are counted when they start. A connector invocation counts as one tool call. Calls selected
 inside LangChain agents use the same injected execution budget; subworkflows do not receive a new
@@ -97,10 +99,9 @@ Health checks and bodyless reads are unaffected.
 
 ## Implementation order
 
-1. Make direct-agent timeout behavior match workflow attempts.
-2. Make worker capacity explicit and bound standalone `/invoke` concurrency.
-3. Enforce `ExecutionPolicy.max_state_bytes` at shared-state boundaries.
-4. Add one thread-scoped counter for `max_model_calls` and `max_tool_calls` across connectors,
+1. Make worker capacity explicit and bound standalone `/invoke` concurrency.
+2. Enforce `ExecutionPolicy.max_state_bytes` at shared-state boundaries.
+3. Add one thread-scoped counter for `max_model_calls` and `max_tool_calls` across connectors,
    agents, subworkflows, interruptions, and resume.
 
 Token and monetary budgets, per-user quotas, distributed rate limiting, autoscaling, and a generic
