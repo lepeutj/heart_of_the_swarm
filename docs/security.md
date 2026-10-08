@@ -192,6 +192,8 @@ immutable agent and workflow-node principals, filters model-visible tools, and r
 capability immediately before invocation.
 V2.6e runtime identity and credential resolution are defined in `credentials.md`. A runtime must
 receive a separate exact `credential.resolve` allow before its secret store can be read.
+V2.6f request-bound capability grants are defined in `capability-approvals.md`. The pure grant and
+argument-fingerprint contract precedes its durable interruption and consumption adapters.
 
 Outbound destination controls are defined separately in `network-policy.md`. Network permission is
 a runtime/deployment constraint and never follows from user or capability authorization.

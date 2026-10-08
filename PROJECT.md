@@ -126,6 +126,10 @@ an exact `credential.resolve` allow and inject the value directly into FastMCP's
 control-plane API receives no local secret store, and authenticated catalogue synchronization back
 to that API remains a documented follow-up.
 
+V2.6f starts with a pure request-bound `ApprovalGrant` contract and canonical capability-argument
+fingerprinting. Grants are exact, expiring, single-use permissions for one continuation run and
+node; durable persistence and LangGraph interruption consumption remain the next increment.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

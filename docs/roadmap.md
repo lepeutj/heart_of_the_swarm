@@ -166,7 +166,9 @@ part of the architecture.
    in specs. **The runtime-identity and credential-resolution contract is defined in
    `docs/credentials.md`; MCP bearer authentication is the first migrated consumer, while provider
    and database credentials still require explicit migration.**
-6. V2.6f: integrate `approval_required` decisions with durable human approval.
+6. V2.6f: integrate `approval_required` decisions with durable human approval. **The exact,
+   expiring, single-use grant contract is defined in `docs/capability-approvals.md`; persistence and
+   runtime consumption follow the pure contract.**
 7. Apply execution, request, concurrency, network, and state-size limits.
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
    communication when the remote host is behind NAT.

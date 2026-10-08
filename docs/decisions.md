@@ -115,6 +115,11 @@ the normative field-level rules.
   and secret access are separate gates. Public `CredentialRef` values contain identifiers only; an
   authorized runtime resolves them through an injected `SecretStore`, and agents never receive raw
   values. The normative contract is in `docs/credentials.md`.
+- **ADR-051 — Capability approval creates one request-bound grant.** `approval_required` uses the
+  durable workflow interruption boundary and may create one expiring, single-use grant matching the
+  continuation run, node, immutable principal, action, resource, and canonical argument
+  fingerprint. Direct and standalone agent execution continue to deny until they have an
+  equivalent durable resume boundary. The normative contract is in `docs/capability-approvals.md`.
 
 ## Current implementation limits
 
