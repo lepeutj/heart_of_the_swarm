@@ -187,6 +187,9 @@ V2.6b user authentication is defined separately in `authentication.md`. It conve
 HTTP bearer credential into a user principal without placing roles or permissions in the token.
 V2.6c user HTTP authorization is defined in `user-authorization.md`. It maps authenticated control
 plane requests to exact actions and resources through an injected policy source.
+V2.6d runtime capability authorization is defined in `capability-authorization.md`. It derives
+immutable agent and workflow-node principals, filters model-visible tools, and rechecks every
+capability immediately before invocation.
 
 Outbound destination controls are defined separately in `network-policy.md`. Network permission is
 a runtime/deployment constraint and never follows from user or capability authorization.

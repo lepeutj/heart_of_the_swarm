@@ -160,7 +160,8 @@ part of the architecture.
 3. V2.6c: enforce exact user policies on control-plane HTTP operations as defined in
    `docs/user-authorization.md`. **Implemented; Docker smoke validation remains.**
 4. V2.6d: enforce agent-version and workflow-node capability policies at tool exposure and
-   invocation boundaries.
+   invocation boundaries. **The immutable-principal and two-check contract is defined in
+   `docs/capability-authorization.md`; runtime enforcement remains to implement.**
 5. V2.6e: authenticate runtime instances and resolve credential references without storing secrets
    in specs.
 6. V2.6f: integrate `approval_required` decisions with durable human approval.

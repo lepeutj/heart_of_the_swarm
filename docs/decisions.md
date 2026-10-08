@@ -106,6 +106,11 @@ the normative field-level rules.
   every resolved address and redirect through an injected policy with deny precedence, explicit
   private-network exceptions, and dedicated loopback, link-local, and metadata controls. The
   normative contract is in `docs/network-policy.md`.
+- **ADR-049 — Runtime capabilities use immutable execution principals and two checks.** Saved
+  agents execute as their exact `AgentVersion`; inline agents, supervisors, and connectors execute
+  as published workflow nodes. Agents receive only allowed tools before `create_agent`, and every
+  capability is authorized again immediately before invocation. The shared registry is never
+  mutated per run. The normative contract is in `docs/capability-authorization.md`.
 
 ## Current implementation limits
 
