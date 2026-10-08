@@ -64,3 +64,18 @@ async def authorized_tool_view(
         )
         for tool in registry.resolve(list(allowed))
     ]
+
+
+async def approval_capable_tool_view(
+    registry: ToolRegistry,
+    requested: list[str],
+    authorizer: CapabilityAuthorizer,
+    security: ExecutionSecurityContext,
+) -> list[BaseTool]:
+    """Expose tools that a durable agent may invoke directly or after approval."""
+    exposed = await authorizer.approval_capable_capabilities(
+        security.principal,
+        requested,
+        context=security.authorization,
+    )
+    return registry.resolve(list(exposed))

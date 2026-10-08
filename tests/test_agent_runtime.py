@@ -87,7 +87,9 @@ class RecordingFactory:
         system_prompt: str | None = None,
         response_schema: dict[str, Any] | None = None,
         tools: list[BaseTool] | None = None,
+        middleware: list[object] | None = None,
     ) -> FakeGraph:
+        del middleware
         self.call = (spec, model, system_prompt, response_schema, tools)
         return self.graph
 

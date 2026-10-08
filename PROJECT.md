@@ -130,8 +130,11 @@ V2.6f now has canonical capability-argument fingerprints and durable request-bou
 approved capability interruption creates its continuation run and exact expiring grant in one
 transaction. Sequential deterministic `CONNECTOR` nodes now suspend through LangGraph when policy
 requires approval, recheck policy on resume, consume the exact grant atomically, and only then
-invoke the capability. Agent-selected tools and approvals inside parallel regions or nested
-subworkflows remain deferred.
+invoke the capability. Sequential root-workflow agents use a LangChain middleware and inherited
+LangGraph subgraph checkpoints to preserve the model-selected tool call across the same approval
+flow without replaying the model decision. Multiple approval-gated calls in one model turn,
+parallel-region approvals, nested-subworkflow approvals, and standalone approval brokers remain
+deferred.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow

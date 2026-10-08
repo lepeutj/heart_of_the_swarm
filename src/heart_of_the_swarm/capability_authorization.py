@@ -85,6 +85,26 @@ class CapabilityAuthorizer:
                 allowed.append(capability_id)
         return tuple(allowed)
 
+    async def approval_capable_capabilities(
+        self,
+        principal: Principal,
+        capability_ids: Iterable[str],
+        *,
+        context: AuthorizationContext | None = None,
+    ) -> tuple[str, ...]:
+        """Expose explicit allows and approval-gated capabilities to a durable agent."""
+        exposed: list[str] = []
+        for capability_id in capability_ids:
+            request = self.request(principal, capability_id, context=context)
+            decision = await self.authorization.decide(request)
+            self._audit(request, decision, boundary="exposure")
+            if decision in {
+                AuthorizationDecision.ALLOW,
+                AuthorizationDecision.APPROVAL_REQUIRED,
+            }:
+                exposed.append(capability_id)
+        return tuple(exposed)
+
     async def require_invocation(
         self,
         principal: Principal,

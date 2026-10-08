@@ -97,12 +97,19 @@ must not contain capability arguments, credentials, workflow state, or hidden mo
 4. Thin API and React reuse of the existing approval interaction. **Implemented through the shared
    interruption endpoints and run panel.**
 
-Agent-selected tools remain denied when policy returns `approval_required` until model-call replay
-and durable agent-loop resumption have an explicit contract.
+Sequential root-workflow agents use LangChain middleware after the model call and before tool
+execution. The agent graph inherits the parent LangGraph checkpointer, so the selected tool call and
+its arguments survive interruption and resume without replaying the model decision. The resumed
+tool wrapper rechecks policy and consumes the exact grant immediately before invocation.
 
-Approval-required connectors inside parallel regions or nested subworkflows remain denied until
-their interruption namespaces and branch-resume semantics are explicitly validated. Sequential
-root-workflow connectors are the V2.6f runtime contract.
+One model turn may request at most one approval-gated capability in this increment. A turn that
+requests several approval-gated calls fails before any selected tool runs because the current
+product interruption creates one exact grant. Direct agent runs and standalone runtimes still deny
+`approval_required` because they have no durable product interruption lifecycle.
+
+Approval-required agent tools or connectors inside parallel regions or nested subworkflows remain
+denied until their interruption namespaces and branch-resume semantics are explicitly validated.
+Sequential root-workflow nodes are the V2.6f runtime contract.
 
 Multi-approver rules, delegation, quorum, long-lived grants, wildcard grants, and standalone
 approval brokers are deferred.

@@ -118,8 +118,9 @@ the normative field-level rules.
 - **ADR-051 — Capability approval creates one request-bound grant.** `approval_required` uses the
   durable workflow interruption boundary and may create one expiring, single-use grant matching the
   continuation run, node, immutable principal, action, resource, and canonical argument
-  fingerprint. Direct and standalone agent execution continue to deny until they have an
-  equivalent durable resume boundary. The normative contract is in `docs/capability-approvals.md`.
+  fingerprint. Sequential workflow agents preserve a selected tool call through native LangChain
+  middleware and inherited LangGraph checkpointing; direct and standalone agents continue to deny.
+  The normative contract is in `docs/capability-approvals.md`.
 
 ## Current implementation limits
 

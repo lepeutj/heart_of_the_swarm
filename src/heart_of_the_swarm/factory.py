@@ -1,6 +1,7 @@
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -48,6 +49,7 @@ class AgentFactory:
         system_prompt: str | None = None,
         response_schema: dict[str, Any] | type[BaseModel] | None = None,
         tools: list[BaseTool] | None = None,
+        middleware: list[AgentMiddleware] | None = None,
     ):
         resolved_tools = self.registry.resolve(spec.tools) if tools is None else tools
         audit_event(
@@ -62,6 +64,7 @@ class AgentFactory:
             "tools": resolved_tools,
             "system_prompt": system_prompt or render_system_prompt(spec, self.skills),
             "name": spec.name,
+            "middleware": middleware or [],
         }
         if response_schema is not None:
             kwargs["response_format"] = ToolStrategy(response_schema)

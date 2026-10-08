@@ -8,6 +8,7 @@ from uuid import UUID
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
+from langgraph.errors import GraphBubbleUp
 from pydantic import BaseModel
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
@@ -392,7 +393,14 @@ class WorkflowNodeRunner:
             }
             if security is not None:
                 invocation_options["security"] = security
+            if self.approval_grants is not None and not (
+                event_context is not None and event_context.get("branch_id") is not None
+            ):
+                invocation_options["approval_grants"] = self.approval_grants
             output = await self.agent_runner.invoke(spec, agent_input, **invocation_options)
+        except GraphBubbleUp:
+            # LangGraph uses this control-flow signal to checkpoint nested agent interrupts.
+            raise
         except WorkflowExecutionError:
             raise
         except Exception as exc:

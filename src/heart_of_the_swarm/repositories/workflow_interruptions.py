@@ -17,11 +17,19 @@ from heart_of_the_swarm.models import (
     WorkflowRunEventRecord,
     WorkflowRunRecord,
 )
+from heart_of_the_swarm.repositories.agents import AgentRepository
 from heart_of_the_swarm.repositories.base import RepositoryBase
 from heart_of_the_swarm.repositories.workflow_runs import WorkflowRunRepository
 from heart_of_the_swarm.repositories.workflows import WorkflowRepository
 from heart_of_the_swarm.spec import RunStatus
-from heart_of_the_swarm.workflows.configs import ConnectorNodeConfig, HumanApprovalNodeConfig
+from heart_of_the_swarm.workflows.configs import (
+    AgentNodeConfig,
+    ConnectorNodeConfig,
+    HumanApprovalNodeConfig,
+    InlineAgentSource,
+    SupervisorNodeConfig,
+    VersionedAgentSource,
+)
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.interruptions import (
     APPROVAL_RESPONSE_SCHEMA,
@@ -134,15 +142,48 @@ class WorkflowInterruptionRepository(RepositoryBase):
             if version
             else None
         )
-        if node is None or node.type != NodeType.CONNECTOR:
-            raise ValueError("capability approval node is not a connector")
-        connector = ConnectorNodeConfig.model_validate(node.config)
-        if request.authorization.resource != f"capability:{connector.capability_id}":
-            raise ValueError("capability approval resource does not match the connector")
-        expected_principal = Principal(
-            kind=PrincipalKind.WORKFLOW_NODE,
-            id=f"{run.workflow_version_id}/{node.id}",
-        )
+        if node is None:
+            raise ValueError("capability approval workflow node was not found")
+        if node.type == NodeType.CONNECTOR:
+            connector = ConnectorNodeConfig.model_validate(node.config)
+            capability_ids = {connector.capability_id}
+            expected_principal = Principal(
+                kind=PrincipalKind.WORKFLOW_NODE,
+                id=f"{run.workflow_version_id}/{node.id}",
+            )
+        elif node.type in {NodeType.AGENT, NodeType.SUPERVISOR}:
+            config = (
+                AgentNodeConfig.model_validate(node.config)
+                if node.type == NodeType.AGENT
+                else SupervisorNodeConfig.model_validate(node.config)
+            )
+            source = config.source
+            if isinstance(source, InlineAgentSource):
+                capability_ids = set(source.agent.tools)
+                expected_principal = Principal(
+                    kind=PrincipalKind.WORKFLOW_NODE,
+                    id=f"{run.workflow_version_id}/{node.id}",
+                )
+            elif isinstance(source, VersionedAgentSource):
+                agent = await AgentRepository(self.session).get_version(
+                    str(source.agent_version_id)
+                )
+                if agent is None:
+                    raise ValueError("capability approval agent version was not found")
+                capability_ids = set(agent.spec.tools)
+                expected_principal = Principal(
+                    kind=PrincipalKind.AGENT_VERSION,
+                    id=str(source.agent_version_id),
+                )
+            else:
+                raise TypeError("capability approval agent source is invalid")
+        else:
+            raise ValueError("capability approval node cannot invoke capabilities")
+        capability_id = request.authorization.resource.removeprefix("capability:")
+        if capability_id not in capability_ids:
+            if node.type == NodeType.CONNECTOR:
+                raise ValueError("capability approval resource does not match the connector")
+            raise ValueError("capability approval resource is not declared by the agent")
         if request.authorization.principal != expected_principal:
             raise ValueError("capability approval principal does not match the workflow node")
 
