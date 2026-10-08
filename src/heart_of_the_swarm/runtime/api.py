@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from heart_of_the_swarm import __version__
 from heart_of_the_swarm.config import Settings
+from heart_of_the_swarm.http_policy import HTTPPolicy, RequestBodyLimitMiddleware
 from heart_of_the_swarm.runtime.models import InvokeRequest, InvokeResponse, RuntimeMetadata
 
 
@@ -23,15 +24,21 @@ def create_app(
     runtime_factory: Callable[[], StandaloneRuntime] | None = None,
     *,
     title: str = "Heart of the Swarm Agent Runtime",
+    http_policy: HTTPPolicy | None = None,
 ) -> FastAPI:
     if runtime_factory is None:
         from heart_of_the_swarm.runtime.application import StandaloneAgentRuntime
 
+        settings = Settings()
+
         def factory() -> StandaloneRuntime:
-            return StandaloneAgentRuntime(Settings())
+            return StandaloneAgentRuntime(settings)
+
+        selected_http_policy = http_policy or settings.http_policy()
 
     else:
         factory = runtime_factory
+        selected_http_policy = http_policy or HTTPPolicy()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -53,6 +60,7 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
+    app.add_middleware(RequestBodyLimitMiddleware, policy=selected_http_policy)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

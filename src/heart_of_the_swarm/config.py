@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from heart_of_the_swarm.http_policy import HTTPPolicy
 from heart_of_the_swarm.network_policy import NetworkPolicy
 
 
@@ -46,6 +47,7 @@ class Settings(BaseSettings):
     local_secrets: dict[str, SecretStr] = Field(default_factory=dict)
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     max_document_bytes: int = Field(default=1_000_000, ge=1_000, le=5_000_000)
+    http_max_request_bytes: int = Field(default=2_000_000, ge=1_024, le=100_000_000)
     network_allow_public: bool = True
     network_allow_private: bool = False
     network_allowed_cidrs: list[str] = Field(default_factory=list)
@@ -138,6 +140,10 @@ class Settings(BaseSettings):
             allow_link_local=self.network_allow_link_local,
             allow_metadata=self.network_allow_metadata,
         )
+
+    def http_policy(self) -> HTTPPolicy:
+        """Build the inbound HTTP policy shared by control-plane and standalone APIs."""
+        return HTTPPolicy(max_request_bytes=self.http_max_request_bytes)
 
 
 @lru_cache

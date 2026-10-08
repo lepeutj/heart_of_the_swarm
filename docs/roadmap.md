@@ -173,8 +173,9 @@ part of the architecture.
    nested, and standalone approvals remain deferred.**
 7. Apply execution, request, concurrency, network, and state-size limits. **The outbound network
    policy is implemented for MCP HTTP discovery, refresh, connection tests, and calls through a
-   DNS-resolved, IP-pinned transport. The remaining ownership and failure contracts are defined in
-   `docs/runtime-limits.md`; enforcement remains pending.**
+   DNS-resolved, IP-pinned transport. HTTP body limits are enforced before parsing in the main and
+   standalone APIs. The remaining ownership and failure contracts are defined in
+   `docs/runtime-limits.md`; direct-agent timeout, concurrency, state, and call budgets remain.**
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
    communication when the remote host is behind NAT.
 

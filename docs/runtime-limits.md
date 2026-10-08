@@ -15,7 +15,7 @@ quota or billing system.
 | Parallelism | One non-nested region, deterministic reducers, and conflict validation are enforced. | Nested or overlapping regions remain unsupported. |
 | Worker concurrency | One worker process executes one claimed run at a time. | The value is implicit rather than configured and reported. |
 | Standalone concurrency | Concurrent `/invoke` requests have no application-level bound. | Add a runtime semaphore and explicit overload response. |
-| HTTP request size | Pydantic validates decoded bodies, but body bytes are not bounded before parsing. | Add a body-size boundary to the control plane and standalone runtime. |
+| HTTP request size | `HTTPPolicy.max_request_bytes` rejects oversized bodies before routing in both APIs. | None for the current JSON HTTP boundary. |
 | Workflow state size | Shared state and outputs are copied, checkpointed, and persisted without a size bound. | Validate the JSON state at stable boundaries before LangGraph persists it. |
 | Model/tool calls | Callbacks trace calls and usage, but do not enforce budgets. | Add shared deterministic call counters. |
 | Tokens/cost | Provider metadata is recorded when available. | Enforcement is provider-dependent and remains deferred. |
@@ -97,7 +97,7 @@ Health checks and bodyless reads are unaffected.
 
 ## Implementation order
 
-1. Enforce `HTTPPolicy.max_request_bytes` in both FastAPI applications.
+1. Make direct-agent timeout behavior match workflow attempts.
 2. Make worker capacity explicit and bound standalone `/invoke` concurrency.
 3. Enforce `ExecutionPolicy.max_state_bytes` at shared-state boundaries.
 4. Add one thread-scoped counter for `max_model_calls` and `max_tool_calls` across connectors,

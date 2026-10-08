@@ -25,6 +25,7 @@ from heart_of_the_swarm.authorization import (
     DevelopmentPolicySource,
     Principal,
 )
+from heart_of_the_swarm.config import get_settings
 from heart_of_the_swarm.development_authorization import (
     grant_agent,
     grant_agent_version,
@@ -32,6 +33,7 @@ from heart_of_the_swarm.development_authorization import (
     grant_workflow,
     grant_workflow_version,
 )
+from heart_of_the_swarm.http_policy import RequestBodyLimitMiddleware
 from heart_of_the_swarm.observability import (
     audit_event,
     audit_exception,
@@ -162,6 +164,9 @@ async def trace_requests(request: Request, call_next):
             status_code=response.status_code,
         )
         return response
+
+
+app.add_middleware(RequestBodyLimitMiddleware, policy=get_settings().http_policy())
 
 
 Runtime = Annotated[Application, Depends(get_application)]
