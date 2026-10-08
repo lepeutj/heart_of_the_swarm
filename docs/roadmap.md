@@ -171,6 +171,10 @@ part of the architecture.
 Basic secret handling, allow-lists, safe errors, SSRF protection, and execution bounds are
 cross-cutting requirements and must not wait for this milestone.
 
+The outbound destination contract is defined in `docs/network-policy.md`. Its implementation is
+required before remote deployment, but it must remain independent from capability authorization and
+must not block explicitly configured private MCP deployments.
+
 Exit criterion: one authenticated remote runtime can receive work, report lifecycle and results,
 and emit correlated traces without exposing an unauthenticated administration port.
 

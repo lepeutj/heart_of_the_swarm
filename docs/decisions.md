@@ -101,6 +101,11 @@ the normative field-level rules.
   resources are named sentinels rather than wildcards. An injected policy source feeds the shared
   evaluator; development mode bootstraps explicit in-memory policies and never bypasses evaluation.
   The normative endpoint matrix is in `docs/user-authorization.md`.
+- **ADR-048 — Outbound destinations require an independent runtime policy.** Capability
+  authorization does not grant network reachability. MCP and other HTTP integrations must validate
+  every resolved address and redirect through an injected policy with deny precedence, explicit
+  private-network exceptions, and dedicated loopback, link-local, and metadata controls. The
+  normative contract is in `docs/network-policy.md`.
 
 ## Current implementation limits
 
