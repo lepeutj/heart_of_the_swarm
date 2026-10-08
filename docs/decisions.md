@@ -122,8 +122,10 @@ the normative field-level rules.
   middleware and inherited LangGraph checkpointing; direct and standalone agents continue to deny.
   The normative contract is in `docs/capability-approvals.md`.
 - **ADR-052 — Limits follow their owning boundary.** Per-execution time, graph, call, and shared-state
-  budgets belong to `ExecutionPolicy`; process concurrency belongs to `RuntimePolicy`; inbound body
-  size belongs to `HTTPPolicy`. Continuation runs share logical call budgets, while active-attempt
+  budgets belong to `ExecutionPolicy`; inbound body size belongs to `HTTPPolicy`; run/container
+  concurrency belongs to future control-plane scheduling. A model's context window belongs to its
+  registry/provider descriptor, while per-call output reservation and safety margin belong to a
+  separate `ModelInputBudget`. Continuation runs share logical call budgets, while active-attempt
   timeout excludes human waiting. The normative contract is in `docs/runtime-limits.md`.
 
 ## Current implementation limits

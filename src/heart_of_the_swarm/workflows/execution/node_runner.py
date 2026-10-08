@@ -43,6 +43,10 @@ from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
 )
+from heart_of_the_swarm.workflows.execution.state_budget import (
+    WorkflowStateBudgetError,
+    enforce_state_size,
+)
 from heart_of_the_swarm.workflows.execution.validation import validate_workflow_input
 from heart_of_the_swarm.workflows.spec import (
     ValidatedWorkflowNode,
@@ -90,6 +94,7 @@ class WorkflowNodeRunner:
         runtime_context: dict[str, Any] | None = None,
         capability_authorizer: CapabilityAuthorizer | None = None,
         approval_grants: ApprovalGrantConsumer | None = None,
+        max_state_bytes: int = 5_000_000,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -103,6 +108,7 @@ class WorkflowNodeRunner:
         self.runtime_context = dict(runtime_context or {})
         self.capability_authorizer = capability_authorizer
         self.approval_grants = approval_grants
+        self.max_state_bytes = max_state_bytes
 
     async def run(
         self,
@@ -172,6 +178,7 @@ class WorkflowNodeRunner:
                     message=f"Node type '{node.type}' is not supported by this runtime.",
                     node=node,
                 )
+            self.validate_state(node, result.state)
         except asyncio.CancelledError:
             await self._record_node(
                 "node.failed",
@@ -209,6 +216,7 @@ class WorkflowNodeRunner:
         """Complete an already-started connector node with one approved exact grant."""
         try:
             updated = await self._invoke_connector(node, state, event_context, grant_id)
+            self.validate_state(node, updated)
         except WorkflowExecutionError as exc:
             await self.record_failed(
                 node,
@@ -219,6 +227,18 @@ class WorkflowNodeRunner:
             raise
         await self.record_completed(node, event_context)
         return NodeExecution(updated, (*executed_nodes, node.id))
+
+    def validate_state(self, node: ValidatedWorkflowNode, state: WorkflowState) -> None:
+        """Reject non-JSON or oversized shared state before LangGraph receives the update."""
+        try:
+            enforce_state_size(state, self.max_state_bytes)
+        except WorkflowStateBudgetError as exc:
+            self._raise(
+                code=exc.code,
+                message=str(exc),
+                node=node,
+                cause=exc,
+            )
 
     async def record_started(
         self,

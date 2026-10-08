@@ -30,6 +30,14 @@ from heart_of_the_swarm.workflows import (
     validate_workflow_input,
 )
 from heart_of_the_swarm.workflows.execution.checkpoints import WorkflowCheckpointProvider
+from heart_of_the_swarm.workflows.execution.errors import (
+    WorkflowExecutionError,
+    WorkflowExecutionIssue,
+)
+from heart_of_the_swarm.workflows.execution.state_budget import (
+    WorkflowStateBudgetError,
+    enforce_state_size,
+)
 from heart_of_the_swarm.workflows.runs import (
     WorkflowRunAccepted,
     WorkflowRunDetail,
@@ -48,11 +56,13 @@ class WorkflowRunService:
         validator: WorkflowValidator,
         tools: ToolRegistry,
         checkpoints: WorkflowCheckpointProvider | None = None,
+        max_state_bytes: int = 5_000_000,
     ) -> None:
         self.database = database
         self.validator = validator
         self.tools = tools
         self.checkpoints = checkpoints
+        self.max_state_bytes = max_state_bytes
 
     async def queue(
         self,
@@ -67,6 +77,16 @@ class WorkflowRunService:
             raise ValueError("workflow version not found")
         workflow = self.validator.validate(version.spec)
         validate_workflow_input(workflow, workflow_input)
+        try:
+            enforce_state_size(workflow_input, self.max_state_bytes)
+        except WorkflowStateBudgetError as exc:
+            raise WorkflowExecutionError(
+                WorkflowExecutionIssue(
+                    code=exc.code,
+                    message=str(exc),
+                    workflow_id=workflow.id,
+                )
+            ) from exc
         self.tools.verify_contracts(version.capability_contracts)
         async with self.database.session() as session:
             return await WorkflowRunRepository(session).queue(
@@ -199,6 +219,7 @@ class WorkflowExecutor:
         self.policy = ExecutionPolicy(
             timeout_seconds=settings.workflow_timeout_seconds,
             recursion_limit=settings.workflow_recursion_limit,
+            max_state_bytes=settings.workflow_max_state_bytes,
         )
 
     async def execute(

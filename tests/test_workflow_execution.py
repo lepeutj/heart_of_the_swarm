@@ -3,6 +3,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
 
 from heart_of_the_swarm.workflows import (
     NodeType,
@@ -139,6 +140,34 @@ async def test_transform_assignments_resolve_from_one_state_snapshot() -> None:
 
     assert result.output == 2
     assert result.state == {"left": 2, "right": 1}
+
+
+async def test_oversized_node_update_fails_before_checkpoint_and_propagation() -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_event(_event_type, _node, data) -> None:
+        events.append((_event_type, data))
+
+    saver = InMemorySaver()
+    graph = WorkflowGraphFactory().create(
+        validate_workflow(sequential_data()),
+        checkpointer=saver,
+        event_sink=record_event,
+        max_state_bytes=1_024,
+    )
+
+    with pytest.raises(WorkflowExecutionError) as caught:
+        await graph.ainvoke(
+            {"request": "x" * 600},
+            thread_id="state-budget-thread",
+        )
+
+    assert caught.value.issue.code == "workflow.execution.state_budget_exceeded"
+    assert caught.value.issue.node_id == "copy"
+    snapshot = await graph.graph.aget_state({"configurable": {"thread_id": "state-budget-thread"}})
+    assert "result" not in snapshot.values["data"]
+    assert events[-1][0] == "node.failed"
+    assert events[-1][1]["error_code"] == "workflow.execution.state_budget_exceeded"
 
 
 async def test_condition_uses_first_matching_route() -> None:

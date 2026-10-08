@@ -176,7 +176,9 @@ part of the architecture.
    DNS-resolved, IP-pinned transport. HTTP body limits are enforced before parsing in the main and
    standalone APIs. The remaining ownership and failure contracts are defined in
    `docs/runtime-limits.md`; persisted direct agent runs now have terminal active-attempt timeouts,
-   while concurrency, state, and call budgets remain.**
+   and workflow shared state is bounded before persistence and propagation. Thread-wide model/tool
+   call budgets remain, followed by per-invocation context enforcement based on the selected model;
+   concurrency belongs to later one-run-per-container scheduling.**
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
    communication when the remote host is behind NAT.
 

@@ -7,8 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.documents import WorkflowVersionSnapshot
+from heart_of_the_swarm.workflows.execution.errors import (
+    WorkflowExecutionError,
+    WorkflowExecutionIssue,
+)
 from heart_of_the_swarm.workflows.execution.graph_factory import WorkflowGraphFactory
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
+from heart_of_the_swarm.workflows.execution.state_budget import (
+    WorkflowStateBudgetError,
+    enforce_state_size,
+)
 from heart_of_the_swarm.workflows.execution.validation import validate_workflow_input
 from heart_of_the_swarm.workflows.spec import ValidatedWorkflowNode
 from heart_of_the_swarm.workflows.subworkflows import MAX_SUBWORKFLOW_DEPTH
@@ -24,6 +32,7 @@ class ExecutionPolicy(BaseModel):
     recursion_limit: int = Field(ge=2, le=10_000)
     max_subworkflow_depth: int = Field(default=MAX_SUBWORKFLOW_DEPTH, ge=1, le=32)
     max_handoffs: int = Field(default=20, ge=1, le=100)
+    max_state_bytes: int = Field(default=5_000_000, ge=1_024, le=100_000_000)
 
 
 class WorkflowExecutionEvent(BaseModel):
@@ -71,6 +80,16 @@ class WorkflowVersionRunner:
         self.capabilities.verify_contracts(version.capability_contracts)
         workflow = self.validator.validate(version.spec)
         validate_workflow_input(workflow, input_data)
+        try:
+            enforce_state_size(input_data, policy.max_state_bytes)
+        except WorkflowStateBudgetError as exc:
+            raise WorkflowExecutionError(
+                WorkflowExecutionIssue(
+                    code=exc.code,
+                    message=str(exc),
+                    workflow_id=workflow.id,
+                )
+            ) from exc
         graph = await self.graphs.acreate(
             workflow,
             workflow_run_id=execution_id,
@@ -79,6 +98,7 @@ class WorkflowVersionRunner:
             workflow_version_id=str(version.id),
             max_subworkflow_depth=policy.max_subworkflow_depth,
             max_handoffs=policy.max_handoffs,
+            max_state_bytes=policy.max_state_bytes,
             interrupt_after=tuple(path for path in interrupt_after if "/" in path),
         )
 

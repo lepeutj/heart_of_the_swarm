@@ -230,6 +230,7 @@ class WorkflowGraphFactory:
         workflow_version_id: str | None = None,
         execution_path: str = "root",
         max_handoffs: int = 20,
+        max_state_bytes: int = 5_000_000,
     ) -> WorkflowGraph:
         """Build one graph while resolving registered capabilities up front."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
@@ -249,6 +250,7 @@ class WorkflowGraphFactory:
             parallel=build_parallel_runtime_region(workflow),
             subworkflows={},
             max_handoffs=max_handoffs,
+            max_state_bytes=max_state_bytes,
         )
 
     async def acreate(
@@ -263,6 +265,7 @@ class WorkflowGraphFactory:
         workflow_version_id: str | None = None,
         max_subworkflow_depth: int = 8,
         max_handoffs: int = 20,
+        max_state_bytes: int = 5_000_000,
         interrupt_after: tuple[str, ...] = (),
     ) -> WorkflowGraph:
         """Resolve immutable child versions and compile them as nested LangGraph graphs."""
@@ -284,6 +287,7 @@ class WorkflowGraphFactory:
             interrupt_after=interrupt_after,
             runtime_context=None,
             max_handoffs=max_handoffs,
+            max_state_bytes=max_state_bytes,
         )
 
     async def _acreate(
@@ -303,6 +307,7 @@ class WorkflowGraphFactory:
         interrupt_after: tuple[str, ...],
         runtime_context: dict[str, Any] | None,
         max_handoffs: int,
+        max_state_bytes: int,
     ) -> WorkflowGraph:
         """Compile one workflow and its immutable dependency tree recursively."""
         subworkflows: dict[str, WorkflowGraph] = {}
@@ -370,6 +375,7 @@ class WorkflowGraphFactory:
                 ),
                 runtime_context=child_context,
                 max_handoffs=max_handoffs,
+                max_state_bytes=max_state_bytes,
             )
             subworkflows[node.id] = child_graph
 
@@ -385,6 +391,7 @@ class WorkflowGraphFactory:
             parallel=parallel,
             subworkflows=subworkflows,
             max_handoffs=max_handoffs,
+            max_state_bytes=max_state_bytes,
             compile_interrupt_after=tuple(path for path in interrupt_after if "/" not in path),
         )
 
@@ -402,6 +409,7 @@ class WorkflowGraphFactory:
         parallel: ParallelRuntimeRegion | None,
         subworkflows: Mapping[str, WorkflowGraph],
         max_handoffs: int,
+        max_state_bytes: int,
         compile_interrupt_after: tuple[str, ...] = (),
     ) -> WorkflowGraph:
         """Build one graph from validated nodes and already-compiled child graphs."""
@@ -421,6 +429,7 @@ class WorkflowGraphFactory:
             runtime_context=runtime_context,
             capability_authorizer=self.capability_authorizer,
             approval_grants=(self.approval_grants if execution_path == "root" else None),
+            max_state_bytes=max_state_bytes,
         )
         outgoing = self._outgoing_edges(workflow)
         nodes_by_id = {node.id: node for node in workflow.nodes}
@@ -661,6 +670,7 @@ class WorkflowGraphFactory:
                 "executed_nodes": parent_executed,
                 "loop_iterations": dict(state.get("loop_iterations", {})),
             }
+            runner.validate_state(node, child_input)
             return {
                 "data": child_input,
                 "executed_nodes": (),
@@ -704,6 +714,7 @@ class WorkflowGraphFactory:
             updated = deepcopy(frame["data"])
             for name, binding in config.outputs.items():
                 set_path(updated, binding.to_state, deepcopy(child_output[name]))
+            runner.validate_state(node, updated)
             await runner.record_completed(node, event_context)
             if branch is not None:
                 return {
@@ -841,6 +852,7 @@ class WorkflowGraphFactory:
             approval = ApprovalResponse.model_validate(response)
             updated = deepcopy(state["data"])
             set_path(updated, config.output.to_state, approval.approved)
+            runner.validate_state(node, updated)
             await runner.record_completed(node)
             return {
                 "data": updated,
@@ -950,6 +962,7 @@ class WorkflowGraphFactory:
             if isinstance(decision.root, FinishDecision):
                 updated = deepcopy(result.state)
                 set_path(updated, config.finish_output.to_state, deepcopy(decision.root.result))
+                runner.validate_state(node, updated)
                 return Command(
                     update={
                         "data": updated,

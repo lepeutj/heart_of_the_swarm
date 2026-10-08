@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     agent_timeout_seconds: float = Field(default=600, gt=0, le=3_600)
     workflow_timeout_seconds: float = Field(default=120, gt=0, le=3_600)
     workflow_recursion_limit: int = Field(default=100, ge=2, le=10_000)
+    workflow_max_state_bytes: int = Field(default=5_000_000, ge=1_024, le=100_000_000)
 
     @field_validator("allowed_agent_models", mode="before")
     @classmethod

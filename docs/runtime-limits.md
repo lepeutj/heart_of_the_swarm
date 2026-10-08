@@ -1,8 +1,8 @@
 # Runtime limits
 
 This document defines the resource-limit boundaries for V2.6.7. It separates limits owned by one
-logical execution from limits owned by the HTTP service or runtime process. It is not a generic
-quota or billing system.
+logical execution from limits owned by HTTP entry points, model capabilities, and future
+control-plane scheduling. It is not a generic quota or billing system.
 
 ## Current inventory
 
@@ -13,12 +13,12 @@ quota or billing system.
 | Subworkflows | `max_subworkflow_depth` is enforced. | None for the supported contract. |
 | Supervisor routing | `max_handoffs` is enforced. | None for the supported contract. |
 | Parallelism | One non-nested region, deterministic reducers, and conflict validation are enforced. | Nested or overlapping regions remain unsupported. |
-| Worker concurrency | One worker process executes one claimed run at a time. | The value is implicit rather than configured and reported. |
-| Standalone concurrency | Concurrent `/invoke` requests have no application-level bound. | Add a runtime semaphore and explicit overload response. |
+| Scheduling concurrency | The local worker executes one run at a time. The deployment target is one run per container. | Control-plane scheduling remains deferred. |
 | HTTP request size | `HTTPPolicy.max_request_bytes` rejects oversized bodies before routing in both APIs. | None for the current JSON HTTP boundary. |
-| Workflow state size | Shared state and outputs are copied, checkpointed, and persisted without a size bound. | Validate the JSON state at stable boundaries before LangGraph persists it. |
+| Workflow state size | Initial and propagated shared state are bounded before run persistence or LangGraph checkpointing. | None for the public shared-state boundary. |
 | Model/tool calls | Callbacks trace calls and usage, but do not enforce budgets. | Add shared deterministic call counters. |
-| Tokens/cost | Provider metadata is recorded when available. | Enforcement is provider-dependent and remains deferred. |
+| Model context | `ModelDescriptor.context_length` can describe the selected model, and OpenRouter supplies it when available. | Enforce a per-invocation input budget in the model runtime. |
+| Tokens/cost | Provider metadata is recorded when available. | Thread-wide token and monetary enforcement remains deferred. |
 | Outbound network | MCP destinations are checked by the runtime `NetworkPolicy`. | Other remote adapters must adopt the same boundary when introduced. |
 
 Authorization, approvals, network reachability, worker leases, and retry attempts are safety or
@@ -37,7 +37,7 @@ max_subworkflow_depth
 max_handoffs
 max_model_calls       (planned)
 max_tool_calls        (planned)
-max_state_bytes       (planned)
+max_state_bytes
 ```
 
 `recursion_limit` remains the LangGraph graph-step limit; a second `max_graph_steps` field would
@@ -59,18 +59,32 @@ JSON. It is checked on initial input and after node output mappings or reducer m
 updated state is returned to LangGraph. It does not claim to bound internal framework checkpoint
 metadata or cumulative event history.
 
-### RuntimePolicy
+### Per-model input budget
 
-`RuntimePolicy` protects one process or deployed runtime:
+The model context window is a capability of the model selected for one invocation, not an
+`ExecutionPolicy` limit. A workflow may use models with different context windows, so each call is
+checked against the descriptor resolved by the model registry/provider.
 
 ```text
-max_concurrency
+available_input_tokens
+= context_window_tokens
+- reserved_output_tokens
+- safety_margin_tokens
 ```
 
-The worker must claim no more runs than its configured capacity. Its present capacity is one. The
-standalone synchronous runtime must reject work when its semaphore is full instead of creating an
-unbounded number of model/provider calls. CPU, memory, filesystem, and container placement remain
-deployment/container concerns rather than fields in this policy.
+`ModelInputBudget` owns `reserved_output_tokens` and `safety_margin_tokens`. The invocation check
+must count everything actually sent: system instructions, skills, messages, mapped inputs, tool
+definitions, and structured-output schemas. An overflow fails explicitly with
+`model.context_budget_exceeded`; the runtime never truncates, summarizes, or drops context
+silently. Token counting may be provider/model specific, but this does not change the public
+failure contract.
+
+### Scheduling and deployment
+
+Concurrency is not an execution budget. The local worker remains sequential, and the deployment
+target is one run executed by one agent container. Future control-plane scheduling decides how many
+containers may run; no `RuntimePolicy.max_concurrency` abstraction is required now. CPU, memory,
+filesystem, and placement remain container/deployment concerns.
 
 ### HTTPPolicy
 
@@ -88,8 +102,6 @@ Health checks and bodyless reads are unaffected.
 ## Failure semantics
 
 - An oversized request returns `413 Payload Too Large` and creates no product record or run.
-- A saturated synchronous runtime returns `503 Service Unavailable` with `Retry-After`; queued
-  worker execution instead respects claim capacity and does not reject an already accepted run.
 - An execution budget breach becomes a structured non-retryable run failure containing the limit
   name, configured value, and safe observed value.
 - A state-size breach is detected before the oversized update is checkpointed or persisted.
@@ -99,10 +111,13 @@ Health checks and bodyless reads are unaffected.
 
 ## Implementation order
 
-1. Make worker capacity explicit and bound standalone `/invoke` concurrency.
-2. Enforce `ExecutionPolicy.max_state_bytes` at shared-state boundaries.
-3. Add one thread-scoped counter for `max_model_calls` and `max_tool_calls` across connectors,
-   agents, subworkflows, interruptions, and resume.
+1. Add one thread-scoped counter for `max_model_calls` across agents, subworkflows, interruptions,
+   and resume.
+2. Add one independent thread-scoped counter for `max_tool_calls` across connectors, agents,
+   subworkflows, interruptions, and resume.
+3. Enforce `ModelInputBudget` for every invocation using the selected model's declared context
+   window and token-counting strategy.
 
-Token and monetary budgets, per-user quotas, distributed rate limiting, autoscaling, and a generic
-quota administration system remain deferred until a measured product need exists.
+Thread-wide token and monetary budgets, context compression strategies, per-user quotas,
+distributed rate limiting, autoscaling, and a generic quota administration system remain deferred
+until a measured product need exists.

@@ -129,6 +129,7 @@ class Application:
             self.workflow_validator,
             self.tools,
             self.workflow_checkpoints,
+            self.settings.workflow_max_state_bytes,
         )
         self.workflow_approvals = WorkflowApprovalService(
             self.database,

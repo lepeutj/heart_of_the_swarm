@@ -259,6 +259,36 @@ async def test_invalid_input_is_rejected_before_a_run_is_queued() -> None:
         await database.close()
 
 
+async def test_oversized_initial_state_is_rejected_before_run_persistence() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    tools = ToolRegistry()
+    validator = WorkflowValidator(lambda: tools.names, [])
+    try:
+        version = await published_version(database, tools)
+        service = WorkflowRunService(
+            database,
+            validator,
+            tools,
+            max_state_bytes=1_024,
+        )
+
+        with pytest.raises(WorkflowExecutionError) as caught:
+            await service.queue(
+                version.id,
+                {"request": "x" * 2_000},
+                "trace-oversized-state",
+            )
+
+        assert caught.value.issue.code == "workflow.execution.state_budget_exceeded"
+        assert caught.value.issue.node_id is None
+        async with database.session() as session:
+            run_count = await session.scalar(select(func.count()).select_from(WorkflowRunRecord))
+        assert run_count == 0
+    finally:
+        await database.close()
+
+
 async def test_queue_persists_run_before_its_foreign_keyed_event() -> None:
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_schema()

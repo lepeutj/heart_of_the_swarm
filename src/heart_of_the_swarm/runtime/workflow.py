@@ -136,6 +136,7 @@ class StandaloneWorkflowRuntime:
                 ExecutionPolicy(
                     timeout_seconds=self.settings.workflow_timeout_seconds,
                     recursion_limit=self.settings.workflow_recursion_limit,
+                    max_state_bytes=self.settings.workflow_max_state_bytes,
                 ),
                 execution_id=run_id,
             )
