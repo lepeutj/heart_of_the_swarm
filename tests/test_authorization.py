@@ -157,7 +157,7 @@ def test_empty_policy_decision_set_is_rejected() -> None:
 @pytest.mark.asyncio
 async def test_development_source_grants_only_the_configured_user_and_exact_resource() -> None:
     source = DevelopmentPolicySource("user-a")
-    source.grant(AuthorizationAction.WORKFLOW_READ, "workflow:workflow-a")
+    source.grant_allow(AuthorizationAction.WORKFLOW_READ, "workflow:workflow-a")
     service = AuthorizationService(source)
 
     allowed = AuthorizationRequest(
@@ -176,8 +176,8 @@ async def test_development_source_grants_only_the_configured_user_and_exact_reso
 @pytest.mark.asyncio
 async def test_capability_catalogue_actions_are_closed_contract_values() -> None:
     source = DevelopmentPolicySource("user-a")
-    source.grant(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
-    source.grant(AuthorizationAction.CAPABILITY_MANAGE, "capability:catalog")
+    source.grant_allow(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
+    source.grant_allow(AuthorizationAction.CAPABILITY_MANAGE, "capability:catalog")
     service = AuthorizationService(source)
 
     for action in (

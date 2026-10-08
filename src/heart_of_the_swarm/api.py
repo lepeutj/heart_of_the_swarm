@@ -350,7 +350,7 @@ async def create_mcp_server(
     except ValueError as exc:
         raise api_error(exc, 409) from exc
     if authorizer.development_source is not None:
-        authorizer.development_source.grant(
+        authorizer.development_source.grant_allow(
             AuthorizationAction.CAPABILITY_MANAGE,
             f"capability:mcp:{server.id}",
         )
@@ -906,9 +906,13 @@ async def run_agent(
         raise HTTPException(status_code=404, detail="agent not found")
     await authorizer.require(AuthorizationAction.AGENT_EXECUTE, f"agent_version:{agent.version_id}")
     try:
-        accepted = await runtime.runs.queue(agent_id, request.input, get_trace_id() or str(uuid4()))
+        accepted = await runtime.runs.queue(
+            agent.version_id,
+            request.input,
+            get_trace_id() or str(uuid4()),
+        )
     except ValueError as exc:
-        raise api_error(exc, 404 if str(exc) == "agent not found" else 422) from exc
+        raise api_error(exc, 404 if str(exc) == "agent version not found" else 422) from exc
     except Exception as exc:
         audit_exception("run.failed", error_type=type(exc).__name__, error_message=str(exc))
         raise HTTPException(

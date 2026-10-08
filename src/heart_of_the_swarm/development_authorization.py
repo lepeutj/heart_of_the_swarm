@@ -37,7 +37,7 @@ async def bootstrap_development_policies(
 ) -> None:
     """Reconstruct exact local policies from persisted product identities."""
     for action, resource in COLLECTION_POLICIES:
-        source.grant(action, resource)
+        source.grant_allow(action, resource)
 
     async with database.session() as session:
         workflows = (await session.execute(select(WorkflowRecord.id))).scalars().all()
@@ -61,36 +61,36 @@ async def bootstrap_development_policies(
     for version_id in agent_versions:
         grant_agent_version(source, version_id)
     for server_id in mcp_servers:
-        source.grant(AuthorizationAction.CAPABILITY_MANAGE, f"capability:mcp:{server_id}")
+        source.grant_allow(AuthorizationAction.CAPABILITY_MANAGE, f"capability:mcp:{server_id}")
     for trace_id in (*workflow_traces, *agent_traces):
         grant_trace(source, trace_id)
 
 
 def grant_workflow(source: DevelopmentPolicySource, workflow_id: object) -> None:
     resource = f"workflow:{workflow_id}"
-    source.grant(AuthorizationAction.WORKFLOW_READ, resource)
-    source.grant(AuthorizationAction.WORKFLOW_EDIT, resource)
+    source.grant_allow(AuthorizationAction.WORKFLOW_READ, resource)
+    source.grant_allow(AuthorizationAction.WORKFLOW_EDIT, resource)
 
 
 def grant_workflow_version(source: DevelopmentPolicySource, version_id: object) -> None:
     resource = f"workflow_version:{version_id}"
-    source.grant(AuthorizationAction.WORKFLOW_READ, resource)
-    source.grant(AuthorizationAction.WORKFLOW_EDIT, resource)
-    source.grant(AuthorizationAction.WORKFLOW_EXECUTE, resource)
+    source.grant_allow(AuthorizationAction.WORKFLOW_READ, resource)
+    source.grant_allow(AuthorizationAction.WORKFLOW_EDIT, resource)
+    source.grant_allow(AuthorizationAction.WORKFLOW_EXECUTE, resource)
 
 
 def grant_agent(source: DevelopmentPolicySource, agent_id: object) -> None:
     resource = f"agent:{agent_id}"
-    source.grant(AuthorizationAction.AGENT_READ, resource)
-    source.grant(AuthorizationAction.AGENT_EDIT, resource)
+    source.grant_allow(AuthorizationAction.AGENT_READ, resource)
+    source.grant_allow(AuthorizationAction.AGENT_EDIT, resource)
 
 
 def grant_agent_version(source: DevelopmentPolicySource, version_id: object) -> None:
     resource = f"agent_version:{version_id}"
-    source.grant(AuthorizationAction.AGENT_READ, resource)
-    source.grant(AuthorizationAction.AGENT_EDIT, resource)
-    source.grant(AuthorizationAction.AGENT_EXECUTE, resource)
+    source.grant_allow(AuthorizationAction.AGENT_READ, resource)
+    source.grant_allow(AuthorizationAction.AGENT_EDIT, resource)
+    source.grant_allow(AuthorizationAction.AGENT_EXECUTE, resource)
 
 
 def grant_trace(source: DevelopmentPolicySource, trace_id: object) -> None:
-    source.grant(AuthorizationAction.TRACE_READ, f"trace:{trace_id}")
+    source.grant_allow(AuthorizationAction.TRACE_READ, f"trace:{trace_id}")

@@ -140,7 +140,7 @@ def test_public_health_does_not_require_authentication(isolated_api) -> None:
 
 def test_protected_api_requires_a_valid_bearer_token(isolated_api) -> None:
     policies = DevelopmentPolicySource("developer-1")
-    policies.grant(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
+    policies.grant_allow(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
     runtime = SimpleNamespace(
         authentication=DevelopmentAuthenticationProvider("dev-secret", "developer-1"),
         authorization=AuthorizationService(policies),

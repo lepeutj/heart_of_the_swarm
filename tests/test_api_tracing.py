@@ -145,7 +145,7 @@ def test_authorization_denial_prevents_a_catalogue_read() -> None:
         with TestClient(app) as client:
             denied = client.get("/api/v1/providers")
             assert provider_calls == 0
-            policies.grant(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
+            policies.grant_allow(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
             allowed = client.get("/api/v1/providers")
     finally:
         app.dependency_overrides.clear()
@@ -174,12 +174,13 @@ def test_readiness_reports_database_revision() -> None:
 
 def test_start_run_returns_an_accepted_queue_record() -> None:
     class FakeRuns:
-        async def queue(self, agent_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
+        async def queue(self, version_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
             assert agent_input == "Research this"
+            assert version_id == "agent-version-2"
             return AgentRunAccepted(
                 run_id="run-1",
                 trace_id=trace_id,
-                agent_id=agent_id,
+                agent_id="agent-1",
                 agent_version=2,
                 status="queued",
             )

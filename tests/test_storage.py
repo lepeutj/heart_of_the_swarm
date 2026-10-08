@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import text
 
 from heart_of_the_swarm.database import Database
+from heart_of_the_swarm.execution import RunService
 from heart_of_the_swarm.mcp_service import MCPServerService
 from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
 from heart_of_the_swarm.repositories import (
@@ -64,6 +65,38 @@ def make_workflow_draft(expected_revision: int | None = None) -> WorkflowDraftSa
         },
         expected_revision=expected_revision,
     )
+
+
+class AcceptingExecutionValidator:
+    def validate_execution(self, _spec: AgentSpec) -> None:
+        pass
+
+
+async def test_run_service_queues_the_selected_immutable_agent_version() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        async with database.session() as session:
+            repository = AgentRepository(session)
+            first = await repository.create(make_spec(), "1", "First prompt")
+            second = await repository.add_version(
+                first.id,
+                make_spec("UpdatedAgent"),
+                "1",
+                "Second prompt",
+            )
+        assert second is not None
+
+        queued = await RunService(database, AcceptingExecutionValidator()).queue(
+            first.version_id,
+            "Use the authorized version",
+            "trace-immutable-version",
+        )
+
+        assert queued.agent_version == first.version
+        assert queued.agent_version != second.version
+    finally:
+        await database.close()
 
 
 async def test_mcp_sources_are_persisted_for_other_processes() -> None:

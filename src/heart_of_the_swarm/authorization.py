@@ -138,19 +138,20 @@ class DevelopmentPolicySource:
         self.principal = Principal(kind=PrincipalKind.USER, id=user_id)
         self._policies: dict[PolicyKey, AuthorizationDecision] = {}
 
-    def grant(
+    def grant_allow(
         self,
         action: AuthorizationAction,
         resource: str,
-        decision: AuthorizationDecision = AuthorizationDecision.ALLOW,
     ) -> None:
-        """Register one exact policy after validating its public contract."""
+        """Register one exact development allow after validating its public contract."""
         request = AuthorizationRequest(
             principal=self.principal,
             action=action,
             resource=resource,
         )
-        self._policies[(request.principal, request.action, request.resource)] = decision
+        self._policies[(request.principal, request.action, request.resource)] = (
+            AuthorizationDecision.ALLOW
+        )
 
     async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
         key = (request.principal, request.action, request.resource)

@@ -26,12 +26,13 @@ class RunService:
         self.database = database
         self.validator = validator
 
-    async def queue(self, agent_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
+    async def queue(self, version_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
+        """Queue exactly the immutable agent version selected by the caller."""
         async with self.database.session() as session:
             repository = RunRepository(session)
-            agent = await AgentRepository(session).get(agent_id)
+            agent = await AgentRepository(session).get_version(version_id)
             if agent is None:
-                raise ValueError("agent not found")
+                raise ValueError("agent version not found")
             self.validator.validate_execution(agent.spec)
             return await repository.queue(agent, trace_id, agent_input)
 
