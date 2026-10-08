@@ -79,6 +79,8 @@ class AgentCapabilityApprovalMiddleware(AgentMiddleware[_CapabilityApprovalState
             if decision == AuthorizationDecision.DENY:
                 raise CapabilityAuthorizationError(request, decision)
             if decision == AuthorizationDecision.APPROVAL_REQUIRED:
+                if not normalized.get("id"):
+                    raise ValueError("approval-gated tool calls require a stable call id")
                 pending.append(
                     (
                         normalized,
@@ -118,9 +120,7 @@ class AgentCapabilityApprovalMiddleware(AgentMiddleware[_CapabilityApprovalState
                 approval_request.authorization,
                 AuthorizationDecision.APPROVAL_REQUIRED,
             )
-        tool_call_id = tool_call.get("id")
-        if not tool_call_id:
-            raise ValueError("approval-gated tool calls require a stable call id")
+        tool_call_id = tool_call["id"]
         return {
             "messages": [message.model_copy(update={"tool_calls": normalized_calls})],
             _APPROVAL_GRANTS_KEY: {tool_call_id: approval.grant_id},
