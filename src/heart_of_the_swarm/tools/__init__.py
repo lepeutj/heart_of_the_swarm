@@ -8,7 +8,7 @@ from heart_of_the_swarm.tools.builtin import (
     rss_reader,
     web_search,
 )
-from heart_of_the_swarm.tools.mcp import MCPToolLoader
+from heart_of_the_swarm.tools.mcp import MCPConnection, MCPToolLoader
 from heart_of_the_swarm.tools.models import (
     CapabilityContract,
     CapabilityDescriptor,
@@ -44,6 +44,7 @@ __all__ = [
     "MCPServerStatus",
     "MCPServerTestResult",
     "MCPServerView",
+    "MCPConnection",
     "MCPToolLoader",
     "RegisteredCapability",
     "ToolCatalogueResponse",

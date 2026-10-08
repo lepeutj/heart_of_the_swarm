@@ -185,6 +185,32 @@ class ConfiguredCapabilityPolicySource:
         return Principal(kind=PrincipalKind(kind), id=identifier)
 
 
+class ConfiguredCredentialPolicySource:
+    """Expose exact credential-resolution allows for configured runtime identities."""
+
+    def __init__(self, grants: Mapping[str, Iterable[str]]) -> None:
+        self._policies: dict[PolicyKey, AuthorizationDecision] = {}
+        for runtime_reference, credential_ids in grants.items():
+            kind, separator, identifier = runtime_reference.partition(":")
+            if not separator or kind != PrincipalKind.RUNTIME:
+                raise ValueError("credential policy principals must be runtime references")
+            principal = Principal(kind=PrincipalKind.RUNTIME, id=identifier)
+            for credential_id in credential_ids:
+                request = AuthorizationRequest(
+                    principal=principal,
+                    action=AuthorizationAction.CREDENTIAL_RESOLVE,
+                    resource=f"credential:{credential_id}",
+                )
+                self._policies[(request.principal, request.action, request.resource)] = (
+                    AuthorizationDecision.ALLOW
+                )
+
+    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
+        key = (request.principal, request.action, request.resource)
+        decision = self._policies.get(key)
+        return {} if decision is None else {key: decision}
+
+
 class DevelopmentPolicySource:
     """Process-local exact policies for one explicitly configured development user."""
 

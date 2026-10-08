@@ -1,13 +1,16 @@
 import asyncio
+import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Protocol, Self
 
 from langchain_core.tools import BaseTool
 
-from heart_of_the_swarm.observability import audit_event, audit_exception
+from heart_of_the_swarm.credentials import CredentialRef, CredentialResolver
+from heart_of_the_swarm.observability import audit_event
 from heart_of_the_swarm.tools.models import MCPServerStatus
 from heart_of_the_swarm.tools.registry import RegisteredCapability, ToolRegistry
 
@@ -20,11 +23,24 @@ class MCPAdapterProtocol(Protocol):
     async def list_tools(self, *, cache_mode: str = "use") -> list[BaseTool]: ...
 
 
-def create_mcp_adapter(url: str) -> MCPAdapterProtocol:
-    """Create LangChain's official MCP adapter lazily when MCP is configured."""
+@dataclass(frozen=True)
+class MCPConnection:
+    """Runtime-only MCP connection data; references are public, bearer values are not."""
+
+    url: str
+    bearer_credential_ref: CredentialRef | None = None
+
+
+def create_mcp_adapter(
+    url: str,
+    headers: Mapping[str, str] | None = None,
+) -> MCPAdapterProtocol:
+    """Create LangChain's MCP adapter with optional runtime-resolved HTTP headers."""
+    from fastmcp.client.transports import StreamableHttpTransport
     from langchain.mcp import MCPAdapter
 
-    return MCPAdapter(url)
+    target = StreamableHttpTransport(url, headers=dict(headers)) if headers else url
+    return MCPAdapter(target)
 
 
 class MCPToolLoader:
@@ -33,12 +49,16 @@ class MCPToolLoader:
     def __init__(
         self,
         registry: ToolRegistry,
-        servers: dict[str, str],
-        adapter_factory: Callable[[str], MCPAdapterProtocol] = create_mcp_adapter,
+        servers: Mapping[str, str | MCPConnection],
+        adapter_factory: Callable[[str, Mapping[str, str] | None], MCPAdapterProtocol] = (
+            create_mcp_adapter
+        ),
+        credential_resolver: CredentialResolver | None = None,
     ) -> None:
         self.registry = registry
-        self.servers = dict(servers)
+        self.servers = self._normalize_servers(servers)
         self.adapter_factory = adapter_factory
+        self.credential_resolver = credential_resolver
         self._stacks: dict[str, AsyncExitStack] = {}
         self._retired_stacks: list[AsyncExitStack] = []
         self._statuses: dict[str, MCPServerStatus] = {}
@@ -66,14 +86,14 @@ class MCPToolLoader:
         )
         return tuple(discovered)
 
-    async def sync(self, servers: dict[str, str]) -> tuple[str, ...]:
+    async def sync(self, servers: Mapping[str, str | MCPConnection]) -> tuple[str, ...]:
         """Apply persisted source changes and discover only new or changed servers."""
-        configured = dict(servers)
+        configured = self._normalize_servers(servers)
         removed = set(self.servers) - set(configured)
         changed = [
             name
-            for name, url in configured.items()
-            if self.servers.get(name) != url or name not in self._statuses
+            for name, source in configured.items()
+            if self.servers.get(name) != source or name not in self._statuses
         ]
         self.servers = configured
         for server_name in removed:
@@ -94,13 +114,16 @@ class MCPToolLoader:
         lock = self._locks.setdefault(server_name, asyncio.Lock())
         async with lock:
             try:
-                url = self.servers[server_name]
+                connection = self.servers[server_name]
             except KeyError as exc:
                 raise ValueError(f"unknown MCP server: {server_name}") from exc
 
             stack = AsyncExitStack()
             try:
-                adapter = await stack.enter_async_context(self.adapter_factory(url))
+                headers = await self._authentication_headers(connection)
+                adapter = await stack.enter_async_context(
+                    self.adapter_factory(connection.url, headers)
+                )
                 tools = await adapter.list_tools(cache_mode="refresh")
                 capabilities = tuple(self._registered_tool(server_name, tool) for tool in tools)
                 self.registry.replace_source("mcp", server_name, capabilities)
@@ -111,9 +134,15 @@ class MCPToolLoader:
                     name=server_name,
                     state="error",
                     tools=previous.tools if previous is not None else (),
-                    error=str(exc),
+                    error="MCP server discovery failed",
                 )
-                audit_exception("mcp.discovery.failed", server_name=server_name)
+                # Do not attach exception text: HTTP clients may include auth material in it.
+                audit_event(
+                    "mcp.discovery.failed",
+                    level=logging.ERROR,
+                    server_name=server_name,
+                    error_type=type(exc).__name__,
+                )
                 return ()
 
             previous = self._stacks.get(server_name)
@@ -133,11 +162,26 @@ class MCPToolLoader:
             )
             return names
 
-    async def test(self, server_name: str, url: str) -> tuple[str, ...]:
+    async def test(self, server_name: str, source: str | MCPConnection) -> tuple[str, ...]:
         """Test discovery without changing the live registry or retaining the adapter."""
-        async with self.adapter_factory(url) as adapter:
+        connection = self._normalize_connection(source)
+        headers = await self._authentication_headers(connection)
+        async with self.adapter_factory(connection.url, headers) as adapter:
             tools = await adapter.list_tools(cache_mode="refresh")
         return tuple(self._capability_id(server_name, tool.name) for tool in tools)
+
+    async def _authentication_headers(
+        self,
+        connection: MCPConnection,
+    ) -> Mapping[str, str] | None:
+        """Resolve a bearer value only at the trusted MCP adapter boundary."""
+        reference = connection.bearer_credential_ref
+        if reference is None:
+            return None
+        if self.credential_resolver is None:
+            raise PermissionError("credential resolution is unavailable in this process")
+        secret = await self.credential_resolver.resolve(reference)
+        return {"Authorization": f"Bearer {secret.get_secret_value()}"}
 
     async def close(self) -> None:
         for stack in [*self._stacks.values(), *self._retired_stacks]:
@@ -163,3 +207,14 @@ class MCPToolLoader:
             return safe_name
         suffix = sha256(raw_name.encode()).hexdigest()[:12]
         return f"{safe_name[:51]}_{suffix}"
+
+    @classmethod
+    def _normalize_servers(
+        cls,
+        servers: Mapping[str, str | MCPConnection],
+    ) -> dict[str, MCPConnection]:
+        return {name: cls._normalize_connection(source) for name, source in servers.items()}
+
+    @staticmethod
+    def _normalize_connection(source: str | MCPConnection) -> MCPConnection:
+        return source if isinstance(source, MCPConnection) else MCPConnection(url=source)

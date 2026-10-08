@@ -28,6 +28,7 @@ class RuntimeObservability(BaseModel):
 
 class RuntimeMetadata(BaseModel):
     manifest: AgentArtifactManifest | WorkflowArtifactManifest
+    runtime_id: str | None = None
     agent: dict[str, Any] | None = None
     workflow: dict[str, Any] | None = None
     observability: RuntimeObservability | None = None

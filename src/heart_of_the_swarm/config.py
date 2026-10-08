@@ -36,7 +36,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/heart_of_the_swarm.db"
     connector_databases: dict[str, str] = Field(default_factory=dict)
     mcp_servers: dict[str, str] = Field(default_factory=dict)
+    mcp_bearer_credentials: dict[str, str] = Field(default_factory=dict)
     capability_policies: dict[str, list[str]] = Field(default_factory=dict)
+    runtime_id: str = "local-runtime"
+    credential_policies: dict[str, list[str]] = Field(default_factory=dict)
+    local_secrets: dict[str, SecretStr] = Field(default_factory=dict)
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     max_document_bytes: int = Field(default=1_000_000, ge=1_000, le=5_000_000)
 
@@ -68,7 +72,15 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
-    @field_validator("connector_databases", "mcp_servers", "capability_policies", mode="before")
+    @field_validator(
+        "connector_databases",
+        "mcp_servers",
+        "mcp_bearer_credentials",
+        "capability_policies",
+        "credential_policies",
+        "local_secrets",
+        mode="before",
+    )
     @classmethod
     def parse_json_mapping(cls, value: object) -> object:
         if isinstance(value, str):
@@ -90,6 +102,9 @@ class Settings(BaseSettings):
     def validate_worker_timing(self) -> "Settings":
         if self.worker_heartbeat_seconds * 2 >= self.worker_lease_seconds:
             raise ValueError("worker heartbeat must be less than half of the worker lease")
+        unknown_mcp_credentials = set(self.mcp_bearer_credentials) - set(self.mcp_servers)
+        if unknown_mcp_credentials:
+            raise ValueError("MCP bearer credentials must reference configured MCP servers")
         return self
 
 

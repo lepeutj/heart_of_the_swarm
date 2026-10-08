@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 
+from heart_of_the_swarm.credentials import CredentialRef
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.execution import RunService
 from heart_of_the_swarm.mcp_service import MCPServerService
@@ -106,22 +107,33 @@ async def test_mcp_sources_are_persisted_for_other_processes() -> None:
     second_process = MCPServerService(database)
     try:
         created = await first_process.create(
-            MCPServerCreate(name="github", url="https://mcp.example.test/tools")
+            MCPServerCreate(
+                name="github",
+                url="https://mcp.example.test/tools",
+                bearer_credential_ref=CredentialRef(id="github_mcp_token"),
+            )
         )
 
-        assert await second_process.enabled_sources() == {
-            "github": "https://mcp.example.test/tools"
-        }
+        enabled = await second_process.enabled_sources()
+        assert enabled["github"].url == "https://mcp.example.test/tools"
+        assert enabled["github"].bearer_credential_ref == CredentialRef(id="github_mcp_token")
         loaded = await second_process.get(str(created.id))
         assert loaded is not None
-        assert (loaded.id, loaded.name, loaded.url, loaded.enabled) == (
+        assert (
+            loaded.id,
+            loaded.name,
+            loaded.url,
+            loaded.bearer_credential_ref,
+            loaded.enabled,
+        ) == (
             created.id,
             created.name,
             created.url,
+            CredentialRef(id="github_mcp_token"),
             created.enabled,
         )
         await second_process.seed({"github": "https://seed.example.test/tools"})
-        assert await first_process.enabled_sources() == {"github": "https://mcp.example.test/tools"}
+        assert (await first_process.enabled_sources())["github"] == enabled["github"]
         with pytest.raises(ValueError, match="already exists"):
             await second_process.create(
                 MCPServerCreate(name="github", url="https://other.example.test/tools")

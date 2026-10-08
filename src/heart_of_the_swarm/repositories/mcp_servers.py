@@ -36,6 +36,9 @@ class MCPServerRepository(RepositoryBase):
             id=str(uuid4()),
             name=source.name,
             url=str(source.url),
+            bearer_credential_ref=(
+                source.bearer_credential_ref.id if source.bearer_credential_ref else None
+            ),
             enabled=source.enabled,
             created_at=now,
             updated_at=now,
@@ -48,8 +51,8 @@ class MCPServerRepository(RepositoryBase):
             raise ValueError(f"MCP server already exists: {source.name}") from exc
         return self._detail(record)
 
-    async def seed(self, sources: dict[str, str]) -> None:
-        for name, url in sources.items():
+    async def seed(self, sources: dict[str, MCPServerCreate]) -> None:
+        for name, source in sources.items():
             if await self.get_by_name(name) is not None:
                 continue
             now = datetime.now(UTC)
@@ -57,7 +60,12 @@ class MCPServerRepository(RepositoryBase):
                 MCPServerRecord(
                     id=str(uuid4()),
                     name=name,
-                    url=url,
+                    url=str(source.url),
+                    bearer_credential_ref=(
+                        source.bearer_credential_ref.id
+                        if source.bearer_credential_ref is not None
+                        else None
+                    ),
                     enabled=True,
                     created_at=now,
                     updated_at=now,
@@ -74,6 +82,11 @@ class MCPServerRepository(RepositoryBase):
             id=record.id,
             name=record.name,
             url=record.url,
+            bearer_credential_ref=(
+                {"id": record.bearer_credential_ref}
+                if record.bearer_credential_ref is not None
+                else None
+            ),
             enabled=record.enabled,
             created_at=record.created_at,
             updated_at=record.updated_at,

@@ -163,7 +163,9 @@ part of the architecture.
    invocation boundaries. **Implemented through exact configured policies, isolated per-run tool
    views, invocation guards, and safe audit decisions. Managed policy persistence is deferred.**
 5. V2.6e: authenticate runtime instances and resolve credential references without storing secrets
-   in specs.
+   in specs. **The runtime-identity and credential-resolution contract is defined in
+   `docs/credentials.md`; MCP bearer authentication is the first migrated consumer, while provider
+   and database credentials still require explicit migration.**
 6. V2.6f: integrate `approval_required` decisions with durable human approval.
 7. Apply execution, request, concurrency, network, and state-size limits.
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime

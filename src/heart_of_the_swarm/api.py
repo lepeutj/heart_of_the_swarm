@@ -57,6 +57,7 @@ from heart_of_the_swarm.spec import (
     ValidationResponse,
 )
 from heart_of_the_swarm.tools import (
+    MCPConnection,
     MCPServerCreate,
     MCPServerDetail,
     MCPServerStatus,
@@ -366,12 +367,18 @@ async def test_mcp_server(
         raise HTTPException(status_code=404, detail="MCP server not found")
     await authorizer.require(AuthorizationAction.CAPABILITY_MANAGE, f"capability:mcp:{server.id}")
     try:
-        names = await runtime.mcp_tools.test(server.name, server.url)
+        names = await runtime.mcp_tools.test(
+            server.name,
+            MCPConnection(
+                url=server.url,
+                bearer_credential_ref=server.bearer_credential_ref,
+            ),
+        )
     except Exception as exc:
         return MCPServerTestResult(
             name=server.name,
             reachable=False,
-            error=f"{type(exc).__name__}: {exc}",
+            error=f"MCP connection failed ({type(exc).__name__})",
         )
     return MCPServerTestResult(name=server.name, reachable=True, tools=names)
 

@@ -5,19 +5,27 @@ from heart_of_the_swarm.artifacts import AgentArtifact, load_agent_artifact
 from heart_of_the_swarm.authorization import (
     AuthorizationContext,
     AuthorizationService,
+    CompositePolicySource,
     ConfiguredCapabilityPolicySource,
+    ConfiguredCredentialPolicySource,
 )
 from heart_of_the_swarm.capability_authorization import (
     CapabilityAuthorizer,
     ExecutionSecurityContext,
 )
 from heart_of_the_swarm.config import Settings
+from heart_of_the_swarm.credentials import (
+    CredentialRef,
+    CredentialResolver,
+    LocalSecretStore,
+    RuntimeIdentity,
+)
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import RuntimeCallbackHandler, audit_event, trace_context
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
 from heart_of_the_swarm.telemetry import Telemetry
-from heart_of_the_swarm.tools import MCPToolLoader, create_default_registry
+from heart_of_the_swarm.tools import MCPConnection, MCPToolLoader, create_default_registry
 from heart_of_the_swarm.validator import AgentSpecValidator
 
 
@@ -27,11 +35,36 @@ class StandaloneAgentRuntime:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.tools = create_default_registry(settings)
-        self.mcp_tools = MCPToolLoader(self.tools, settings.mcp_servers)
         self.providers = ProviderRegistry(settings)
         self.validator = AgentSpecValidator(self.tools, self.providers)
-        self.capability_authorizer = CapabilityAuthorizer(
-            AuthorizationService(ConfiguredCapabilityPolicySource(settings.capability_policies))
+        authorization = AuthorizationService(
+            CompositePolicySource(
+                ConfiguredCapabilityPolicySource(settings.capability_policies),
+                ConfiguredCredentialPolicySource(settings.credential_policies),
+            )
+        )
+        self.capability_authorizer = CapabilityAuthorizer(authorization)
+        self.runtime_identity = RuntimeIdentity(id=settings.runtime_id)
+        self.credential_resolver = CredentialResolver(
+            self.runtime_identity,
+            authorization,
+            LocalSecretStore(settings.local_secrets),
+        )
+        mcp_sources = {
+            name: MCPConnection(
+                url=url,
+                bearer_credential_ref=(
+                    CredentialRef(id=settings.mcp_bearer_credentials[name])
+                    if name in settings.mcp_bearer_credentials
+                    else None
+                ),
+            )
+            for name, url in settings.mcp_servers.items()
+        }
+        self.mcp_tools = MCPToolLoader(
+            self.tools,
+            mcp_sources,
+            credential_resolver=self.credential_resolver,
         )
         self.runner = AgentRunner(
             self.providers,
@@ -64,6 +97,7 @@ class StandaloneAgentRuntime:
         artifact = self._artifact()
         return RuntimeMetadata(
             manifest=artifact.manifest,
+            runtime_id=self.runtime_identity.id,
             agent={
                 "name": artifact.agent.spec.name,
                 "goal": artifact.agent.spec.goal,

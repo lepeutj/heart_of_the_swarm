@@ -3,9 +3,15 @@ from uuid import uuid4
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.artifacts import WorkflowArtifact, load_workflow_artifact
-from heart_of_the_swarm.authorization import AuthorizationService, ConfiguredCapabilityPolicySource
+from heart_of_the_swarm.authorization import (
+    AuthorizationService,
+    CompositePolicySource,
+    ConfiguredCapabilityPolicySource,
+    ConfiguredCredentialPolicySource,
+)
 from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings
+from heart_of_the_swarm.credentials import CredentialResolver, LocalSecretStore, RuntimeIdentity
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import audit_event, trace_context
 from heart_of_the_swarm.providers import ProviderRegistry
@@ -31,8 +37,18 @@ class StandaloneWorkflowRuntime:
         self.tools = create_default_registry(settings)
         self.skills = SkillRegistry(settings.skills_dir)
         self.providers = ProviderRegistry(settings)
-        capability_authorizer = CapabilityAuthorizer(
-            AuthorizationService(ConfiguredCapabilityPolicySource(settings.capability_policies))
+        authorization = AuthorizationService(
+            CompositePolicySource(
+                ConfiguredCapabilityPolicySource(settings.capability_policies),
+                ConfiguredCredentialPolicySource(settings.credential_policies),
+            )
+        )
+        capability_authorizer = CapabilityAuthorizer(authorization)
+        self.runtime_identity = RuntimeIdentity(id=settings.runtime_id)
+        self.credential_resolver = CredentialResolver(
+            self.runtime_identity,
+            authorization,
+            LocalSecretStore(settings.local_secrets),
         )
         agent_validator = AgentSpecValidator(self.tools, self.providers, self.skills)
         agent_runner = AgentRunner(
@@ -74,6 +90,7 @@ class StandaloneWorkflowRuntime:
         artifact = self._artifact()
         return RuntimeMetadata(
             manifest=artifact.manifest,
+            runtime_id=self.runtime_identity.id,
             workflow={
                 "name": artifact.workflow.spec.name,
                 "description": artifact.workflow.spec.description,

@@ -6,10 +6,12 @@ from heart_of_the_swarm.authorization import (
     AuthorizationService,
     CompositePolicySource,
     ConfiguredCapabilityPolicySource,
+    ConfiguredCredentialPolicySource,
     DevelopmentPolicySource,
 )
 from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings, get_settings
+from heart_of_the_swarm.credentials import CredentialResolver, LocalSecretStore, RuntimeIdentity
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.development_authorization import bootstrap_development_policies
 from heart_of_the_swarm.execution import AgentExecutor, RunService
@@ -49,13 +51,32 @@ class Application:
         self.capability_policy_source = ConfiguredCapabilityPolicySource(
             self.settings.capability_policies
         )
+        self.credential_policy_source = ConfiguredCredentialPolicySource(
+            self.settings.credential_policies
+        )
         sources = (
-            (self.policy_source, self.capability_policy_source)
+            (
+                self.policy_source,
+                self.capability_policy_source,
+                self.credential_policy_source,
+            )
             if self.policy_source is not None
-            else (self.capability_policy_source,)
+            else (self.capability_policy_source, self.credential_policy_source)
         )
         self.authorization = AuthorizationService(CompositePolicySource(*sources))
         self.capability_authorizer = CapabilityAuthorizer(self.authorization)
+        self.runtime_identity = (
+            RuntimeIdentity(id=self.settings.runtime_id) if process == "worker" else None
+        )
+        self.credential_resolver = (
+            CredentialResolver(
+                self.runtime_identity,
+                self.authorization,
+                LocalSecretStore(self.settings.local_secrets),
+            )
+            if self.runtime_identity is not None
+            else None
+        )
         log_file = self.settings.api_log_file if process == "api" else self.settings.worker_log_file
         configure_audit_logging(
             log_file,
@@ -64,7 +85,11 @@ class Application:
             self.settings.log_backup_count,
         )
         self.tools = create_default_registry(self.settings)
-        self.mcp_tools = MCPToolLoader(self.tools, {})
+        self.mcp_tools = MCPToolLoader(
+            self.tools,
+            {},
+            credential_resolver=self.credential_resolver,
+        )
         self.skills = SkillRegistry(self.settings.skills_dir)
         self.providers = ProviderRegistry(self.settings)
         self.validator = AgentSpecValidator(self.tools, self.providers, self.skills)
@@ -129,7 +154,10 @@ class Application:
         if self.policy_source is not None:
             await bootstrap_development_policies(self.policy_source, self.database)
         await self.workflow_checkpoints.start()
-        await self.mcp_servers.seed(self.settings.mcp_servers)
+        await self.mcp_servers.seed(
+            self.settings.mcp_servers,
+            self.settings.mcp_bearer_credentials,
+        )
         await self.sync_mcp_tools()
 
     async def sync_mcp_tools(self) -> tuple[str, ...]:

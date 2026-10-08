@@ -120,6 +120,12 @@ standalone runtimes. Agents receive isolated model-facing tool views filtered be
 never mutated per run. Exact runtime allows currently come from `CAPABILITY_POLICIES`; missing
 policy is denied, while managed policy persistence remains deferred.
 
+V2.6e now separates capability permission from runtime-owned secret resolution. MCP HTTP sources
+may persist a public bearer `CredentialRef`; workers and standalone runtimes resolve it only after
+an exact `credential.resolve` allow and inject the value directly into FastMCP's transport. The
+control-plane API receives no local secret store, and authenticated catalogue synchronization back
+to that API remains a documented follow-up.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

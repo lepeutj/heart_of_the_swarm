@@ -111,6 +111,10 @@ the normative field-level rules.
   as published workflow nodes. Agents receive only allowed tools before `create_agent`, and every
   capability is authorized again immediately before invocation. The shared registry is never
   mutated per run. The normative contract is in `docs/capability-authorization.md`.
+- **ADR-050 — Credential resolution belongs to the runtime principal.** Capability authorization
+  and secret access are separate gates. Public `CredentialRef` values contain identifiers only; an
+  authorized runtime resolves them through an injected `SecretStore`, and agents never receive raw
+  values. The normative contract is in `docs/credentials.md`.
 
 ## Current implementation limits
 
