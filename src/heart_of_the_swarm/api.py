@@ -747,6 +747,7 @@ async def respond_to_workflow_interruption(
             interruption_id,
             response.model_dump(mode="json"),
             get_trace_id() or str(uuid4()),
+            approved_by=authorizer.principal,
         )
     except ValueError as exc:
         status_code = 404 if str(exc) == "workflow interruption not found" else 409

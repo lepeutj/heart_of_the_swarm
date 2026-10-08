@@ -21,6 +21,8 @@ from heart_of_the_swarm.authorization import (
     AuthorizationAction,
     AuthorizationService,
     DevelopmentPolicySource,
+    Principal,
+    PrincipalKind,
 )
 from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.spec import AgentRunAccepted
@@ -50,6 +52,7 @@ async def isolated_lifespan(_app):
 
 class AllowRequestAuthorizer:
     development_source = None
+    principal = Principal(kind=PrincipalKind.USER, id="test-user")
 
     async def require(self, _action, _resource) -> None:
         pass
@@ -257,10 +260,11 @@ def test_workflow_interruption_http_adapters_delegate_to_the_approval_service() 
             assert interruption_id == interruption.id
             return interruption
 
-        async def respond(self, interruption_id, response, trace_id):
+        async def respond(self, interruption_id, response, trace_id, *, approved_by=None):
             assert interruption_id == interruption.id
             assert response == {"approved": True}
             assert trace_id
+            assert approved_by == AllowRequestAuthorizer.principal
             return WorkflowRunAccepted(
                 run_id="8f675d13-b826-407a-a82d-bcbe643756b4",
                 trace_id=trace_id,
@@ -307,7 +311,8 @@ def test_workflow_interruption_http_errors_are_safe_and_structured() -> None:
             self.calls += 1
             return None if self.calls == 1 else resolved
 
-        async def respond(self, _interruption_id, _response, _trace_id):
+        async def respond(self, _interruption_id, _response, _trace_id, *, approved_by=None):
+            assert approved_by == AllowRequestAuthorizer.principal
             raise ValueError("workflow interruption is not pending")
 
     interruption_id = "94d6048e-6e4c-4a8a-9069-bd10148b90aa"

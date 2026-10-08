@@ -3,6 +3,7 @@ from uuid import UUID
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from heart_of_the_swarm.authorization import Principal
 from heart_of_the_swarm.database import Database
 from heart_of_the_swarm.repositories import WorkflowInterruptionRepository
 from heart_of_the_swarm.workflows.execution.checkpoints import WorkflowCheckpointProvider
@@ -42,6 +43,7 @@ class WorkflowApprovalService:
         interruption_id: UUID,
         response: dict[str, Any],
         trace_id: str,
+        approved_by: Principal | None = None,
     ) -> WorkflowRunAccepted:
         """Resolve one pending interruption only when its exact checkpoint remains current."""
         async with self.database.session() as session:
@@ -74,6 +76,7 @@ class WorkflowApprovalService:
                 str(interruption_id),
                 response=response,
                 trace_id=trace_id,
+                approved_by=approved_by,
             )
 
     def _checkpointer(self) -> BaseCheckpointSaver:

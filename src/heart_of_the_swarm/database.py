@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from heart_of_the_swarm.models import Base
 
-SCHEMA_REVISION = "0012_mcp_credential_refs"
+SCHEMA_REVISION = "0013_approval_grants"
 REQUIRED_TABLES = {
     "agents",
     "agent_versions",
@@ -22,6 +22,7 @@ REQUIRED_TABLES = {
     "triggers",
     "execution_threads",
     "workflow_interruptions",
+    "approval_grants",
 }
 
 

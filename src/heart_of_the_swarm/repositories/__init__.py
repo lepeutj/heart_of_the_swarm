@@ -1,4 +1,5 @@
 from heart_of_the_swarm.repositories.agents import AgentRepository
+from heart_of_the_swarm.repositories.approval_grants import ApprovalGrantRepository
 from heart_of_the_swarm.repositories.mcp_servers import MCPServerRepository
 from heart_of_the_swarm.repositories.observability import ObservabilityRepository
 from heart_of_the_swarm.repositories.runs import ExecutionContext, RunRepository
@@ -15,6 +16,7 @@ from heart_of_the_swarm.repositories.workflows import (
 
 __all__ = [
     "AgentRepository",
+    "ApprovalGrantRepository",
     "ExecutionContext",
     "MCPServerRepository",
     "ObservabilityRepository",

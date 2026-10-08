@@ -97,6 +97,8 @@ class WorkflowRunRepository(RepositoryBase):
         previous_run_id: str,
         checkpoint_id: str,
         trace_id: str,
+        *,
+        commit: bool = True,
     ) -> WorkflowRunAccepted:
         previous = await self._required(WorkflowRunRecord, previous_run_id)
         if previous.thread_id is None:
@@ -149,7 +151,8 @@ class WorkflowRunRepository(RepositoryBase):
             },
         )
         self._add_event(run, "workflow.queued", {"workflow_version": version.version})
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
         return self._accepted(run, version)
 
     async def claim_next(self, worker_id: str, lease_seconds: int) -> str | None:

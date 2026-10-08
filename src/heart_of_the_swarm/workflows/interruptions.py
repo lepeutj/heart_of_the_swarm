@@ -33,9 +33,10 @@ class WorkflowInterruptionDetail(BaseModel):
     thread_id: UUID
     workflow_run_id: UUID
     node_id: str
-    kind: Literal["approval"]
+    kind: Literal["approval", "capability_approval"]
     prompt: str
     response_schema: dict[str, Any]
+    request: dict[str, Any] | None = None
     checkpoint_id: str
     status: WorkflowInterruptionStatus
     response: dict[str, Any] | None = None

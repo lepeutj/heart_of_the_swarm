@@ -27,16 +27,20 @@ def capability_request(run_id, principal, *, node_id="publish", resource="remote
 
 
 def grant_for(request: AuthorizationRequest, fingerprint: str, **overrides) -> ApprovalGrant:
+    now = datetime.now(UTC)
     values = {
         "id": uuid4(),
-        "run_id": request.context.run_id,
+        "interruption_id": uuid4(),
+        "source_run_id": uuid4(),
+        "continuation_run_id": request.context.run_id,
         "node_id": request.context.node_id,
         "principal": request.principal,
         "action": request.action,
         "resource": request.resource,
         "arguments_fingerprint": fingerprint,
         "approved_by": Principal(kind=PrincipalKind.USER, id="operator-1"),
-        "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        "created_at": now,
+        "expires_at": now + timedelta(minutes=5),
     }
     values.update(overrides)
     return ApprovalGrant.model_validate(values)
@@ -87,6 +91,8 @@ def test_grant_matches_only_the_exact_unexpired_unconsumed_request() -> None:
     assert not grant_for(
         request,
         fingerprint,
+        status="consumed",
+        consumed_by_run_id=run_id,
         consumed_at=datetime.now(UTC),
     ).permits(request, fingerprint)
 
