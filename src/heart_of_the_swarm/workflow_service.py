@@ -66,6 +66,11 @@ class WorkflowService:
         async with self.database.session() as session:
             return await WorkflowRepository(session).get_latest_version(str(workflow_id))
 
+    async def get_version(self, version_id: UUID) -> WorkflowVersionDetail | None:
+        """Load one immutable version so adapters can resolve its trusted identity."""
+        async with self.database.session() as session:
+            return await WorkflowRepository(session).get_version(str(version_id))
+
     async def create_version(self, workflow_id: UUID) -> WorkflowVersionDetail | None:
         async with self.database.session() as session:
             draft = await WorkflowRepository(session).get(str(workflow_id))

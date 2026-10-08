@@ -158,7 +158,7 @@ part of the architecture.
 2. V2.6b: authenticate users and protect control-plane API operations through the development and
    JWT provider contract in `docs/authentication.md`. **Implemented and validated through Docker.**
 3. V2.6c: enforce exact user policies on control-plane HTTP operations as defined in
-   `docs/user-authorization.md`.
+   `docs/user-authorization.md`. **Implemented; Docker smoke validation remains.**
 4. V2.6d: enforce agent-version and workflow-node capability policies at tool exposure and
    invocation boundaries.
 5. V2.6e: authenticate runtime instances and resolve credential references without storing secrets

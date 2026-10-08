@@ -136,6 +136,16 @@ class AgentService:
         async with self.database.session() as session:
             return await AgentRepository(session).get(agent_id)
 
+    async def get_agent_version(self, agent_id: str, version: int) -> AgentDetail | None:
+        """Resolve the immutable version used by a persisted agent run."""
+        async with self.database.session() as session:
+            return await AgentRepository(session).get(agent_id, version)
+
+    async def get_version(self, version_id: str) -> AgentDetail | None:
+        """Load one immutable agent version by its stable public identifier."""
+        async with self.database.session() as session:
+            return await AgentRepository(session).get_version(version_id)
+
     async def usage_summary(self) -> list[UsageSummary]:
         async with self.database.session() as session:
             return await ObservabilityRepository(session).usage_summary()

@@ -8,6 +8,8 @@ from heart_of_the_swarm.authorization import (
     AuthorizationContext,
     AuthorizationDecision,
     AuthorizationRequest,
+    AuthorizationService,
+    DevelopmentPolicySource,
     PolicyEvaluator,
     Principal,
     PrincipalKind,
@@ -150,3 +152,43 @@ def test_empty_policy_decision_set_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="at least one decision"):
         PolicyEvaluator(policies_for(request))
+
+
+@pytest.mark.asyncio
+async def test_development_source_grants_only_the_configured_user_and_exact_resource() -> None:
+    source = DevelopmentPolicySource("user-a")
+    source.grant(AuthorizationAction.WORKFLOW_READ, "workflow:workflow-a")
+    service = AuthorizationService(source)
+
+    allowed = AuthorizationRequest(
+        principal=principal(PrincipalKind.USER, "user-a"),
+        action=AuthorizationAction.WORKFLOW_READ,
+        resource="workflow:workflow-a",
+    )
+    other_resource = allowed.model_copy(update={"resource": "workflow:workflow-b"})
+    other_user = allowed.model_copy(update={"principal": principal(PrincipalKind.USER, "user-b")})
+
+    assert await service.decide(allowed) == AuthorizationDecision.ALLOW
+    assert await service.decide(other_resource) == AuthorizationDecision.DENY
+    assert await service.decide(other_user) == AuthorizationDecision.DENY
+
+
+@pytest.mark.asyncio
+async def test_capability_catalogue_actions_are_closed_contract_values() -> None:
+    source = DevelopmentPolicySource("user-a")
+    source.grant(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
+    source.grant(AuthorizationAction.CAPABILITY_MANAGE, "capability:catalog")
+    service = AuthorizationService(source)
+
+    for action in (
+        AuthorizationAction.CAPABILITY_READ,
+        AuthorizationAction.CAPABILITY_MANAGE,
+    ):
+        decision = await service.decide(
+            AuthorizationRequest(
+                principal=source.principal,
+                action=action,
+                resource="capability:catalog",
+            )
+        )
+        assert decision == AuthorizationDecision.ALLOW

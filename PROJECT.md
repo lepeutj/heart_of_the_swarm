@@ -108,6 +108,12 @@ The pure V2.6a authorization value objects and exact-match `PolicyEvaluator` are
 They reject unknown contract values, deny missing policy, apply restrictive decision precedence,
 and remain independent from FastAPI, JWT, persistence, LangGraph, credentials, and remote runtimes.
 
+V2.6c now maps every authenticated control-plane operation to an exact action and trusted resource
+identity before execution. Development access is expanded into explicit process-local policies for
+persisted and newly created resources; it uses the same default-deny evaluator as future persistent
+policy sources. Denied requests return a safe `403`, emit an audit decision, and perform no protected
+side effect.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

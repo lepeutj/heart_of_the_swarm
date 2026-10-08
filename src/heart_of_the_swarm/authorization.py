@@ -1,6 +1,6 @@
 from collections.abc import Iterable, Mapping
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,6 +49,8 @@ class AuthorizationAction(StrEnum):
     AGENT_READ = "agent.read"
     AGENT_EDIT = "agent.edit"
     AGENT_EXECUTE = "agent.execute"
+    CAPABILITY_READ = "capability.read"
+    CAPABILITY_MANAGE = "capability.manage"
     CAPABILITY_INVOKE = "capability.invoke"
     CREDENTIAL_RESOLVE = "credential.resolve"
     TRACE_READ = "trace.read"
@@ -113,3 +115,55 @@ class PolicyEvaluator:
         if AuthorizationDecision.ALLOW in decisions:
             return AuthorizationDecision.ALLOW
         return AuthorizationDecision.DENY
+
+
+class PolicySource(Protocol):
+    """Provide the exact policies applicable to one authorization request."""
+
+    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
+        """Return policies without broadening the request identity or resource."""
+
+
+class EmptyPolicySource:
+    """Default-deny source used until a persistent policy source is configured."""
+
+    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
+        return {}
+
+
+class DevelopmentPolicySource:
+    """Process-local exact policies for one explicitly configured development user."""
+
+    def __init__(self, user_id: str) -> None:
+        self.principal = Principal(kind=PrincipalKind.USER, id=user_id)
+        self._policies: dict[PolicyKey, AuthorizationDecision] = {}
+
+    def grant(
+        self,
+        action: AuthorizationAction,
+        resource: str,
+        decision: AuthorizationDecision = AuthorizationDecision.ALLOW,
+    ) -> None:
+        """Register one exact policy after validating its public contract."""
+        request = AuthorizationRequest(
+            principal=self.principal,
+            action=action,
+            resource=resource,
+        )
+        self._policies[(request.principal, request.action, request.resource)] = decision
+
+    async def policies_for(self, request: AuthorizationRequest) -> Mapping[PolicyKey, PolicyValue]:
+        key = (request.principal, request.action, request.resource)
+        decision = self._policies.get(key)
+        return {} if decision is None else {key: decision}
+
+
+class AuthorizationService:
+    """Coordinate an injected policy source with the shared exact-match evaluator."""
+
+    def __init__(self, policies: PolicySource) -> None:
+        self.policies = policies
+
+    async def decide(self, request: AuthorizationRequest) -> AuthorizationDecision:
+        policies = await self.policies.policies_for(request)
+        return PolicyEvaluator(policies).evaluate(request)

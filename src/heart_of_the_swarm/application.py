@@ -2,8 +2,14 @@ from typing import Literal
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.authentication import create_authentication_provider
+from heart_of_the_swarm.authorization import (
+    AuthorizationService,
+    DevelopmentPolicySource,
+    EmptyPolicySource,
+)
 from heart_of_the_swarm.config import Settings, get_settings
 from heart_of_the_swarm.database import Database
+from heart_of_the_swarm.development_authorization import bootstrap_development_policies
 from heart_of_the_swarm.execution import AgentExecutor, RunService
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.mcp_service import MCPServerService
@@ -31,6 +37,14 @@ class Application:
         self.authentication = (
             create_authentication_provider(self.settings) if process == "api" else None
         )
+        self.policy_source = (
+            DevelopmentPolicySource(self.settings.development_auth_user_id)
+            if process == "api"
+            and self.settings.auth_mode == "development"
+            and self.settings.development_auth_user_id
+            else None
+        )
+        self.authorization = AuthorizationService(self.policy_source or EmptyPolicySource())
         log_file = self.settings.api_log_file if process == "api" else self.settings.worker_log_file
         configure_audit_logging(
             log_file,
@@ -95,6 +109,8 @@ class Application:
 
     async def initialize(self) -> None:
         await self.database.initialize()
+        if self.policy_source is not None:
+            await bootstrap_development_policies(self.policy_source, self.database)
         await self.workflow_checkpoints.start()
         await self.mcp_servers.seed(self.settings.mcp_servers)
         await self.sync_mcp_tools()

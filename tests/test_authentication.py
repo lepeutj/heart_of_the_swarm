@@ -14,7 +14,12 @@ from heart_of_the_swarm.authentication import (
     JWTAuthenticationProvider,
     create_authentication_provider,
 )
-from heart_of_the_swarm.authorization import PrincipalKind
+from heart_of_the_swarm.authorization import (
+    AuthorizationAction,
+    AuthorizationService,
+    DevelopmentPolicySource,
+    PrincipalKind,
+)
 from heart_of_the_swarm.config import Settings
 
 JWT_SECRET = "test-signing-secret-with-at-least-32-bytes"  # noqa: S105
@@ -134,8 +139,12 @@ def test_public_health_does_not_require_authentication(isolated_api) -> None:
 
 
 def test_protected_api_requires_a_valid_bearer_token(isolated_api) -> None:
+    policies = DevelopmentPolicySource("developer-1")
+    policies.grant(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
     runtime = SimpleNamespace(
         authentication=DevelopmentAuthenticationProvider("dev-secret", "developer-1"),
+        authorization=AuthorizationService(policies),
+        policy_source=policies,
         providers=SimpleNamespace(statuses=lambda: []),
     )
     app.dependency_overrides[get_application] = lambda: runtime
