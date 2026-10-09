@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from time import sleep
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,9 @@ from heart_of_the_swarm.runtime.api import create_app
 from heart_of_the_swarm.runtime.workflow import StandaloneWorkflowRuntime
 from heart_of_the_swarm.tools import CapabilityContract, create_default_registry
 from heart_of_the_swarm.workflows.documents import WorkflowDraftSave
+
+RUNTIME_TOKEN = "runtime-test-token"  # noqa: S105 - isolated test credential
+RUNTIME_HEADERS = {"Authorization": f"Bearer {RUNTIME_TOKEN}"}
 
 
 def calculator_workflow() -> WorkflowDraftSave:
@@ -145,19 +149,30 @@ async def test_standalone_workflow_api_executes_artifact_without_database(
     app = create_app(
         lambda: StandaloneWorkflowRuntime(settings),
         title="Test Workflow Runtime",
+        service_token=RUNTIME_TOKEN,
     )
 
     with TestClient(app) as client:
         health = client.get("/health")
-        metadata = client.get("/metadata")
-        invocation = client.post("/invoke", json={"input": {"expression": "2 + 3 * 4"}})
+        metadata = client.get("/metadata", headers=RUNTIME_HEADERS)
+        invocation = client.post(
+            "/invoke",
+            json={"input": {"expression": "2 + 3 * 4"}},
+            headers=RUNTIME_HEADERS,
+        )
+        run_id = invocation.json()["run_id"]
+        for _ in range(100):
+            run = client.get(f"/runs/{run_id}", headers=RUNTIME_HEADERS)
+            if run.json()["status"] == "completed":
+                break
+            sleep(0.01)
 
     assert health.json() == {"status": "ok"}
     assert metadata.json()["manifest"]["workflow_version_id"] == str(
         artifact.workflow.workflow_version_id
     )
     assert metadata.json()["workflow"]["name"] == "Standalone calculator"
-    assert invocation.status_code == 200
-    assert invocation.json()["output"] == "14"
-    assert invocation.json()["run_id"]
-    assert invocation.json()["trace_id"]
+    assert invocation.status_code == 202
+    assert run.json()["result"] == "14"
+    assert run.json()["run_id"]
+    assert run.json()["trace_id"]

@@ -1,0 +1,84 @@
+# Authenticated Remote Runtime
+
+## Scope
+
+V2.7 turns the database-independent standalone runtime into a remotely pilotable data plane without
+changing `AgentRunner`, `WorkflowVersionRunner`, or artifact formats.
+
+```text
+immutable artifact
+        ↓
+generic runtime container
+        ↓
+authenticated asynchronous invocation
+        ↓
+local status, events, result, and trace identifiers
+```
+
+## HTTP contract
+
+```text
+GET  /health                  public
+GET  /metadata                Bearer service token
+POST /invoke                  Bearer service token
+GET  /runs/{run_id}           Bearer service token
+GET  /runs/{run_id}/events    Bearer service token
+```
+
+`POST /invoke` returns `202 Accepted` after creating an in-memory run:
+
+```json
+{
+  "run_id": "...",
+  "trace_id": "...",
+  "status": "queued"
+}
+```
+
+The runtime executes in the background and exposes this closed lifecycle:
+
+```text
+queued → running → completed | failed | timed_out
+```
+
+Run details contain timestamps, a safe error or final result, and the MLflow trace identifier when
+available. Events use a run-local monotonic sequence and initially expose only lifecycle changes.
+Raw provider exceptions, credentials, prompts, and workflow state are not event payloads.
+
+## Authentication boundary
+
+`RUNTIME_API_TOKEN` is injected when the container starts. Protected endpoints accept only
+`Authorization: Bearer <token>` and compare the exact token in constant time. The token is not part
+of an artifact, runtime metadata, result, event, or log field.
+
+HTTP service authentication and execution identity remain independent:
+
+```text
+RUNTIME_API_TOKEN
+→ who may call the container API
+
+RuntimeIdentity
+→ which runtime may resolve credentials and act on protected resources
+```
+
+## Storage and failure semantics
+
+V2.7 stores a bounded number of runs and events only in process memory. The oldest terminal runs
+are removed when `RUNTIME_MAX_RETAINED_RUNS` is reached; new work is rejected if every retained run
+is still active. Restarting the container loses all runtime-local state. This is an explicit MVP
+constraint and avoids adding SQLite, PostgreSQL, Redis, or a second product lifecycle store to the
+data plane.
+
+Execution errors are reduced to safe terminal messages. The technical detail remains in runtime
+logs and MLflow. Shutting down the process cancels active background tasks; it does not claim a
+durable resume or exactly-once external side effect.
+
+## Deferred
+
+- control-plane `RemoteRuntimeClient` and deployment records;
+- artifact transfer and remote Docker lifecycle;
+- outbound runtime callbacks and heartbeats;
+- durable runtime-local runs;
+- native token streaming;
+- JWT or certificate-based service authentication;
+- restart recovery, retries, and rollback.

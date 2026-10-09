@@ -93,14 +93,25 @@ def test_standalone_runtime_rejects_before_invocation() -> None:
         def metadata(self) -> RuntimeMetadata:
             raise AssertionError("metadata is not used")
 
-        async def invoke(self, runtime_input: object) -> InvokeResponse:
+        async def invoke(
+            self,
+            runtime_input: object,
+            *,
+            run_id: str | None = None,
+            trace_id: str | None = None,
+        ) -> InvokeResponse:
             self.calls += 1
-            return InvokeResponse(run_id="run", output=runtime_input)
+            return InvokeResponse(
+                run_id=run_id or "run",
+                trace_id=trace_id or "trace",
+                output=runtime_input,
+            )
 
     runtime = FakeRuntime()
     app = create_app(
         lambda: runtime,
         http_policy=HTTPPolicy(max_request_bytes=16),
+        service_token="runtime-test-token",  # noqa: S106 - isolated test credential
     )
     with TestClient(app) as client:
         response = client.post("/invoke", content=b'{"input":"too large"}')

@@ -136,6 +136,13 @@ flow without replaying the model decision. Multiple approval-gated calls in one 
 parallel-region approvals, nested-subworkflow approvals, and standalone approval brokers remain
 deferred.
 
+V2.7 now exposes the standalone agent and workflow runtimes through an exact Bearer service token.
+Invocation is asynchronous: the runtime assigns run and trace identifiers immediately, executes the
+existing persistence-independent runner in the background, and exposes safe in-memory status,
+result, MLflow trace correlation, and ordered lifecycle events. This runtime-local state is
+intentionally ephemeral; remote deployment records and lifecycle belong to the future control
+plane.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

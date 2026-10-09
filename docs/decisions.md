@@ -127,12 +127,18 @@ the normative field-level rules.
   registry/provider descriptor, while per-call output reservation and safety margin belong to a
   separate `ModelInputBudget`. Continuation runs share logical call budgets, while active-attempt
   timeout excludes human waiting. The normative contract is in `docs/runtime-limits.md`.
+- **ADR-053 — Remote runtimes expose ephemeral authenticated runs.** A generic runtime loads one
+  immutable artifact, accepts exact Bearer service-token authentication, and owns only in-memory
+  asynchronous run status, lifecycle events, results, and trace identifiers. The service token
+  authenticates callers and remains distinct from `RuntimeIdentity`, which protects capability and
+  credential actions. Durable deployment lifecycle remains a control-plane responsibility. The
+  normative contract is in `docs/remote-runtime.md`.
 
 ## Current implementation limits
 
 - Schema v2 supports one bounded conditional back edge; nested or overlapping loops are deferred.
 - Subworkflow artifact bundling, nested parallel regions, multi-target handoffs, native model-token
-  streaming, remote control, and deployment lifecycle remain roadmap items. One validated
+  streaming, control-plane remote deployment, and deployment lifecycle remain roadmap items. One validated
   fan-out/fan-in region uses native LangGraph scheduling, isolated branch frames, deterministic
   reducers, and checkpoint-safe resume. V2.4a implements one bounded single-target supervisor
   through native LangGraph commands.

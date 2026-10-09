@@ -108,12 +108,18 @@ class StandaloneWorkflowRuntime:
             },
         )
 
-    async def invoke(self, workflow_input: dict[str, Any]) -> InvokeResponse:
+    async def invoke(
+        self,
+        workflow_input: dict[str, Any],
+        *,
+        run_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> InvokeResponse:
         if not isinstance(workflow_input, dict):
             raise ValueError("workflow input must be a JSON object")
         artifact = self._artifact()
-        run_id = str(uuid4())
-        trace_id = str(uuid4())
+        run_id = run_id or str(uuid4())
+        trace_id = trace_id or str(uuid4())
         mlflow_trace_id = None
         with (
             trace_context(trace_id),

@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     capability_policies: dict[str, list[str]] = Field(default_factory=dict)
     capability_approval_policies: dict[str, list[str]] = Field(default_factory=dict)
     runtime_id: str = "local-runtime"
+    runtime_api_token: SecretStr | None = None
+    runtime_max_retained_runs: int = Field(default=100, ge=1, le=10_000)
     credential_policies: dict[str, list[str]] = Field(default_factory=dict)
     local_secrets: dict[str, SecretStr] = Field(default_factory=dict)
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
@@ -118,6 +120,7 @@ class Settings(BaseSettings):
         "openrouter_api_key",
         "development_auth_token",
         "jwt_verification_key",
+        "runtime_api_token",
         mode="before",
     )
     @classmethod

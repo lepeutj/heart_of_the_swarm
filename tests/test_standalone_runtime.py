@@ -4,9 +4,11 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
+from time import sleep
 from typing import Any
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 
 from heart_of_the_swarm.artifacts import AgentArtifactExporter
@@ -19,6 +21,16 @@ from heart_of_the_swarm.runtime.api import create_app
 from heart_of_the_swarm.runtime.application import StandaloneAgentRuntime
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
 from heart_of_the_swarm.spec import AgentSpec
+
+RUNTIME_TOKEN = "runtime-test-token"  # noqa: S105 - isolated test credential
+RUNTIME_HEADERS = {"Authorization": f"Bearer {RUNTIME_TOKEN}"}
+
+
+def test_runtime_refuses_to_start_without_a_service_token() -> None:
+    app = create_app(lambda: None)  # type: ignore[arg-type,return-value]
+
+    with pytest.raises(ValueError, match="RUNTIME_API_TOKEN"), TestClient(app):
+        pass
 
 
 async def export_artifact(directory: Path, tools: list[str] | None = None):
@@ -135,25 +147,55 @@ def test_runtime_api_exposes_only_the_standard_contract() -> None:
         def metadata(self) -> RuntimeMetadata:
             return RuntimeMetadata(manifest=manifest, agent={"name": "Test"})
 
-        async def invoke(self, agent_input: str) -> InvokeResponse:
+        async def invoke(
+            self,
+            agent_input: str,
+            *,
+            run_id: str | None = None,
+            trace_id: str | None = None,
+        ) -> InvokeResponse:
             assert agent_input == "Hello"
-            return InvokeResponse(run_id="run-1", trace_id="trace-1", output="Done")
+            assert run_id is not None
+            assert trace_id is not None
+            return InvokeResponse(run_id=run_id, trace_id=trace_id, output="Done")
 
-    app = create_app(lambda: FakeRuntime())  # type: ignore[arg-type,return-value]
+    app = create_app(  # type: ignore[arg-type,return-value]
+        lambda: FakeRuntime(),
+        service_token=RUNTIME_TOKEN,
+    )
     with TestClient(app) as client:
         health = client.get("/health")
-        metadata = client.get("/metadata")
-        invocation = client.post("/invoke", json={"input": "Hello"})
-        routes = {route.path for route in app.routes if hasattr(route, "path")}
+        missing_auth = client.get("/metadata")
+        invalid_auth = client.get(
+            "/metadata",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        metadata = client.get("/metadata", headers=RUNTIME_HEADERS)
+        invocation = client.post(
+            "/invoke",
+            json={"input": "Hello"},
+            headers=RUNTIME_HEADERS,
+        )
+        run_id = invocation.json()["run_id"]
+        for _ in range(100):
+            run = client.get(f"/runs/{run_id}", headers=RUNTIME_HEADERS)
+            if run.json()["status"] == "completed":
+                break
+            sleep(0.01)
+        events = client.get(f"/runs/{run_id}/events", headers=RUNTIME_HEADERS)
 
     assert health.json() == {"status": "ok"}
+    assert missing_auth.status_code == 401
+    assert invalid_auth.status_code == 401
     assert metadata.status_code == 200
-    assert invocation.json() == {
-        "run_id": "run-1",
-        "trace_id": "trace-1",
-        "output": "Done",
-    }
-    assert routes == {"/health", "/metadata", "/invoke"}
+    assert invocation.status_code == 202
+    assert invocation.json()["status"] == "queued"
+    assert run.json()["result"] == "Done"
+    assert [event["event_type"] for event in events.json()] == [
+        "runtime.queued",
+        "runtime.started",
+        "runtime.completed",
+    ]
 
 
 async def test_runtime_api_invokes_exported_agent_through_provider_protocol(tmp_path: Path) -> None:
@@ -165,17 +207,30 @@ async def test_runtime_api_invokes_exported_agent_through_provider_protocol(tmp_
             agent_artifact_dir=tmp_path,
             mlflow_enabled=False,
         )
-        app = create_app(lambda: StandaloneAgentRuntime(settings))
+        app = create_app(
+            lambda: StandaloneAgentRuntime(settings),
+            service_token=RUNTIME_TOKEN,
+        )
         with TestClient(app) as client:
             health = client.get("/health")
-            metadata = client.get("/metadata")
-            invocation = client.post("/invoke", json={"input": "Hello"})
+            metadata = client.get("/metadata", headers=RUNTIME_HEADERS)
+            invocation = client.post(
+                "/invoke",
+                json={"input": "Hello"},
+                headers=RUNTIME_HEADERS,
+            )
+            run_id = invocation.json()["run_id"]
+            for _ in range(100):
+                run = client.get(f"/runs/{run_id}", headers=RUNTIME_HEADERS)
+                if run.json()["status"] == "completed":
+                    break
+                sleep(0.01)
 
     assert health.json() == {"status": "ok"}
     assert metadata.json()["manifest"]["agent_version_id"] == str(artifact.agent.agent_version_id)
-    assert invocation.status_code == 200
-    assert invocation.json()["output"] == "standalone answer"
-    assert invocation.json()["run_id"]
-    assert invocation.json()["trace_id"]
+    assert invocation.status_code == 202
+    assert run.json()["result"] == "standalone answer"
+    assert run.json()["run_id"]
+    assert run.json()["trace_id"]
     assert OpenAIStubHandler.requests[0]["model"] == "test-model"
     assert OpenAIStubHandler.requests[0]["messages"][-1]["content"] == "Hello"

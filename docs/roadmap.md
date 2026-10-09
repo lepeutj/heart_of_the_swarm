@@ -182,7 +182,8 @@ part of the architecture.
    before capability execution. Per-invocation context enforcement based on the selected model
    remains; concurrency belongs to later one-run-per-container scheduling.**
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
-   communication when the remote host is behind NAT.
+   communication when the remote host is behind NAT. **The authenticated runtime pull API and
+   ephemeral run lifecycle are implemented in V2.7; outbound callbacks remain deferred.**
 
 Basic secret handling, allow-lists, safe errors, SSRF protection, and execution bounds are
 cross-cutting requirements and must not wait for this milestone.
@@ -194,7 +195,26 @@ must not block explicitly configured private MCP deployments.
 Exit criterion: one authenticated remote runtime can receive work, report lifecycle and results,
 and emit correlated traces without exposing an unauthenticated administration port.
 
-## V2.7 — Deployment control plane
+## V2.7 — Authenticated remote runtime MVP
+
+1. Keep `/health` public and require an exact Bearer service token on every operational endpoint.
+   **Implemented.**
+2. Make `POST /invoke` return one queued run immediately while the existing runtime executes in the
+   background. **Implemented.**
+3. Expose in-memory run status, safe result/error data, correlated trace IDs, and ordered lifecycle
+   events. **Implemented.**
+4. Preserve the distinction between HTTP caller authentication and runtime capability/credential
+   identity. **Implemented.**
+5. Add a thin control-plane `RemoteRuntimeClient` and validate the contract across two containers.
+6. Validate the same flow against a second Docker host, VPS, or Raspberry Pi.
+
+Exit criterion: the control plane can authenticate to another runtime process, queue an invocation,
+observe lifecycle events, and retrieve its final result and trace identifier.
+
+Per-model invocation context enforcement follows this MVP and remains independent from remote run
+transport.
+
+## V2.8 — Deployment control plane
 
 1. Define deployment and deployment-revision contracts.
 2. Publish one generic hardened runtime image.

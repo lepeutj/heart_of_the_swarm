@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
@@ -114,12 +115,18 @@ class StandaloneAgentRuntime:
             },
         )
 
-    async def invoke(self, agent_input: str) -> InvokeResponse:
+    async def invoke(
+        self,
+        agent_input: str,
+        *,
+        run_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> InvokeResponse:
         if not isinstance(agent_input, str) or not 1 <= len(agent_input) <= 10_000:
             raise ValueError("agent input must be a non-empty string of at most 10000 characters")
         artifact = self._artifact()
-        run_id = str(uuid4())
-        trace_id = str(uuid4())
+        run_id = run_id or str(uuid4())
+        trace_id = trace_id or str(uuid4())
         mlflow_trace_id = None
         callback = RuntimeCallbackHandler(
             "deployed_agent",
@@ -141,23 +148,24 @@ class StandaloneAgentRuntime:
         ):
             mlflow_trace_id = self.telemetry.trace_id(span)
             self.telemetry.set_inputs(span, {"input": agent_input})
-            output = await self.runner.invoke(
-                artifact.agent.spec,
-                agent_input,
-                system_prompt=artifact.agent.system_prompt,
-                callbacks=[callback],
-                metadata={
-                    "run_id": run_id,
-                    "agent_id": str(artifact.agent.agent_id),
-                    "agent_version_id": str(artifact.agent.agent_version_id),
-                },
-                security=ExecutionSecurityContext(
-                    principal=self.capability_authorizer.agent_version_principal(
-                        artifact.agent.agent_version_id
+            async with asyncio.timeout(self.settings.agent_timeout_seconds):
+                output = await self.runner.invoke(
+                    artifact.agent.spec,
+                    agent_input,
+                    system_prompt=artifact.agent.system_prompt,
+                    callbacks=[callback],
+                    metadata={
+                        "run_id": run_id,
+                        "agent_id": str(artifact.agent.agent_id),
+                        "agent_version_id": str(artifact.agent.agent_version_id),
+                    },
+                    security=ExecutionSecurityContext(
+                        principal=self.capability_authorizer.agent_version_principal(
+                            artifact.agent.agent_version_id
+                        ),
+                        authorization=AuthorizationContext(run_id=run_id),
                     ),
-                    authorization=AuthorizationContext(run_id=run_id),
-                ),
-            )
+                )
             self.telemetry.set_outputs(span, {"output": output})
         return InvokeResponse(
             run_id=run_id,
