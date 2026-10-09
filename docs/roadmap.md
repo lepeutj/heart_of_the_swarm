@@ -205,7 +205,8 @@ and emit correlated traces without exposing an unauthenticated administration po
    events. **Implemented.**
 4. Preserve the distinction between HTTP caller authentication and runtime capability/credential
    identity. **Implemented.**
-5. Add a thin control-plane `RemoteRuntimeClient` and validate the contract across two containers.
+5. Use the thin control-plane `RemoteRuntimeClient` for authenticated invocation, status, event,
+   and result reads. **Implemented.** Validate the contract across two containers.
 6. Validate the same flow against a second Docker host, VPS, or Raspberry Pi.
 
 Exit criterion: the control plane can authenticate to another runtime process, queue an invocation,

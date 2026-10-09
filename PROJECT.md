@@ -141,7 +141,8 @@ Invocation is asynchronous: the runtime assigns run and trace identifiers immedi
 existing persistence-independent runner in the background, and exposes safe in-memory status,
 result, MLflow trace correlation, and ordered lifecycle events. This runtime-local state is
 intentionally ephemeral; remote deployment records and lifecycle belong to the future control
-plane.
+plane. The thin `RemoteRuntimeClient` consumes the same typed metadata, invocation, run, and event
+contracts without knowing LangChain, LangGraph, Docker, or persistence.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow

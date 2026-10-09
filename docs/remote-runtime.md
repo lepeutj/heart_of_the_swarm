@@ -75,10 +75,18 @@ durable resume or exactly-once external side effect.
 
 ## Deferred
 
-- control-plane `RemoteRuntimeClient` and deployment records;
+- deployment records and runtime administration UI;
 - artifact transfer and remote Docker lifecycle;
 - outbound runtime callbacks and heartbeats;
 - durable runtime-local runs;
 - native token streaming;
 - JWT or certificate-based service authentication;
 - restart recovery, retries, and rollback.
+
+## Control-plane client
+
+`RemoteRuntimeClient` is the only control-plane adapter for this HTTP contract. It exposes
+`metadata()`, `invoke()`, `get_run()`, and `get_events()` and validates every response against the
+shared runtime models. Authentication, network, HTTP, and invalid-response failures become stable,
+credential-free errors. Polling strategy remains a caller concern; the client does not create a
+second run lifecycle or know about LangChain, LangGraph, Docker, or persistence.
