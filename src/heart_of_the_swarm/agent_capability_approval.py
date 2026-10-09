@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Annotated, Any, NotRequired
+from typing import TYPE_CHECKING, Annotated, Any, NotRequired
 from uuid import UUID
 
 from langchain.agents.middleware import AgentMiddleware
@@ -24,6 +24,10 @@ from heart_of_the_swarm.capability_authorization import (
     CapabilityAuthorizer,
     ExecutionSecurityContext,
 )
+from heart_of_the_swarm.tools.registry import validate_public_tool_arguments
+
+if TYPE_CHECKING:
+    from heart_of_the_swarm.workflows.execution.execution_budget import ExecutionBudget
 
 _APPROVAL_GRANTS_KEY = "capability_approval_grants"
 
@@ -45,12 +49,14 @@ class AgentCapabilityApprovalMiddleware(AgentMiddleware[_CapabilityApprovalState
         authorizer: CapabilityAuthorizer,
         security: ExecutionSecurityContext,
         grants: ApprovalGrantConsumer,
+        execution_budget: ExecutionBudget | None = None,
     ) -> None:
         super().__init__()
         self._tools_by_name = {tool.name: tool for tool in tools}
         self.authorizer = authorizer
         self.security = security
         self.grants = grants
+        self.execution_budget = execution_budget
 
     async def aafter_model(
         self,
@@ -150,6 +156,8 @@ class AgentCapabilityApprovalMiddleware(AgentMiddleware[_CapabilityApprovalState
                 authorization,
                 fingerprint_capability_arguments(request.tool_call["args"]),
             )
+        if self.execution_budget is not None:
+            await self.execution_budget.consume_tool_call()
         return await handler(request)
 
     def _normalize_tool_call(self, tool_call: ToolCall) -> ToolCall:
@@ -157,5 +165,5 @@ class AgentCapabilityApprovalMiddleware(AgentMiddleware[_CapabilityApprovalState
         tool = self._tools_by_name.get(tool_call["name"])
         if tool is None:
             raise ValueError(f"agent selected unavailable tool '{tool_call['name']}'")
-        arguments = tool.tool_call_schema.model_validate(tool_call["args"]).model_dump(mode="json")
+        arguments = validate_public_tool_arguments(tool, tool_call["args"])
         return {**tool_call, "args": arguments}

@@ -3,6 +3,7 @@ from heart_of_the_swarm.tools.authorized import (
     AuthorizedTool,
     approval_capable_tool_view,
     authorized_tool_view,
+    budgeted_tool_view,
 )
 from heart_of_the_swarm.tools.builtin import (
     calculator,
@@ -56,5 +57,6 @@ __all__ = [
     "AuthorizedTool",
     "approval_capable_tool_view",
     "authorized_tool_view",
+    "budgeted_tool_view",
     "create_default_registry",
 ]

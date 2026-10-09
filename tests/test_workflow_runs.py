@@ -289,6 +289,42 @@ async def test_oversized_initial_state_is_rejected_before_run_persistence() -> N
         await database.close()
 
 
+async def test_tool_call_budget_survives_a_continuation_run() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    tools = ToolRegistry()
+    try:
+        version = await published_version(database, tools)
+        async with database.session() as session:
+            repository = WorkflowRunRepository(session)
+            initial = await repository.queue(version, "trace-initial", {"request": "value"})
+            assert initial.thread_id is not None
+            assert await repository.consume_tool_call(str(initial.thread_id), 2) == 1
+            await repository.interrupt(str(initial.run_id), "checkpoint-1", ("input",))
+
+        async with database.session() as session:
+            resumed = await WorkflowRunRepository(session).resume(
+                str(initial.run_id),
+                "checkpoint-1",
+                "trace-resumed",
+            )
+            assert resumed.thread_id == initial.thread_id
+
+        async with database.session() as session:
+            repository = WorkflowRunRepository(session)
+            assert await repository.consume_tool_call(str(resumed.thread_id), 2) == 2
+        async with database.session() as session:
+            assert (
+                await WorkflowRunRepository(session).consume_tool_call(
+                    str(resumed.thread_id),
+                    2,
+                )
+                is None
+            )
+    finally:
+        await database.close()
+
+
 async def test_queue_persists_run_before_its_foreign_keyed_event() -> None:
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_schema()

@@ -17,7 +17,7 @@ control-plane scheduling. It is not a generic quota or billing system.
 | HTTP request size | `HTTPPolicy.max_request_bytes` rejects oversized bodies before routing in both APIs. | None for the current JSON HTTP boundary. |
 | Workflow state size | Initial and propagated shared state are bounded before run persistence or LangGraph checkpointing. | None for the public shared-state boundary. |
 | Model calls | A callback reserves calls atomically against the durable execution thread before provider invocation. | None for workflow execution. |
-| Tool calls | Callbacks trace calls and usage, but do not enforce a budget. | Add an independent deterministic tool-call counter. |
+| Tool calls | Connectors and agent-selected tools reserve calls atomically against the durable execution thread before capability execution. | None for workflow execution. |
 | Model context | `ModelDescriptor.context_length` can describe the selected model, and OpenRouter supplies it when available. | Enforce a per-invocation input budget in the model runtime. |
 | Tokens/cost | Provider metadata is recorded when available. | Thread-wide token and monetary enforcement remains deferred. |
 | Outbound network | MCP destinations are checked by the runtime `NetworkPolicy`. | Other remote adapters must adopt the same boundary when introduced. |
@@ -37,7 +37,7 @@ recursion_limit
 max_subworkflow_depth
 max_handoffs
 max_model_calls
-max_tool_calls        (planned)
+max_tool_calls
 max_state_bytes
 ```
 
@@ -55,9 +55,19 @@ Model calls are reserved atomically when LangChain starts the model callback, be
 execution. Continuation runs reload the same durable thread counter, while subworkflows receive the
 same injected budget. Exceeding the budget fails before starting the next provider call.
 
-Tool calls will follow the same start-time rule in the next independent increment. A connector
-invocation counts as one tool call, and calls selected inside LangChain agents must share the same
-thread counter.
+Tool arguments are validated and capability authorization or approval is resolved before one tool
+call is reserved. Reservation happens immediately before capability execution, so rejected or
+invalid requests do not consume budget, while an attempted capability that later fails does.
+Connectors and tools selected inside LangChain agents share the same thread counter, including
+through subworkflows and continuation runs.
+
+Durable threads persist consumed model and tool calls, but the configured maxima are read by each
+runtime attempt rather than snapshotted on the thread. Changing runtime configuration between an
+interruption and its continuation can therefore change the remaining allowance.
+
+Parallel branches share one atomic budget. When fewer calls remain than concurrently runnable
+branches request, the first observed reservation succeeds; the counter remains correct, but the
+winning branch is intentionally not deterministic. Per-branch quotas are not part of this contract.
 
 `max_state_bytes` applies to the current public workflow shared state, measured as canonical UTF-8
 JSON. It is checked on initial input and after node output mappings or reducer merges, before the
@@ -116,9 +126,7 @@ Health checks and bodyless reads are unaffected.
 
 ## Implementation order
 
-1. Add one independent thread-scoped counter for `max_tool_calls` across connectors, agents,
-   subworkflows, interruptions, and resume.
-2. Enforce `ModelInputBudget` for every invocation using the selected model's declared context
+1. Enforce `ModelInputBudget` for every invocation using the selected model's declared context
    window and token-counting strategy.
 
 Thread-wide token and monetary budgets, context compression strategies, per-user quotas,

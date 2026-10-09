@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
@@ -14,8 +16,15 @@ from heart_of_the_swarm.capability_authorization import (
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.spec import AgentSpec
-from heart_of_the_swarm.tools import approval_capable_tool_view, authorized_tool_view
+from heart_of_the_swarm.tools import (
+    approval_capable_tool_view,
+    authorized_tool_view,
+    budgeted_tool_view,
+)
 from heart_of_the_swarm.validator import AgentSpecValidator
+
+if TYPE_CHECKING:
+    from heart_of_the_swarm.workflows.execution.execution_budget import ExecutionBudget
 
 
 class AgentRunner:
@@ -44,6 +53,7 @@ class AgentRunner:
         response_schema: dict[str, Any] | type[BaseModel] | None = None,
         security: ExecutionSecurityContext | None = None,
         approval_grants: ApprovalGrantConsumer | None = None,
+        execution_budget: ExecutionBudget | None = None,
     ) -> Any:
         """Execute one agent and return text or LangChain-validated structured output."""
         self.validator.validate_execution(spec)
@@ -53,10 +63,18 @@ class AgentRunner:
             raise ValueError("capability approval requires runtime authorization")
         middleware = None
         if self.capability_authorizer is None:
-            tools = None
+            tools = (
+                budgeted_tool_view(self.factory.registry, spec.tools, execution_budget)
+                if execution_budget is not None
+                else None
+            )
         elif approval_grants is None:
             tools = await authorized_tool_view(
-                self.factory.registry, spec.tools, self.capability_authorizer, security
+                self.factory.registry,
+                spec.tools,
+                self.capability_authorizer,
+                security,
+                execution_budget,
             )
         else:
             tools = await approval_capable_tool_view(
@@ -68,6 +86,7 @@ class AgentRunner:
                     self.capability_authorizer,
                     security,
                     approval_grants,
+                    execution_budget,
                 )
             ]
         model = self.providers.create_model(spec.model)

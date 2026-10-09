@@ -177,9 +177,10 @@ part of the architecture.
    standalone APIs. The remaining ownership and failure contracts are defined in
    `docs/runtime-limits.md`; persisted direct agent runs now have terminal active-attempt timeouts,
    and workflow shared state is bounded before persistence and propagation. Thread-wide model calls
-   are reserved atomically before provider invocation and survive continuation runs. Tool-call
-   budgets remain, followed by per-invocation context enforcement based on the selected model;
-   concurrency belongs to later one-run-per-container scheduling.**
+   are reserved atomically before provider invocation and survive continuation runs. Connector and
+   agent-selected tool calls now share an independent thread-wide budget reserved immediately
+   before capability execution. Per-invocation context enforcement based on the selected model
+   remains; concurrency belongs to later one-run-per-container scheduling.**
 8. Secure remote result, heartbeat, and MLflow trace transport; prefer outbound runtime
    communication when the remote host is behind NAT.
 

@@ -35,6 +35,7 @@ from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
 )
+from heart_of_the_swarm.workflows.execution.execution_budget import ExecutionBudget
 from heart_of_the_swarm.workflows.execution.models import ExecutionInterruption, ExecutionResult
 from heart_of_the_swarm.workflows.execution.node_runner import WorkflowNodeRunner
 from heart_of_the_swarm.workflows.execution.parallel import (
@@ -233,6 +234,7 @@ class WorkflowGraphFactory:
         max_handoffs: int = 20,
         max_state_bytes: int = 5_000_000,
         agent_callbacks: Sequence[BaseCallbackHandler] = (),
+        execution_budget: ExecutionBudget | None = None,
     ) -> WorkflowGraph:
         """Build one graph while resolving registered capabilities up front."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
@@ -254,6 +256,7 @@ class WorkflowGraphFactory:
             max_handoffs=max_handoffs,
             max_state_bytes=max_state_bytes,
             agent_callbacks=agent_callbacks,
+            execution_budget=execution_budget,
         )
 
     async def acreate(
@@ -271,6 +274,7 @@ class WorkflowGraphFactory:
         max_state_bytes: int = 5_000_000,
         interrupt_after: tuple[str, ...] = (),
         agent_callbacks: Sequence[BaseCallbackHandler] = (),
+        execution_budget: ExecutionBudget | None = None,
     ) -> WorkflowGraph:
         """Resolve immutable child versions and compile them as nested LangGraph graphs."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
@@ -293,6 +297,7 @@ class WorkflowGraphFactory:
             max_handoffs=max_handoffs,
             max_state_bytes=max_state_bytes,
             agent_callbacks=agent_callbacks,
+            execution_budget=execution_budget,
         )
 
     async def _acreate(
@@ -314,6 +319,7 @@ class WorkflowGraphFactory:
         max_handoffs: int,
         max_state_bytes: int,
         agent_callbacks: Sequence[BaseCallbackHandler],
+        execution_budget: ExecutionBudget | None,
     ) -> WorkflowGraph:
         """Compile one workflow and its immutable dependency tree recursively."""
         subworkflows: dict[str, WorkflowGraph] = {}
@@ -383,6 +389,7 @@ class WorkflowGraphFactory:
                 max_handoffs=max_handoffs,
                 max_state_bytes=max_state_bytes,
                 agent_callbacks=agent_callbacks,
+                execution_budget=execution_budget,
             )
             subworkflows[node.id] = child_graph
 
@@ -400,6 +407,7 @@ class WorkflowGraphFactory:
             max_handoffs=max_handoffs,
             max_state_bytes=max_state_bytes,
             agent_callbacks=agent_callbacks,
+            execution_budget=execution_budget,
             compile_interrupt_after=tuple(path for path in interrupt_after if "/" not in path),
         )
 
@@ -419,6 +427,7 @@ class WorkflowGraphFactory:
         max_handoffs: int,
         max_state_bytes: int,
         agent_callbacks: Sequence[BaseCallbackHandler],
+        execution_budget: ExecutionBudget | None,
         compile_interrupt_after: tuple[str, ...] = (),
     ) -> WorkflowGraph:
         """Build one graph from validated nodes and already-compiled child graphs."""
@@ -440,6 +449,7 @@ class WorkflowGraphFactory:
             approval_grants=(self.approval_grants if execution_path == "root" else None),
             max_state_bytes=max_state_bytes,
             agent_callbacks=agent_callbacks,
+            execution_budget=execution_budget,
         )
         outgoing = self._outgoing_edges(workflow)
         nodes_by_id = {node.id: node for node in workflow.nodes}

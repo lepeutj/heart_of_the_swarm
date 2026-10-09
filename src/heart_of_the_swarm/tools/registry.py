@@ -1,18 +1,41 @@
+from __future__ import annotations
+
 import json
 from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+from jsonschema.validators import validator_for
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
 from heart_of_the_swarm.tools.models import CapabilityContract, CapabilityDescriptor
 
+if TYPE_CHECKING:
+    from heart_of_the_swarm.workflows.execution.execution_budget import ExecutionBudget
+
 CapabilitySource = Literal["builtin", "mcp"]
+
+
+def public_tool_schema(tool: BaseTool) -> dict[str, Any]:
+    """Return only arguments supplied by a model or deterministic caller."""
+    schema = tool.tool_call_schema
+    if isinstance(schema, dict):
+        return deepcopy(schema)
+    return deepcopy(schema.model_json_schema())
+
+
+def validate_public_tool_arguments(tool: BaseTool, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Validate caller-owned arguments without requiring LangChain-injected values."""
+    schema = tool.tool_call_schema
+    if isinstance(schema, dict):
+        validator_for(schema)(schema).validate(arguments)
+        return deepcopy(arguments)
+    return schema.model_validate(arguments).model_dump(mode="json")
 
 
 @dataclass(frozen=True)
@@ -33,12 +56,7 @@ class RegisteredCapability:
     @property
     def input_schema(self) -> dict[str, Any]:
         """Return the tool input schema without exposing mutable registry state."""
-        schema = self.tool.args_schema
-        if isinstance(schema, dict):
-            return deepcopy(schema)
-        if schema is not None and hasattr(schema, "model_json_schema"):
-            return deepcopy(schema.model_json_schema())
-        return {}
+        return public_tool_schema(self.tool)
 
     @property
     def annotations(self) -> dict[str, Any]:
@@ -172,25 +190,34 @@ class ToolRegistry:
             if current != expected:
                 raise ValueError(f"capability contract changed: {expected.capability_id}")
 
+    def validate_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Return the exact JSON arguments accepted by one capability schema."""
+        tool = self._resolve_capability(name).tool
+        return validate_public_tool_arguments(tool, arguments)
+
     async def invoke_one(
         self,
         name: str,
         arguments: dict[str, Any],
         *,
         config: RunnableConfig | None = None,
+        execution_budget: ExecutionBudget | None = None,
     ) -> Any:
         """Invoke one capability and normalize framework-specific result envelopes."""
         capability = self._resolve_capability(name)
+        validated_arguments = self.validate_arguments(name, arguments)
+        if execution_budget is not None:
+            await execution_budget.consume_tool_call()
         if capability.source != "mcp":
             execution_tool = capability.tool.model_copy(
                 update={"handle_tool_error": False, "handle_validation_error": False}
             )
-            return await execution_tool.ainvoke(arguments, config=config)
+            return await execution_tool.ainvoke(validated_arguments, config=config)
 
         result = await capability.tool.ainvoke(
             {
                 "name": capability.tool.name,
-                "args": arguments,
+                "args": validated_arguments,
                 "id": str(uuid4()),
                 "type": "tool_call",
             },

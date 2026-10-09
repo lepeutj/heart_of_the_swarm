@@ -138,6 +138,7 @@ class StandaloneWorkflowRuntime:
                     recursion_limit=self.settings.workflow_recursion_limit,
                     max_state_bytes=self.settings.workflow_max_state_bytes,
                     max_model_calls=self.settings.workflow_max_model_calls,
+                    max_tool_calls=self.settings.workflow_max_tool_calls,
                 ),
                 execution_id=run_id,
             )

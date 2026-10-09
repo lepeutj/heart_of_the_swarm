@@ -45,7 +45,8 @@ from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionIssue,
 )
 from heart_of_the_swarm.workflows.execution.execution_budget import (
-    ModelCallBudgetExceededError,
+    ExecutionBudget,
+    ExecutionBudgetExceededError,
 )
 from heart_of_the_swarm.workflows.execution.state_budget import (
     WorkflowStateBudgetError,
@@ -100,6 +101,7 @@ class WorkflowNodeRunner:
         approval_grants: ApprovalGrantConsumer | None = None,
         max_state_bytes: int = 5_000_000,
         agent_callbacks: Sequence[BaseCallbackHandler] = (),
+        execution_budget: ExecutionBudget | None = None,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -115,6 +117,7 @@ class WorkflowNodeRunner:
         self.approval_grants = approval_grants
         self.max_state_bytes = max_state_bytes
         self.agent_callbacks = tuple(agent_callbacks)
+        self.execution_budget = execution_budget
 
     async def run(
         self,
@@ -426,15 +429,22 @@ class WorkflowNodeRunner:
                 event_context is not None and event_context.get("branch_id") is not None
             ):
                 invocation_options["approval_grants"] = self.approval_grants
+            if self.execution_budget is not None:
+                invocation_options["execution_budget"] = self.execution_budget
             output = await self.agent_runner.invoke(spec, agent_input, **invocation_options)
         except GraphBubbleUp:
             # LangGraph uses this control-flow signal to checkpoint nested agent interrupts.
             raise
         except WorkflowExecutionError:
             raise
-        except ModelCallBudgetExceededError as exc:
+        except ExecutionBudgetExceededError as exc:
+            code = (
+                "workflow.execution.model_call_budget_exceeded"
+                if exc.resource == "model_calls"
+                else "workflow.execution.tool_call_budget_exceeded"
+            )
             self._raise(
-                code="workflow.execution.model_call_budget_exceeded",
+                code=code,
                 message=str(exc),
                 node=node,
                 cause=exc,
@@ -566,7 +576,10 @@ class WorkflowNodeRunner:
                 node=node,
             )
         try:
-            arguments = {name: resolve_value(value, state) for name, value in config.inputs.items()}
+            arguments = self.capabilities.validate_arguments(
+                config.capability_id,
+                {name: resolve_value(value, state) for name, value in config.inputs.items()},
+            )
             if self.capability_authorizer is not None:
                 security = self._workflow_security(node)
                 request, decision = await self.capability_authorizer.invocation_decision(
@@ -594,6 +607,7 @@ class WorkflowNodeRunner:
             result = await self.capabilities.invoke_one(
                 config.capability_id,
                 arguments,
+                execution_budget=self.execution_budget,
                 config={
                     "callbacks": [self.callback] if self.callback is not None else [],
                     "metadata": self._node_context(node, event_context),
@@ -616,6 +630,13 @@ class WorkflowNodeRunner:
             raise
         except CapabilityApprovalRequired:
             raise
+        except ExecutionBudgetExceededError as exc:
+            self._raise(
+                code="workflow.execution.tool_call_budget_exceeded",
+                message=str(exc),
+                node=node,
+                cause=exc,
+            )
         except Exception as exc:
             self._raise(
                 code="workflow.execution.connector_failed",

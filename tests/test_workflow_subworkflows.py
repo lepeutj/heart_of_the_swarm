@@ -182,6 +182,21 @@ def parallel_parent_spec() -> WorkflowSpec:
     return WorkflowSpec.model_validate(data)
 
 
+def connector_parent_spec() -> WorkflowSpec:
+    data = parent_spec().model_dump(mode="json")
+    data["nodes"][2] = {
+        "id": "finalize",
+        "type": "connector",
+        "name": "Finalize",
+        "config": {
+            "capability_id": "child_fetch",
+            "inputs": {"value": {"from_state": "$.research.summary"}},
+            "outputs": {"result": {"to_state": "$.final"}},
+        },
+    }
+    return WorkflowSpec.model_validate(data)
+
+
 def snapshot(
     version_id: UUID,
     workflow_id: UUID,
@@ -222,6 +237,7 @@ class ProcessingAgentRunner:
         callbacks: Sequence[BaseCallbackHandler] = (),
         metadata: Mapping[str, Any] | None = None,
         response_schema: dict[str, Any] | None = None,
+        **_kwargs: Any,
     ) -> str:
         self.calls.append({"name": spec.name, "input": agent_input, "metadata": metadata})
         return f"{agent_input}|{spec.name}"
@@ -301,6 +317,40 @@ async def test_subworkflow_executes_with_isolated_mappings_and_hierarchical_even
         if str(event.data["execution_path"]).startswith("root/research/")
     ]
     assert {event.data["workflow_version_id"] for event in child_events} == {str(CHILD_VERSION_ID)}
+
+
+async def test_subworkflow_and_parent_share_one_tool_call_budget() -> None:
+    connector_calls.clear()
+    tools = ToolRegistry([child_fetch])
+    child = snapshot(
+        CHILD_VERSION_ID,
+        CHILD_WORKFLOW_ID,
+        child_spec(),
+        tools,
+        with_connector=True,
+    )
+    resolver = MappingWorkflowVersionResolver({CHILD_VERSION_ID: child})
+
+    with pytest.raises(WorkflowExecutionError) as caught:
+        await runner(tools, resolver, ProcessingAgentRunner()).run(
+            snapshot(
+                PARENT_VERSION_ID,
+                PARENT_WORKFLOW_ID,
+                connector_parent_spec(),
+                tools,
+                with_connector=True,
+            ),
+            {"request": "topic"},
+            ExecutionPolicy(
+                timeout_seconds=2,
+                recursion_limit=50,
+                max_tool_calls=1,
+            ),
+        )
+
+    assert caught.value.issue.code == "workflow.execution.tool_call_budget_exceeded"
+    assert caught.value.issue.node_id == "finalize"
+    assert connector_calls == ["topic"]
 
 
 async def test_subworkflow_executes_as_a_native_parallel_branch() -> None:

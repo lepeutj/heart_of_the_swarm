@@ -77,6 +77,7 @@ class ExecutionThreadRecord(Base):
     workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), index=True)
     model_calls: Mapped[int] = mapped_column(Integer, default=0)
+    tool_calls: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

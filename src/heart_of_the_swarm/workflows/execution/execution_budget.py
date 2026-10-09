@@ -5,33 +5,46 @@ from uuid import UUID
 from langchain_core.callbacks import AsyncCallbackHandler
 
 
-class ModelCallBudgetExceededError(RuntimeError):
-    """Signal that the next model call would exceed the logical execution budget."""
+class ExecutionBudgetExceededError(RuntimeError):
+    """Signal that the next model or tool call would exceed its execution budget."""
 
-    def __init__(self, limit: int) -> None:
+    def __init__(self, resource: str, limit: int) -> None:
+        self.resource = resource
         self.limit = limit
-        super().__init__(f"Model-call budget of {limit} has been exhausted.")
+        super().__init__(f"{resource.replace('_', ' ').title()} budget of {limit} is exhausted.")
 
 
-class ModelCallBudget(Protocol):
+class ExecutionBudget(Protocol):
     async def consume_model_call(self) -> int:
         """Reserve one model call and return the thread-wide consumed count."""
 
+    async def consume_tool_call(self) -> int:
+        """Reserve one tool call and return the thread-wide consumed count."""
 
-class InMemoryModelCallBudget:
+
+class InMemoryExecutionBudget:
     """Provide the same call-limit contract to runtimes without product persistence."""
 
-    def __init__(self, limit: int) -> None:
-        self.limit = limit
-        self.consumed = 0
+    def __init__(self, max_model_calls: int, max_tool_calls: int) -> None:
+        self.max_model_calls = max_model_calls
+        self.max_tool_calls = max_tool_calls
+        self.model_calls = 0
+        self.tool_calls = 0
         self._lock = asyncio.Lock()
 
     async def consume_model_call(self) -> int:
         async with self._lock:
-            if self.consumed >= self.limit:
-                raise ModelCallBudgetExceededError(self.limit)
-            self.consumed += 1
-            return self.consumed
+            if self.model_calls >= self.max_model_calls:
+                raise ExecutionBudgetExceededError("model_calls", self.max_model_calls)
+            self.model_calls += 1
+            return self.model_calls
+
+    async def consume_tool_call(self) -> int:
+        async with self._lock:
+            if self.tool_calls >= self.max_tool_calls:
+                raise ExecutionBudgetExceededError("tool_calls", self.max_tool_calls)
+            self.tool_calls += 1
+            return self.tool_calls
 
 
 class ModelCallBudgetCallback(AsyncCallbackHandler):
@@ -39,7 +52,7 @@ class ModelCallBudgetCallback(AsyncCallbackHandler):
 
     raise_error = True
 
-    def __init__(self, budget: ModelCallBudget) -> None:
+    def __init__(self, budget: ExecutionBudget) -> None:
         self.budget = budget
         self._counted_runs: set[UUID] = set()
         self._lock = asyncio.Lock()

@@ -45,6 +45,27 @@ class RecordingGrantConsumer:
         raise AssertionError("the grant must not be consumed")
 
 
+class OrderedGrantConsumer:
+    def __init__(self, steps: list[str]) -> None:
+        self.steps = steps
+
+    async def consume(self, *_args, **_kwargs):
+        self.steps.append("grant")
+        return None
+
+
+class RecordingToolBudget:
+    def __init__(self, steps: list[str]) -> None:
+        self.steps = steps
+
+    async def consume_model_call(self) -> int:
+        raise AssertionError("model budget is not used by the tool wrapper")
+
+    async def consume_tool_call(self) -> int:
+        self.steps.append("budget")
+        return 1
+
+
 @tool
 async def publish(value: str) -> str:
     """Publish one value."""
@@ -53,6 +74,7 @@ async def publish(value: str) -> str:
 
 def middleware(
     decision: AuthorizationDecision,
+    execution_budget: RecordingToolBudget | None = None,
 ) -> tuple[
     AgentCapabilityApprovalMiddleware,
     RecordingGrantConsumer,
@@ -70,6 +92,7 @@ def middleware(
                 authorization=AuthorizationContext(run_id=uuid4(), node_id="publisher"),
             ),
             grants,
+            execution_budget,
         ),
         grants,
     )
@@ -89,7 +112,11 @@ async def test_approval_rejects_unstable_tool_call_before_interrupt() -> None:
 
 
 async def test_deny_overrides_checkpointed_grant_before_tool_execution() -> None:
-    approval, grants = middleware(AuthorizationDecision.DENY)
+    budget_steps: list[str] = []
+    approval, grants = middleware(
+        AuthorizationDecision.DENY,
+        RecordingToolBudget(budget_steps),
+    )
     grant_id = uuid4()
     side_effects: list[str] = []
     request = SimpleNamespace(
@@ -111,3 +138,40 @@ async def test_deny_overrides_checkpointed_grant_before_tool_execution() -> None
     assert denied.value.decision == AuthorizationDecision.DENY
     assert grants.calls == []
     assert side_effects == []
+    assert budget_steps == []
+
+
+async def test_approved_tool_reserves_budget_after_grant_and_before_execution() -> None:
+    steps: list[str] = []
+    principal = CapabilityAuthorizer.workflow_node_principal(uuid4(), "publisher")
+    key = (principal, AuthorizationAction.CAPABILITY_INVOKE, "capability:publish")
+    authorizer = CapabilityAuthorizer(
+        AuthorizationService(StaticPolicySource({key: AuthorizationDecision.APPROVAL_REQUIRED}))
+    )
+    approval = AgentCapabilityApprovalMiddleware(
+        [publish],
+        authorizer,
+        ExecutionSecurityContext(
+            principal=principal,
+            authorization=AuthorizationContext(run_id=uuid4(), node_id="publisher"),
+        ),
+        OrderedGrantConsumer(steps),  # type: ignore[arg-type]
+        RecordingToolBudget(steps),
+    )
+    grant_id = uuid4()
+    request = SimpleNamespace(
+        tool_call={
+            "name": "publish",
+            "args": {"value": "approved-report"},
+            "id": "publish-call-2",
+        },
+        state={"capability_approval_grants": {"publish-call-2": grant_id}},
+    )
+
+    async def execute(_request) -> ToolMessage:
+        steps.append("handler")
+        return ToolMessage(content="done", tool_call_id="publish-call-2")
+
+    await approval.awrap_tool_call(request, execute)  # type: ignore[arg-type]
+
+    assert steps == ["grant", "budget", "handler"]

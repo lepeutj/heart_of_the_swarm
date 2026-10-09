@@ -303,6 +303,27 @@ class WorkflowRunRepository(RepositoryBase):
             await self.session.rollback()
         return consumed
 
+    async def consume_tool_call(self, thread_id: str, limit: int) -> int | None:
+        """Atomically reserve one tool call without allowing the thread to exceed its limit."""
+        statement = (
+            update(ExecutionThreadRecord)
+            .where(
+                ExecutionThreadRecord.id == thread_id,
+                ExecutionThreadRecord.tool_calls < limit,
+            )
+            .values(
+                tool_calls=ExecutionThreadRecord.tool_calls + 1,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(ExecutionThreadRecord.tool_calls)
+        )
+        consumed = (await self.session.execute(statement)).scalar_one_or_none()
+        if consumed is not None:
+            await self.session.commit()
+        else:
+            await self.session.rollback()
+        return consumed
+
     async def finish(self, run_id: str, output: Any, executed_nodes: tuple[str, ...]) -> None:
         run = await self._required(WorkflowRunRecord, run_id)
         run.status = RunStatus.COMPLETED
