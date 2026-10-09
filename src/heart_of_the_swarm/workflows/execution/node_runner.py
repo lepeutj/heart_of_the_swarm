@@ -609,7 +609,10 @@ class WorkflowNodeRunner:
                 arguments,
                 execution_budget=self.execution_budget,
                 config={
-                    "callbacks": [self.callback] if self.callback is not None else [],
+                    "callbacks": [
+                        *([self.callback] if self.callback is not None else []),
+                        *self.agent_callbacks,
+                    ],
                     "metadata": self._node_context(node, event_context),
                 },
             )

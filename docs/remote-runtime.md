@@ -42,8 +42,26 @@ queued → running → completed | failed | timed_out
 ```
 
 Run details contain timestamps, a safe error or final result, and the MLflow trace identifier when
-available. Events use a run-local monotonic sequence and initially expose only lifecycle changes.
-Raw provider exceptions, credentials, prompts, and workflow state are not event payloads.
+available. One runtime accepts one active run at a time; another invocation receives
+`409 runtime_busy` rather than entering a hidden scheduler or queue.
+
+Every event contains:
+
+```text
+event_id
+run_id
+trace_id
+sequence
+event_type
+created_at
+data
+```
+
+The runtime owns `runtime.*`, `workflow.*`, and direct `agent.*` lifecycle events. Workflow node,
+handoff, supervisor, and checkpoint events pass through the existing `WorkflowEventSink`. Sequence
+records observation order; it does not invent a logical order between concurrent branches. Raw
+provider exceptions, credentials, prompts, tool arguments, and workflow state are not event
+payloads.
 
 ## Authentication boundary
 
@@ -64,14 +82,17 @@ RuntimeIdentity
 ## Storage and failure semantics
 
 V2.7 stores a bounded number of runs and events only in process memory. The oldest terminal runs
-are removed when `RUNTIME_MAX_RETAINED_RUNS` is reached; new work is rejected if every retained run
-is still active. Restarting the container loses all runtime-local state. This is an explicit MVP
-constraint and avoids adding SQLite, PostgreSQL, Redis, or a second product lifecycle store to the
-data plane.
+are removed when `RUNTIME_MAX_RETAINED_RUNS` is reached. Restarting the container loses all
+runtime-local state. This is an explicit MVP constraint and avoids adding SQLite, PostgreSQL,
+Redis, or a second product lifecycle store to the data plane.
 
-Execution errors are reduced to safe terminal messages. The technical detail remains in runtime
-logs and MLflow. Shutting down the process cancels active background tasks; it does not claim a
+Execution errors are reduced to safe terminal messages. Runtime logs retain the correlated run,
+trace, and exception type without persisting the provider message; MLflow remains the technical
+trace backend. Shutting down the process cancels active background tasks; it does not claim a
 durable resume or exactly-once external side effect.
+
+Standalone workflow export rejects dependencies that the runtime cannot complete independently,
+including `HUMAN_APPROVAL` until a remote approval broker exists.
 
 ## Deferred
 
@@ -82,6 +103,19 @@ durable resume or exactly-once external side effect.
 - native token streaming;
 - JWT or certificate-based service authentication;
 - restart recovery, retries, and rollback.
+
+## Deployment boundary
+
+One long-lived deployment binds one immutable version to one runtime container and accepts
+successive runs:
+
+```text
+Deployment = durable availability of one immutable version
+Run        = one bounded task executed by that deployment
+```
+
+V2.8 initially registers an already-running endpoint. Automated container provisioning, artifact
+installation, credential injection, health convergence, and rollback belong to V3.
 
 ## Control-plane client
 

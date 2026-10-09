@@ -25,6 +25,7 @@ from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.network_policy import NetworkPolicyEnforcer
 from heart_of_the_swarm.observability import RuntimeCallbackHandler, audit_event, trace_context
 from heart_of_the_swarm.providers import ProviderRegistry
+from heart_of_the_swarm.runtime.events import RuntimeEventCallbackHandler, RuntimeEventSink
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import MCPConnection, MCPToolLoader, create_default_registry
@@ -121,6 +122,7 @@ class StandaloneAgentRuntime:
         *,
         run_id: str | None = None,
         trace_id: str | None = None,
+        event_sink: RuntimeEventSink | None = None,
     ) -> InvokeResponse:
         if not isinstance(agent_input, str) or not 1 <= len(agent_input) <= 10_000:
             raise ValueError("agent input must be a non-empty string of at most 10000 characters")
@@ -133,6 +135,11 @@ class StandaloneAgentRuntime:
             artifact.agent.spec.model.provider,
             artifact.agent.spec.model.model_id,
         )
+        live_callback = RuntimeEventCallbackHandler(event_sink) if event_sink is not None else None
+        if event_sink is not None:
+            await event_sink.emit(
+                "agent.started", {"agent_version_id": str(artifact.agent.agent_version_id)}
+            )
         with (
             trace_context(trace_id),
             self.telemetry.span(
@@ -148,24 +155,38 @@ class StandaloneAgentRuntime:
         ):
             mlflow_trace_id = self.telemetry.trace_id(span)
             self.telemetry.set_inputs(span, {"input": agent_input})
-            async with asyncio.timeout(self.settings.agent_timeout_seconds):
-                output = await self.runner.invoke(
-                    artifact.agent.spec,
-                    agent_input,
-                    system_prompt=artifact.agent.system_prompt,
-                    callbacks=[callback],
-                    metadata={
-                        "run_id": run_id,
-                        "agent_id": str(artifact.agent.agent_id),
-                        "agent_version_id": str(artifact.agent.agent_version_id),
-                    },
-                    security=ExecutionSecurityContext(
-                        principal=self.capability_authorizer.agent_version_principal(
-                            artifact.agent.agent_version_id
+            try:
+                async with asyncio.timeout(self.settings.agent_timeout_seconds):
+                    output = await self.runner.invoke(
+                        artifact.agent.spec,
+                        agent_input,
+                        system_prompt=artifact.agent.system_prompt,
+                        callbacks=[
+                            callback,
+                            *([live_callback] if live_callback is not None else []),
+                        ],
+                        metadata={
+                            "run_id": run_id,
+                            "agent_id": str(artifact.agent.agent_id),
+                            "agent_version_id": str(artifact.agent.agent_version_id),
+                        },
+                        security=ExecutionSecurityContext(
+                            principal=self.capability_authorizer.agent_version_principal(
+                                artifact.agent.agent_version_id
+                            ),
+                            authorization=AuthorizationContext(run_id=run_id),
                         ),
-                        authorization=AuthorizationContext(run_id=run_id),
-                    ),
-                )
+                    )
+            except Exception:
+                if live_callback is not None:
+                    await live_callback.flush()
+                if event_sink is not None:
+                    await event_sink.emit("agent.failed")
+                raise
+            if live_callback is not None:
+                await live_callback.flush()
+            if event_sink is not None:
+                await event_sink.emit("agent.completed")
             self.telemetry.set_outputs(span, {"output": output})
         return InvokeResponse(
             run_id=run_id,

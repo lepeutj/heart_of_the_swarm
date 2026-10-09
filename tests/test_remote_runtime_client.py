@@ -54,6 +54,9 @@ async def test_remote_runtime_client_calls_the_authenticated_contract() -> None:
                 200,
                 json=[
                     {
+                        "event_id": "event-1",
+                        "run_id": "run-1",
+                        "trace_id": "trace-1",
                         "sequence": 1,
                         "event_type": "runtime.queued",
                         "created_at": datetime.now(UTC).isoformat(),

@@ -15,6 +15,7 @@ from heart_of_the_swarm.credentials import CredentialResolver, LocalSecretStore,
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import audit_event, trace_context
 from heart_of_the_swarm.providers import ProviderRegistry
+from heart_of_the_swarm.runtime.events import RuntimeEventCallbackHandler, RuntimeEventSink
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
 from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.telemetry import Telemetry
@@ -27,6 +28,17 @@ from heart_of_the_swarm.workflows import (
     WorkflowVersionRunner,
 )
 from heart_of_the_swarm.workflows.documents import WorkflowVersionSnapshot
+from heart_of_the_swarm.workflows.execution.version_runner import WorkflowExecutionEvent
+
+
+class _WorkflowEventAdapter:
+    """Translate workflow events into the standalone runtime event contract."""
+
+    def __init__(self, sink: RuntimeEventSink) -> None:
+        self.sink = sink
+
+    async def emit(self, event: WorkflowExecutionEvent) -> None:
+        await self.sink.emit(event.event_type, event.data)
 
 
 class StandaloneWorkflowRuntime:
@@ -114,6 +126,7 @@ class StandaloneWorkflowRuntime:
         *,
         run_id: str | None = None,
         trace_id: str | None = None,
+        event_sink: RuntimeEventSink | None = None,
     ) -> InvokeResponse:
         if not isinstance(workflow_input, dict):
             raise ValueError("workflow input must be a JSON object")
@@ -136,18 +149,38 @@ class StandaloneWorkflowRuntime:
         ):
             mlflow_trace_id = self.telemetry.trace_id(span)
             self.telemetry.set_inputs(span, workflow_input)
-            result = await self.runner.run(
-                self._snapshot(artifact),
-                workflow_input,
-                ExecutionPolicy(
-                    timeout_seconds=self.settings.workflow_timeout_seconds,
-                    recursion_limit=self.settings.workflow_recursion_limit,
-                    max_state_bytes=self.settings.workflow_max_state_bytes,
-                    max_model_calls=self.settings.workflow_max_model_calls,
-                    max_tool_calls=self.settings.workflow_max_tool_calls,
-                ),
-                execution_id=run_id,
+            if event_sink is not None:
+                await event_sink.emit("workflow.started")
+            live_callback = (
+                RuntimeEventCallbackHandler(event_sink) if event_sink is not None else None
             )
+            try:
+                result = await self.runner.run(
+                    self._snapshot(artifact),
+                    workflow_input,
+                    ExecutionPolicy(
+                        timeout_seconds=self.settings.workflow_timeout_seconds,
+                        recursion_limit=self.settings.workflow_recursion_limit,
+                        max_state_bytes=self.settings.workflow_max_state_bytes,
+                        max_model_calls=self.settings.workflow_max_model_calls,
+                        max_tool_calls=self.settings.workflow_max_tool_calls,
+                    ),
+                    event_sink=(
+                        _WorkflowEventAdapter(event_sink) if event_sink is not None else None
+                    ),
+                    agent_callbacks=([live_callback] if live_callback is not None else []),
+                    execution_id=run_id,
+                )
+            except Exception:
+                if live_callback is not None:
+                    await live_callback.flush()
+                if event_sink is not None:
+                    await event_sink.emit("workflow.failed")
+                raise
+            if live_callback is not None:
+                await live_callback.flush()
+            if event_sink is not None:
+                await event_sink.emit("workflow.completed")
             self.telemetry.set_outputs(span, {"output": result.output})
         return InvokeResponse(
             run_id=run_id,

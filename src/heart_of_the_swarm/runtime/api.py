@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request,
 from heart_of_the_swarm import __version__
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.http_policy import HTTPPolicy, RequestBodyLimitMiddleware
+from heart_of_the_swarm.runtime.events import RuntimeEventSink
 from heart_of_the_swarm.runtime.models import (
     InvokeRequest,
     InvokeResponse,
@@ -16,7 +17,10 @@ from heart_of_the_swarm.runtime.models import (
     RuntimeRunDetail,
     RuntimeRunEvent,
 )
-from heart_of_the_swarm.runtime.runs import RuntimeRunCapacityError, RuntimeRunManager
+from heart_of_the_swarm.runtime.runs import (
+    RuntimeRunBusyError,
+    RuntimeRunManager,
+)
 
 
 class StandaloneRuntime(Protocol):
@@ -32,6 +36,7 @@ class StandaloneRuntime(Protocol):
         *,
         run_id: str | None = None,
         trace_id: str | None = None,
+        event_sink: RuntimeEventSink | None = None,
     ) -> InvokeResponse: ...
 
 
@@ -131,9 +136,13 @@ def create_app(
     async def invoke(request: InvokeRequest, http_request: Request) -> RuntimeRunAccepted:
         try:
             return await http_request.app.state.runs.start(request.input)
-        except RuntimeRunCapacityError as exc:
+        except RuntimeRunBusyError as exc:
             raise HTTPException(
-                status_code=429, detail="runtime run capacity is exhausted"
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "runtime_busy",
+                    "message": "This runtime already has an active run.",
+                },
             ) from exc
 
     @protected.get(

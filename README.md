@@ -83,6 +83,7 @@ Build and run the generic runtime image with the artifact mounted read-only.
 docker build -f docker/agent-runtime.Dockerfile -t heart-of-the-swarm-agent-runtime .
 docker run --rm -p 8080:8000 \
   --mount type=bind,source="$(pwd)/artifact",target=/app/artifact,readonly \
+  -e RUNTIME_API_TOKEN="replace-with-a-runtime-service-token" \
   -e OPENAI_API_KEY \
   heart-of-the-swarm-agent-runtime
 ```
@@ -94,32 +95,43 @@ docker build -f docker/agent-runtime.Dockerfile -t heart-of-the-swarm-agent-runt
 $artifact = (Resolve-Path .\artifact).Path
 docker run --rm -p 8080:8000 `
   --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
+  -e "RUNTIME_API_TOKEN=replace-with-a-runtime-service-token" `
   -e "OPENAI_API_KEY=$env:OPENAI_API_KEY" `
   heart-of-the-swarm-agent-runtime
 ```
 
-Use `OPENROUTER_API_KEY` instead for an OpenRouter artifact. The running container exposes only
-`GET /health`, `GET /metadata`, and `POST /invoke`. It does not connect to PostgreSQL, the control
-plane API, or the worker.
+Use `OPENROUTER_API_KEY` instead for an OpenRouter artifact. `GET /health` is public. The operational
+endpoints `GET /metadata`, `POST /invoke`, `GET /runs/{run_id}`, and
+`GET /runs/{run_id}/events` require the configured Bearer token. The runtime accepts one active run
+at a time and keeps only bounded, ephemeral run history in memory. It does not connect to
+PostgreSQL, the control plane API, or the worker.
 
 ### Linux / macOS
 
 ```bash
 curl http://localhost:8080/health
-curl http://localhost:8080/metadata
+TOKEN="replace-with-a-runtime-service-token"
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/metadata
 curl -X POST http://localhost:8080/invoke \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"input":"Complete the assigned task."}'
+# Read the run_id from the 202 response, then poll:
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/runs/<run_id>
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/runs/<run_id>/events
 ```
 
 ### Windows PowerShell
 
 ```powershell
 Invoke-RestMethod http://localhost:8080/health
-Invoke-RestMethod http://localhost:8080/metadata
+$headers = @{ Authorization = 'Bearer replace-with-a-runtime-service-token' }
+Invoke-RestMethod http://localhost:8080/metadata -Headers $headers
 Invoke-RestMethod -Method Post http://localhost:8080/invoke `
+  -Headers $headers `
   -ContentType 'application/json' `
   -Body (@{ input = 'Complete the assigned task.' } | ConvertTo-Json)
+# Read run_id from the accepted response, then call /runs/{run_id} and /runs/{run_id}/events.
 ```
 
 ## Agent workflow
@@ -188,6 +200,7 @@ The output contains `manifest.json` and `workflow.json`. Build and run the gener
 docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflow-runtime .
 docker run --rm -p 8080:8000 \
   --mount type=bind,source="$(pwd)/workflow-artifact",target=/app/artifact,readonly \
+  -e RUNTIME_API_TOKEN="replace-with-a-runtime-service-token" \
   -e OPENROUTER_API_KEY \
   heart-of-the-swarm-workflow-runtime
 ```
@@ -199,6 +212,7 @@ docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflo
 $artifact = (Resolve-Path .\workflow-artifact).Path
 docker run --rm -p 8080:8000 `
   --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
+  -e "RUNTIME_API_TOKEN=replace-with-a-runtime-service-token" `
   -e "OPENROUTER_API_KEY=$env:OPENROUTER_API_KEY" `
   heart-of-the-swarm-workflow-runtime
 ```
@@ -209,6 +223,7 @@ Invoke it with the workflow's declared object input:
 
 ```bash
 curl -X POST http://localhost:8080/invoke \
+  -H "Authorization: Bearer replace-with-a-runtime-service-token" \
   -H "Content-Type: application/json" \
   -d '{"input":{"feed_url":"https://feeds.bbci.co.uk/news/technology/rss.xml","request":"Résume en français les principaux thèmes des cinq dernières publications."}}'
 ```
@@ -217,6 +232,7 @@ curl -X POST http://localhost:8080/invoke \
 
 ```powershell
 Invoke-RestMethod -Method Post http://localhost:8080/invoke `
+  -Headers @{ Authorization = 'Bearer replace-with-a-runtime-service-token' } `
   -ContentType 'application/json' `
   -Body (@{
     input = @{
@@ -226,12 +242,14 @@ Invoke-RestMethod -Method Post http://localhost:8080/invoke `
   } | ConvertTo-Json -Depth 3)
 ```
 
-The runtime reconstructs LangGraph from the declaration and uses the same portable runner as the
-worker. It does not connect to PostgreSQL. V1 supports built-in capabilities and inline agents;
-MCP capabilities, saved-agent references, and external Skill files are rejected during export.
+The `202 Accepted` response contains the run ID used with the authenticated status and event
+endpoints shown above. The runtime reconstructs LangGraph from the declaration and uses the same
+portable runner as the worker. It does not connect to PostgreSQL. Portable export supports built-in
+capabilities and inline agents; MCP capabilities, saved-agent references, external Skill files,
+subworkflows, and `HUMAN_APPROVAL` are rejected during export until their remote dependencies exist.
 
 Set `MLFLOW_ENABLED=true`, `MLFLOW_TRACKING_URI`, and `MLFLOW_EXPERIMENT` when starting either
-standalone runtime to enable LangChain/LangGraph autotracing. `/invoke` then returns both the
+standalone runtime to enable LangChain/LangGraph autotracing. The run detail then exposes the
 product `trace_id` and `mlflow_trace_id`. If MLflow is unavailable, execution continues and the
 MLflow identifier is omitted.
 

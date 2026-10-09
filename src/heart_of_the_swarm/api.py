@@ -8,10 +8,9 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 from heart_of_the_swarm import __version__
@@ -102,7 +101,6 @@ from heart_of_the_swarm.workflows.runs import (
 )
 
 PACKAGE_DIR = Path(__file__).parent
-templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
 WORKFLOW_STREAM_TERMINAL_STATUSES = {
     RunStatus.COMPLETED,
     RunStatus.FAILED,
@@ -133,7 +131,6 @@ app = FastAPI(
     description="Design, configure, persist, and run task-specific agents.",
     lifespan=lifespan,
 )
-app.mount("/static", StaticFiles(directory=PACKAGE_DIR / "static"), name="static")
 app.mount(
     "/workflow-editor",
     StaticFiles(directory=PACKAGE_DIR / "static" / "workflow-editor", html=True, check_dir=False),
@@ -273,9 +270,10 @@ def api_error(exc: Exception, status_code: int = 400) -> HTTPException:
     )
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+@app.get("/", include_in_schema=False)
+async def index() -> RedirectResponse:
+    """Keep one authenticated product UI instead of the obsolete dashboard."""
+    return RedirectResponse(url="/workflow-editor/", status_code=307)
 
 
 @app.get("/health")

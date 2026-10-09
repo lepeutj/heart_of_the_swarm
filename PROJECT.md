@@ -144,6 +144,12 @@ intentionally ephemeral; remote deployment records and lifecycle belong to the f
 plane. The thin `RemoteRuntimeClient` consumes the same typed metadata, invocation, run, and event
 contracts without knowing LangChain, LangGraph, Docker, or persistence.
 
+V2.7c stabilizes that boundary around one active run per long-lived runtime, correlated safe error
+logs, export-time rejection of unsupported human approval, and detailed workflow events carrying
+run and trace identity. The obsolete unauthenticated dashboard redirects to the authenticated React
+application. A deployment is durable availability of one immutable version; a run remains one
+bounded task. V2.8 registers already-running runtimes, while automated provisioning remains V3.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

@@ -133,6 +133,10 @@ the normative field-level rules.
   authenticates callers and remains distinct from `RuntimeIdentity`, which protects capability and
   credential actions. Durable deployment lifecycle remains a control-plane responsibility. The
   normative contract is in `docs/remote-runtime.md`.
+- **ADR-054 — Deployments are durable availability, not executions.** One deployment binds one
+  immutable version to one long-lived runtime container and accepts successive runs, one active run
+  at a time for the MVP. A run is one bounded task. V2.8 registers existing runtimes; automated
+  Docker provisioning remains V3.
 
 ## Current implementation limits
 

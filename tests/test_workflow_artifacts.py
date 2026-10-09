@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 from time import sleep
 
@@ -135,6 +136,38 @@ async def test_export_rejects_remote_capabilities_not_bundled_in_runtime(tmp_pat
         await database.close()
 
 
+async def test_export_rejects_human_approval_without_a_remote_broker(tmp_path: Path) -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    document = calculator_workflow()
+    spec = deepcopy(document.spec)
+    spec["nodes"][1] = {
+        "id": "approval",
+        "type": "human_approval",
+        "name": "Approval",
+        "config": {
+            "prompt": "Approve?",
+            "output": {"to_state": "$.approved"},
+        },
+    }
+    document = WorkflowDraftSave.model_validate({"spec": spec, "editor": document.editor})
+    try:
+        async with database.session() as session:
+            repository = WorkflowRepository(session)
+            draft = await repository.save(document)
+            version = await repository.create_version(
+                str(draft.id),
+                [],
+                expected_revision=draft.revision,
+            )
+        assert version is not None
+
+        with pytest.raises(ValueError, match="HUMAN_APPROVAL"):
+            await WorkflowArtifactExporter(database).export(version.id, tmp_path)
+    finally:
+        await database.close()
+
+
 async def test_standalone_workflow_api_executes_artifact_without_database(
     tmp_path: Path,
 ) -> None:
@@ -166,6 +199,7 @@ async def test_standalone_workflow_api_executes_artifact_without_database(
             if run.json()["status"] == "completed":
                 break
             sleep(0.01)
+        events = client.get(f"/runs/{run_id}/events", headers=RUNTIME_HEADERS)
 
     assert health.json() == {"status": "ok"}
     assert metadata.json()["manifest"]["workflow_version_id"] == str(
@@ -176,3 +210,57 @@ async def test_standalone_workflow_api_executes_artifact_without_database(
     assert run.json()["result"] == "14"
     assert run.json()["run_id"]
     assert run.json()["trace_id"]
+    event_types = [event["event_type"] for event in events.json()]
+    assert event_types == [
+        "runtime.queued",
+        "runtime.started",
+        "workflow.started",
+        "node.started",
+        "node.completed",
+        "node.started",
+        "tool.started",
+        "tool.completed",
+        "node.completed",
+        "node.started",
+        "node.completed",
+        "workflow.completed",
+        "runtime.completed",
+    ]
+    assert all(event["run_id"] == run_id for event in events.json())
+
+
+async def test_standalone_workflow_runtime_emits_detailed_events(tmp_path: Path) -> None:
+    artifact = await export_calculator_workflow(tmp_path)
+    settings = Settings(
+        workflow_artifact_dir=tmp_path,
+        mlflow_enabled=False,
+        capability_policies={
+            f"workflow_node:{artifact.workflow.workflow_version_id}/calculate": ["calculator"]
+        },
+    )
+    recorded = []
+
+    class RecordingSink:
+        async def emit(self, event_type: str, data: dict | None = None) -> None:
+            recorded.append((event_type, data or {}))
+
+    runtime = StandaloneWorkflowRuntime(settings)
+    await runtime.initialize()
+    response = await runtime.invoke(
+        {"expression": "2 + 3 * 4"},
+        event_sink=RecordingSink(),
+    )
+
+    assert response.output == "14"
+    assert [event_type for event_type, _data in recorded] == [
+        "workflow.started",
+        "node.started",
+        "node.completed",
+        "node.started",
+        "tool.started",
+        "tool.completed",
+        "node.completed",
+        "node.started",
+        "node.completed",
+        "workflow.completed",
+    ]

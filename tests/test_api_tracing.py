@@ -94,11 +94,10 @@ def test_health_response_has_trace_id_header() -> None:
 
 def test_ui_is_served() -> None:
     with TestClient(app) as client:
-        response = client.get("/")
+        response = client.get("/", follow_redirects=False)
 
-    assert response.status_code == 200
-    assert "Heart of the Swarm" in response.text
-    assert 'href="/workflow-editor/"' in response.text
+    assert response.status_code == 307
+    assert response.headers["location"] == "/workflow-editor/"
 
 
 def test_workflow_editor_build_is_served() -> None:

@@ -1,7 +1,8 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -83,6 +84,7 @@ class WorkflowVersionRunner:
         checkpointer: BaseCheckpointSaver | None = None,
         interrupt_after: tuple[str, ...] = (),
         execution_budget: ExecutionBudget | None = None,
+        agent_callbacks: Sequence[BaseCallbackHandler] = (),
     ) -> ExecutionResult:
         """Validate, build, and invoke one LangGraph workflow version."""
         self.capabilities.verify_contracts(version.capability_contracts)
@@ -112,7 +114,7 @@ class WorkflowVersionRunner:
             max_handoffs=policy.max_handoffs,
             max_state_bytes=policy.max_state_bytes,
             interrupt_after=tuple(path for path in interrupt_after if "/" in path),
-            agent_callbacks=(ModelCallBudgetCallback(budget),),
+            agent_callbacks=(ModelCallBudgetCallback(budget), *agent_callbacks),
             execution_budget=budget,
         )
 

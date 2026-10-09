@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
+from heart_of_the_swarm.observability import audit_event
+from heart_of_the_swarm.runtime.events import RuntimeEventSink
 from heart_of_the_swarm.runtime.models import (
     InvokeResponse,
     RuntimeRunAccepted,
@@ -19,11 +22,27 @@ class RuntimeInvoker(Protocol):
         *,
         run_id: str | None = None,
         trace_id: str | None = None,
+        event_sink: RuntimeEventSink | None = None,
     ) -> InvokeResponse: ...
 
 
-class RuntimeRunCapacityError(RuntimeError):
-    """Signal that the bounded in-memory run store has no removable terminal run."""
+class RuntimeRunBusyError(RuntimeError):
+    """Signal that this single-run runtime is already executing work."""
+
+
+class _RunEventSink:
+    def __init__(self, manager: "RuntimeRunManager", run_id: str, trace_id: str) -> None:
+        self.manager = manager
+        self.run_id = run_id
+        self.trace_id = trace_id
+
+    async def emit(self, event_type: str, data: dict[str, Any] | None = None) -> None:
+        await self.manager._append_event(  # noqa: SLF001 - bound adapter owns this manager
+            self.run_id,
+            self.trace_id,
+            event_type,
+            data or {},
+        )
 
 
 class RuntimeRunManager:
@@ -51,12 +70,15 @@ class RuntimeRunManager:
             created_at=created_at,
         )
         async with self._lock:
+            if any(not task.done() for task in self._tasks.values()):
+                raise RuntimeRunBusyError("runtime already has an active run")
             self._prune_terminal_runs()
-            if len(self._runs) >= self.max_retained_runs:
-                raise RuntimeRunCapacityError("runtime run capacity is exhausted")
             self._runs[run_id] = run
             self._events[run_id] = [
                 RuntimeRunEvent(
+                    event_id=str(uuid4()),
+                    run_id=run_id,
+                    trace_id=trace_id,
                     sequence=1,
                     event_type="runtime.queued",
                     created_at=created_at,
@@ -100,8 +122,15 @@ class RuntimeRunManager:
                 runtime_input,
                 run_id=run_id,
                 trace_id=trace_id,
+                event_sink=_RunEventSink(self, run_id, trace_id),
             )
         except TimeoutError:
+            audit_event(
+                "runtime.execution.timed_out",
+                level=logging.ERROR,
+                run_id=run_id,
+                trace_id=trace_id,
+            )
             await self._transition(
                 run_id,
                 status=RuntimeRunStatus.TIMED_OUT,
@@ -111,7 +140,15 @@ class RuntimeRunManager:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            # Keep provider details out of logs while retaining a searchable failure type.
+            audit_event(
+                "runtime.execution.failed",
+                level=logging.ERROR,
+                run_id=run_id,
+                trace_id=trace_id,
+                error_type=type(exc).__name__,
+            )
             await self._transition(
                 run_id,
                 status=RuntimeRunStatus.FAILED,
@@ -146,9 +183,34 @@ class RuntimeRunManager:
             events = self._events[run_id]
             events.append(
                 RuntimeRunEvent(
+                    event_id=str(uuid4()),
+                    run_id=run_id,
+                    trace_id=current.trace_id,
                     sequence=len(events) + 1,
                     event_type=event_type,
                     created_at=datetime.now(UTC),
+                )
+            )
+
+    async def _append_event(
+        self,
+        run_id: str,
+        trace_id: str,
+        event_type: str,
+        data: dict[str, Any],
+    ) -> None:
+        """Append one invocation event in the order observed by this runtime."""
+        async with self._lock:
+            events = self._events[run_id]
+            events.append(
+                RuntimeRunEvent(
+                    event_id=str(uuid4()),
+                    run_id=run_id,
+                    trace_id=trace_id,
+                    sequence=len(events) + 1,
+                    event_type=event_type,
+                    created_at=datetime.now(UTC),
+                    data=data,
                 )
             )
 

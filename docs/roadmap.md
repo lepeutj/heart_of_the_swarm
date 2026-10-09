@@ -206,8 +206,11 @@ and emit correlated traces without exposing an unauthenticated administration po
 4. Preserve the distinction between HTTP caller authentication and runtime capability/credential
    identity. **Implemented.**
 5. Use the thin control-plane `RemoteRuntimeClient` for authenticated invocation, status, event,
-   and result reads. **Implemented.** Validate the contract across two containers.
-6. Validate the same flow against a second Docker host, VPS, or Raspberry Pi.
+   and result reads. **Implemented and validated across two local containers.**
+6. V2.7c: stabilize the runtime with one active run, safe correlated failure logs, detailed workflow
+   events, export-time portability rejection, synchronized usage documentation, and one product UI.
+   **Implemented.**
+7. Validate the same flow against a second Docker host, VPS, or Raspberry Pi.
 
 Exit criterion: the control plane can authenticate to another runtime process, queue an invocation,
 observe lifecycle events, and retrieve its final result and trace identifier.
@@ -215,16 +218,34 @@ observe lifecycle events, and retrieve its final result and trace identifier.
 Per-model invocation context enforcement follows this MVP and remains independent from remote run
 transport.
 
-## V2.8 — Deployment control plane
+## V2.8 — Deployment registry and remote runs
 
-1. Define deployment and deployment-revision contracts.
-2. Publish one generic hardened runtime image.
-3. Transfer and verify immutable artifacts.
-4. support one local Docker target, then one Docker/VPS or Raspberry Pi target;
-5. add health, start, stop, restart, and rollback lifecycle.
+1. Register one already-running runtime endpoint against one immutable `AgentVersion`.
+2. Persist runtime identity, endpoint, credential reference, health-derived status, and timestamps.
+3. Create one control-plane run that invokes the registered deployment through
+   `RemoteRuntimeClient`.
+4. Persist remote run identity, lifecycle, result, event correlation, and trace identifiers without
+   duplicating event payloads into the run record.
+5. Keep runtime registration separate from container provisioning.
 
-Exit criterion: a selected immutable version can be deployed, invoked, observed, and rolled back on
-one remote Docker host.
+Exit criterion: Heart can register an existing runtime, verify that it serves the expected immutable
+version, send it work, follow the remote run, and retain its final result and trace correlation.
+
+## V2.9 — Deployment and execution UI
+
+1. Register and inspect a runtime without implying that Heart provisioned it.
+2. Display deployment health and immutable source identity.
+3. Send one task to a running deployment.
+4. Follow detailed remote events and display result, failure, and trace correlation.
+
+Exit criterion: an operator can register a runtime, send work, and observe the complete remote run
+from React.
+
+## V3 — Automated provisioning
+
+Provision the generic runtime image, transfer and verify artifacts, inject external configuration,
+wait for health, and manage start, stop, restart, and rollback for one Docker host before adding
+other targets.
 
 ## Deferred until demanded by a completed path
 

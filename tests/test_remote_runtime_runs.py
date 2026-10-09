@@ -2,8 +2,9 @@ import asyncio
 
 import pytest
 
+from heart_of_the_swarm.runtime.events import RuntimeEventSink
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeRunStatus
-from heart_of_the_swarm.runtime.runs import RuntimeRunCapacityError, RuntimeRunManager
+from heart_of_the_swarm.runtime.runs import RuntimeRunBusyError, RuntimeRunManager
 
 
 class BlockingRuntime:
@@ -17,12 +18,17 @@ class BlockingRuntime:
         *,
         run_id: str | None = None,
         trace_id: str | None = None,
+        event_sink: RuntimeEventSink | None = None,
     ) -> InvokeResponse:
         assert runtime_input == {"request": "value"}
         assert run_id is not None
         assert trace_id is not None
         self.started.set()
+        if event_sink is not None:
+            await event_sink.emit("agent.started", {"component": "test"})
         await self.release.wait()
+        if event_sink is not None:
+            await event_sink.emit("agent.completed", {"component": "test"})
         return InvokeResponse(
             run_id=run_id,
             trace_id=trace_id,
@@ -58,16 +64,27 @@ async def test_remote_run_starts_non_blocking_and_exposes_ordered_lifecycle() ->
     assert [(event.sequence, event.event_type) for event in events] == [
         (1, "runtime.queued"),
         (2, "runtime.started"),
-        (3, "runtime.completed"),
+        (3, "agent.started"),
+        (4, "agent.completed"),
+        (5, "runtime.completed"),
     ]
+    assert all(event.run_id == accepted.run_id for event in events)
+    assert all(event.trace_id == accepted.trace_id for event in events)
+    assert len({event.event_id for event in events}) == len(events)
+    assert events[2].data == {"component": "test"}
     await manager.close()
 
 
-async def test_remote_run_failure_returns_only_a_safe_error() -> None:
+async def test_remote_run_failure_returns_safe_error_and_logs_context(monkeypatch) -> None:
     class FailingRuntime:
         async def invoke(self, *_args, **_kwargs) -> InvokeResponse:
             raise RuntimeError("secret provider detail")
 
+    audit_records = []
+    monkeypatch.setattr(
+        "heart_of_the_swarm.runtime.runs.audit_event",
+        lambda event, **fields: audit_records.append((event, fields)),
+    )
     manager = RuntimeRunManager(FailingRuntime())
     accepted = await manager.start("input")
 
@@ -80,6 +97,17 @@ async def test_remote_run_failure_returns_only_a_safe_error() -> None:
     assert failed is not None
     assert failed.error == "runtime execution failed"
     assert "secret" not in failed.model_dump_json()
+    assert audit_records == [
+        (
+            "runtime.execution.failed",
+            {
+                "level": 40,
+                "run_id": accepted.run_id,
+                "trace_id": accepted.trace_id,
+                "error_type": "RuntimeError",
+            },
+        )
+    ]
     await manager.close()
 
 
@@ -102,14 +130,14 @@ async def test_remote_run_timeout_has_a_distinct_terminal_status() -> None:
     await manager.close()
 
 
-async def test_remote_run_store_rejects_unbounded_active_work() -> None:
+async def test_remote_runtime_rejects_a_second_active_run() -> None:
     runtime = BlockingRuntime()
     manager = RuntimeRunManager(runtime, max_retained_runs=1)
 
     await manager.start({"request": "value"})
     await runtime.started.wait()
 
-    with pytest.raises(RuntimeRunCapacityError):
+    with pytest.raises(RuntimeRunBusyError):
         await manager.start({"request": "value"})
 
     runtime.release.set()

@@ -42,6 +42,9 @@ class RuntimeRunAccepted(BaseModel):
 class RuntimeRunEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    event_id: str
+    run_id: str
+    trace_id: str
     sequence: int
     event_type: str
     created_at: datetime

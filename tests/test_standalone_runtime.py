@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ from heart_of_the_swarm.factory import render_system_prompt
 from heart_of_the_swarm.repositories import AgentRepository
 from heart_of_the_swarm.runtime.api import create_app
 from heart_of_the_swarm.runtime.application import StandaloneAgentRuntime
+from heart_of_the_swarm.runtime.events import RuntimeEventSink
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
 from heart_of_the_swarm.spec import AgentSpec
 
@@ -153,10 +155,14 @@ def test_runtime_api_exposes_only_the_standard_contract() -> None:
             *,
             run_id: str | None = None,
             trace_id: str | None = None,
+            event_sink: RuntimeEventSink | None = None,
         ) -> InvokeResponse:
             assert agent_input == "Hello"
             assert run_id is not None
             assert trace_id is not None
+            if event_sink is not None:
+                await event_sink.emit("agent.started")
+                await event_sink.emit("agent.completed")
             return InvokeResponse(run_id=run_id, trace_id=trace_id, output="Done")
 
     app = create_app(  # type: ignore[arg-type,return-value]
@@ -194,8 +200,53 @@ def test_runtime_api_exposes_only_the_standard_contract() -> None:
     assert [event["event_type"] for event in events.json()] == [
         "runtime.queued",
         "runtime.started",
+        "agent.started",
+        "agent.completed",
         "runtime.completed",
     ]
+
+
+def test_runtime_api_rejects_a_second_active_run() -> None:
+    manifest = AgentArtifactManifest(
+        runtime_version="test",
+        agent_id="47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+        agent_version_id="dc36aa94-3399-45d9-b285-e82787e8ca5d",
+        agent_version=1,
+        provider="openai",
+        tools=(),
+        agent_sha256="0" * 64,
+    )
+
+    class BusyRuntime:
+        async def initialize(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+        def metadata(self) -> RuntimeMetadata:
+            return RuntimeMetadata(manifest=manifest, agent={"name": "Test"})
+
+        async def invoke(self, *_args, **_kwargs) -> InvokeResponse:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    app = create_app(  # type: ignore[arg-type,return-value]
+        lambda: BusyRuntime(),
+        service_token=RUNTIME_TOKEN,
+    )
+    with TestClient(app) as client:
+        first = client.post("/invoke", json={"input": "one"}, headers=RUNTIME_HEADERS)
+        second = client.post("/invoke", json={"input": "two"}, headers=RUNTIME_HEADERS)
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert second.json() == {
+        "detail": {
+            "error": "runtime_busy",
+            "message": "This runtime already has an active run.",
+        }
+    }
 
 
 async def test_runtime_api_invokes_exported_agent_through_provider_protocol(tmp_path: Path) -> None:
@@ -225,6 +276,7 @@ async def test_runtime_api_invokes_exported_agent_through_provider_protocol(tmp_
                 if run.json()["status"] == "completed":
                     break
                 sleep(0.01)
+            events = client.get(f"/runs/{run_id}/events", headers=RUNTIME_HEADERS)
 
     assert health.json() == {"status": "ok"}
     assert metadata.json()["manifest"]["agent_version_id"] == str(artifact.agent.agent_version_id)
@@ -234,3 +286,12 @@ async def test_runtime_api_invokes_exported_agent_through_provider_protocol(tmp_
     assert run.json()["trace_id"]
     assert OpenAIStubHandler.requests[0]["model"] == "test-model"
     assert OpenAIStubHandler.requests[0]["messages"][-1]["content"] == "Hello"
+    assert [event["event_type"] for event in events.json()] == [
+        "runtime.queued",
+        "runtime.started",
+        "agent.started",
+        "model.started",
+        "model.completed",
+        "agent.completed",
+        "runtime.completed",
+    ]
