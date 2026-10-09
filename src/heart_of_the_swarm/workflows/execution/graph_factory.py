@@ -1,8 +1,9 @@
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from typing import Annotated, Any, NoReturn, TypedDict
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -231,6 +232,7 @@ class WorkflowGraphFactory:
         execution_path: str = "root",
         max_handoffs: int = 20,
         max_state_bytes: int = 5_000_000,
+        agent_callbacks: Sequence[BaseCallbackHandler] = (),
     ) -> WorkflowGraph:
         """Build one graph while resolving registered capabilities up front."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
@@ -251,6 +253,7 @@ class WorkflowGraphFactory:
             subworkflows={},
             max_handoffs=max_handoffs,
             max_state_bytes=max_state_bytes,
+            agent_callbacks=agent_callbacks,
         )
 
     async def acreate(
@@ -267,6 +270,7 @@ class WorkflowGraphFactory:
         max_handoffs: int = 20,
         max_state_bytes: int = 5_000_000,
         interrupt_after: tuple[str, ...] = (),
+        agent_callbacks: Sequence[BaseCallbackHandler] = (),
     ) -> WorkflowGraph:
         """Resolve immutable child versions and compile them as nested LangGraph graphs."""
         if not isinstance(workflow, ValidatedWorkflowSpec):
@@ -288,6 +292,7 @@ class WorkflowGraphFactory:
             runtime_context=None,
             max_handoffs=max_handoffs,
             max_state_bytes=max_state_bytes,
+            agent_callbacks=agent_callbacks,
         )
 
     async def _acreate(
@@ -308,6 +313,7 @@ class WorkflowGraphFactory:
         runtime_context: dict[str, Any] | None,
         max_handoffs: int,
         max_state_bytes: int,
+        agent_callbacks: Sequence[BaseCallbackHandler],
     ) -> WorkflowGraph:
         """Compile one workflow and its immutable dependency tree recursively."""
         subworkflows: dict[str, WorkflowGraph] = {}
@@ -376,6 +382,7 @@ class WorkflowGraphFactory:
                 runtime_context=child_context,
                 max_handoffs=max_handoffs,
                 max_state_bytes=max_state_bytes,
+                agent_callbacks=agent_callbacks,
             )
             subworkflows[node.id] = child_graph
 
@@ -392,6 +399,7 @@ class WorkflowGraphFactory:
             subworkflows=subworkflows,
             max_handoffs=max_handoffs,
             max_state_bytes=max_state_bytes,
+            agent_callbacks=agent_callbacks,
             compile_interrupt_after=tuple(path for path in interrupt_after if "/" not in path),
         )
 
@@ -410,6 +418,7 @@ class WorkflowGraphFactory:
         subworkflows: Mapping[str, WorkflowGraph],
         max_handoffs: int,
         max_state_bytes: int,
+        agent_callbacks: Sequence[BaseCallbackHandler],
         compile_interrupt_after: tuple[str, ...] = (),
     ) -> WorkflowGraph:
         """Build one graph from validated nodes and already-compiled child graphs."""
@@ -430,6 +439,7 @@ class WorkflowGraphFactory:
             capability_authorizer=self.capability_authorizer,
             approval_grants=(self.approval_grants if execution_path == "root" else None),
             max_state_bytes=max_state_bytes,
+            agent_callbacks=agent_callbacks,
         )
         outgoing = self._outgoing_edges(workflow)
         nodes_by_id = {node.id: node for node in workflow.nodes}

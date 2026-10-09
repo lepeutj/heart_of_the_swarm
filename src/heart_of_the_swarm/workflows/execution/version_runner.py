@@ -11,6 +11,11 @@ from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
 )
+from heart_of_the_swarm.workflows.execution.execution_budget import (
+    InMemoryModelCallBudget,
+    ModelCallBudget,
+    ModelCallBudgetCallback,
+)
 from heart_of_the_swarm.workflows.execution.graph_factory import WorkflowGraphFactory
 from heart_of_the_swarm.workflows.execution.models import ExecutionResult
 from heart_of_the_swarm.workflows.execution.state_budget import (
@@ -33,6 +38,7 @@ class ExecutionPolicy(BaseModel):
     max_subworkflow_depth: int = Field(default=MAX_SUBWORKFLOW_DEPTH, ge=1, le=32)
     max_handoffs: int = Field(default=20, ge=1, le=100)
     max_state_bytes: int = Field(default=5_000_000, ge=1_024, le=100_000_000)
+    max_model_calls: int = Field(default=100, ge=1, le=10_000)
 
 
 class WorkflowExecutionEvent(BaseModel):
@@ -75,6 +81,7 @@ class WorkflowVersionRunner:
         resume_value: dict[str, Any] | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
         interrupt_after: tuple[str, ...] = (),
+        model_call_budget: ModelCallBudget | None = None,
     ) -> ExecutionResult:
         """Validate, build, and invoke one LangGraph workflow version."""
         self.capabilities.verify_contracts(version.capability_contracts)
@@ -90,6 +97,7 @@ class WorkflowVersionRunner:
                     workflow_id=workflow.id,
                 )
             ) from exc
+        budget = model_call_budget or InMemoryModelCallBudget(policy.max_model_calls)
         graph = await self.graphs.acreate(
             workflow,
             workflow_run_id=execution_id,
@@ -100,6 +108,7 @@ class WorkflowVersionRunner:
             max_handoffs=policy.max_handoffs,
             max_state_bytes=policy.max_state_bytes,
             interrupt_after=tuple(path for path in interrupt_after if "/" in path),
+            agent_callbacks=(ModelCallBudgetCallback(budget),),
         )
 
         async with asyncio.timeout(policy.timeout_seconds):

@@ -34,6 +34,9 @@ from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
 )
+from heart_of_the_swarm.workflows.execution.execution_budget import (
+    ModelCallBudgetExceededError,
+)
 from heart_of_the_swarm.workflows.execution.state_budget import (
     WorkflowStateBudgetError,
     enforce_state_size,
@@ -185,6 +188,25 @@ class _DatabaseWorkflowEventSink:
             )
 
 
+class _DatabaseModelCallBudget:
+    """Reserve model calls atomically against one durable execution thread."""
+
+    def __init__(self, database: Database, thread_id: str, limit: int) -> None:
+        self.database = database
+        self.thread_id = thread_id
+        self.limit = limit
+
+    async def consume_model_call(self) -> int:
+        async with self.database.session() as session:
+            consumed = await WorkflowRunRepository(session).consume_model_call(
+                self.thread_id,
+                self.limit,
+            )
+        if consumed is None:
+            raise ModelCallBudgetExceededError(self.limit)
+        return consumed
+
+
 class WorkflowExecutor:
     """Own durable run lifecycle around the portable workflow runner."""
 
@@ -220,6 +242,7 @@ class WorkflowExecutor:
             timeout_seconds=settings.workflow_timeout_seconds,
             recursion_limit=settings.workflow_recursion_limit,
             max_state_bytes=settings.workflow_max_state_bytes,
+            max_model_calls=settings.workflow_max_model_calls,
         )
 
     async def execute(
@@ -278,6 +301,15 @@ class WorkflowExecutor:
                     resume_value=context.resume_value,
                     checkpointer=self._checkpointer(),
                     interrupt_after=interrupt_after,
+                    model_call_budget=(
+                        _DatabaseModelCallBudget(
+                            self.database,
+                            context.thread_id,
+                            self.policy.max_model_calls,
+                        )
+                        if context.thread_id is not None
+                        else None
+                    ),
                 )
                 async with self.database.session() as session:
                     repository = WorkflowRunRepository(session)

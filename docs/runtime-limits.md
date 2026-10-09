@@ -16,7 +16,8 @@ control-plane scheduling. It is not a generic quota or billing system.
 | Scheduling concurrency | The local worker executes one run at a time. The deployment target is one run per container. | Control-plane scheduling remains deferred. |
 | HTTP request size | `HTTPPolicy.max_request_bytes` rejects oversized bodies before routing in both APIs. | None for the current JSON HTTP boundary. |
 | Workflow state size | Initial and propagated shared state are bounded before run persistence or LangGraph checkpointing. | None for the public shared-state boundary. |
-| Model/tool calls | Callbacks trace calls and usage, but do not enforce budgets. | Add shared deterministic call counters. |
+| Model calls | A callback reserves calls atomically against the durable execution thread before provider invocation. | None for workflow execution. |
+| Tool calls | Callbacks trace calls and usage, but do not enforce a budget. | Add an independent deterministic tool-call counter. |
 | Model context | `ModelDescriptor.context_length` can describe the selected model, and OpenRouter supplies it when available. | Enforce a per-invocation input budget in the model runtime. |
 | Tokens/cost | Provider metadata is recorded when available. | Thread-wide token and monetary enforcement remains deferred. |
 | Outbound network | MCP destinations are checked by the runtime `NetworkPolicy`. | Other remote adapters must adopt the same boundary when introduced. |
@@ -35,7 +36,7 @@ timeout_seconds
 recursion_limit
 max_subworkflow_depth
 max_handoffs
-max_model_calls       (planned)
+max_model_calls
 max_tool_calls        (planned)
 max_state_bytes
 ```
@@ -46,13 +47,17 @@ duplicate the same responsibility.
 Timeout is measured per active `WorkflowRun` attempt. Human waiting time between an interruption
 and its continuation does not consume it. Model- and tool-call counters apply across the complete
 `ExecutionThread`, including continuation runs, so an interruption cannot reset a budget. A direct
-agent run has no thread and owns its counters for that run. Direct agent runs default to a
+agent run has no thread and does not yet enforce call counters. It remains bounded by its
 configurable ten-minute timeout; longer work belongs in durable workflows with checkpoints and
 resume rather than one worker-bound invocation.
 
-Calls are counted when they start. A connector invocation counts as one tool call. Calls selected
-inside LangChain agents use the same injected execution budget; subworkflows do not receive a new
-budget. Exceeding a call budget fails before starting the next call.
+Model calls are reserved atomically when LangChain starts the model callback, before provider
+execution. Continuation runs reload the same durable thread counter, while subworkflows receive the
+same injected budget. Exceeding the budget fails before starting the next provider call.
+
+Tool calls will follow the same start-time rule in the next independent increment. A connector
+invocation counts as one tool call, and calls selected inside LangChain agents must share the same
+thread counter.
 
 `max_state_bytes` applies to the current public workflow shared state, measured as canonical UTF-8
 JSON. It is checked on initial input and after node output mappings or reducer merges, before the
@@ -111,11 +116,9 @@ Health checks and bodyless reads are unaffected.
 
 ## Implementation order
 
-1. Add one thread-scoped counter for `max_model_calls` across agents, subworkflows, interruptions,
-   and resume.
-2. Add one independent thread-scoped counter for `max_tool_calls` across connectors, agents,
+1. Add one independent thread-scoped counter for `max_tool_calls` across connectors, agents,
    subworkflows, interruptions, and resume.
-3. Enforce `ModelInputBudget` for every invocation using the selected model's declared context
+2. Enforce `ModelInputBudget` for every invocation using the selected model's declared context
    window and token-counting strategy.
 
 Thread-wide token and monetary budgets, context compression strategies, per-user quotas,

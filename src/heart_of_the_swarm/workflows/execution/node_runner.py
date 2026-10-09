@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, NoReturn
@@ -8,6 +8,7 @@ from uuid import UUID
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphBubbleUp
 from pydantic import BaseModel
 
@@ -42,6 +43,9 @@ from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionRe
 from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
+)
+from heart_of_the_swarm.workflows.execution.execution_budget import (
+    ModelCallBudgetExceededError,
 )
 from heart_of_the_swarm.workflows.execution.state_budget import (
     WorkflowStateBudgetError,
@@ -95,6 +99,7 @@ class WorkflowNodeRunner:
         capability_authorizer: CapabilityAuthorizer | None = None,
         approval_grants: ApprovalGrantConsumer | None = None,
         max_state_bytes: int = 5_000_000,
+        agent_callbacks: Sequence[BaseCallbackHandler] = (),
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -109,6 +114,7 @@ class WorkflowNodeRunner:
         self.capability_authorizer = capability_authorizer
         self.approval_grants = approval_grants
         self.max_state_bytes = max_state_bytes
+        self.agent_callbacks = tuple(agent_callbacks)
 
     async def run(
         self,
@@ -407,7 +413,10 @@ class WorkflowNodeRunner:
         try:
             invocation_options: dict[str, Any] = {
                 "system_prompt": system_prompt,
-                "callbacks": [self.callback] if self.callback is not None else [],
+                "callbacks": [
+                    *([self.callback] if self.callback is not None else []),
+                    *self.agent_callbacks,
+                ],
                 "metadata": self._node_context(node, event_context),
                 "response_schema": response_schema,
             }
@@ -423,6 +432,13 @@ class WorkflowNodeRunner:
             raise
         except WorkflowExecutionError:
             raise
+        except ModelCallBudgetExceededError as exc:
+            self._raise(
+                code="workflow.execution.model_call_budget_exceeded",
+                message=str(exc),
+                node=node,
+                cause=exc,
+            )
         except Exception as exc:
             self._raise(
                 code="workflow.execution.agent_failed",

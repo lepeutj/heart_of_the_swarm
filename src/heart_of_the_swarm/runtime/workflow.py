@@ -137,6 +137,7 @@ class StandaloneWorkflowRuntime:
                     timeout_seconds=self.settings.workflow_timeout_seconds,
                     recursion_limit=self.settings.workflow_recursion_limit,
                     max_state_bytes=self.settings.workflow_max_state_bytes,
+                    max_model_calls=self.settings.workflow_max_model_calls,
                 ),
                 execution_id=run_id,
             )

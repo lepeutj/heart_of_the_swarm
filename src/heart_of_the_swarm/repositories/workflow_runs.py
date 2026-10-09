@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from heart_of_the_swarm.models import (
     ExecutionThreadRecord,
@@ -281,6 +281,27 @@ class WorkflowRunRepository(RepositoryBase):
         run.lease_expires_at = now + timedelta(seconds=lease_seconds)
         await self.session.commit()
         return True
+
+    async def consume_model_call(self, thread_id: str, limit: int) -> int | None:
+        """Atomically reserve one model call without allowing the thread to exceed its limit."""
+        statement = (
+            update(ExecutionThreadRecord)
+            .where(
+                ExecutionThreadRecord.id == thread_id,
+                ExecutionThreadRecord.model_calls < limit,
+            )
+            .values(
+                model_calls=ExecutionThreadRecord.model_calls + 1,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(ExecutionThreadRecord.model_calls)
+        )
+        consumed = (await self.session.execute(statement)).scalar_one_or_none()
+        if consumed is not None:
+            await self.session.commit()
+        else:
+            await self.session.rollback()
+        return consumed
 
     async def finish(self, run_id: str, output: Any, executed_nodes: tuple[str, ...]) -> None:
         run = await self._required(WorkflowRunRecord, run_id)

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from heart_of_the_swarm.models import Base
 
-SCHEMA_REVISION = "0013_approval_grants"
+SCHEMA_REVISION = "0014_execution_model_budget"
 REQUIRED_TABLES = {
     "agents",
     "agent_versions",
