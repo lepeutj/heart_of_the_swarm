@@ -1,7 +1,9 @@
 # Heart of the Swarm
 
-Heart of the Swarm visually configures AI agents and workflows, then turns the same declarative
-data into LangChain/LangGraph runtimes that can be tested, traced, versioned, and deployed.
+Heart of the Swarm is an agent engineering workbench. It creates useful AI agents from declarative
+configuration, freezes them as immutable versions, runs them with observable model/tool behavior,
+and can export them to an autonomous runtime. Explicit LangGraph workflows remain available for
+composing agents and deterministic steps, but they are not the primary creation experience.
 
 ```text
 Builder LLM or React editor
@@ -11,6 +13,15 @@ AgentSpec / WorkflowSpec
 LangChain create_agent / LangGraph StateGraph
         ↓
 run, trace, version, deploy
+```
+
+The visible product story is deliberately small:
+
+```text
+BUILD       AgentSpec → immutable AgentVersion
+RUN         task → model/tools → result
+UNDERSTAND  events → trajectory → trace → metrics
+DEPLOY      AgentVersion → artifact → autonomous runtime
 ```
 
 ## Product contracts
@@ -34,17 +45,37 @@ reusable instructions. Deterministic `CONNECTOR` nodes invoke one registered cap
 - MLflow: technical traces and evaluation.
 - React Flow: editing and layout only.
 
+## Current product priority
+
+The current priority is a dedicated Agent Studio that exposes the agent capabilities already
+implemented by the API and runtime. A user must be able to generate or edit an `AgentSpec`, choose
+its model, tools, and Skills, validate it, create an immutable version, run a task, and inspect the
+result and trajectory without first creating a workflow node.
+
+The product surfaces have separate purposes:
+
+```text
+Agent Studio     build, version, test, and understand one intelligent unit
+Workflow Studio  compose agents and deterministic operations explicitly
+Remote Runtime   execute one immutable version in another environment
+```
+
+The deployment registry and automated provisioning are deferred. The existing artifact and remote
+runtime are sufficient for the next portfolio demonstration. A Deep Agents integration is also
+deferred until an isolated comparison proves that `create_deep_agent` adds enough value over the
+existing `create_agent` runtime on the same specification, tools, model, and task.
+
 ## Current state
 
 Implemented: agent builder, provider and tool registries, immutable agent versions, asynchronous
 runs, trajectories, usage metrics, Docker stack, workflow validation/runtime, React Flow editing,
 and persisted workflow drafts with separate layout metadata.
 
-The primary page is now an observation dashboard for saved definitions, recent agent runs,
-failures, trajectories, and model usage. Workflow and inline-agent editing is concentrated in the
-React Flow builder. Selecting `INPUT` edits the workflow invocation contract, selecting `OUTPUT`
-edits named final results and their optional types, and agent data mappings remain available as an
-advanced contextual section rather than permanent global forms.
+The current React application is primarily a Workflow Studio. Inline agents can be configured and
+saved from an `AGENT` node, but this hides the already-implemented direct agent APIs behind a
+workflow-oriented path. The missing Agent Studio is therefore a product and UX gap, not a missing
+agent runtime. Selecting `INPUT` in the existing workflow editor edits the workflow invocation
+contract, while selecting `OUTPUT` edits named final results and their optional types.
 
 Named state mappings, unified agent nodes, Markdown Skills, deterministic connectors, and optional
 workflow output schemas are implemented. Remote HTTP MCP tools are discovered through LangChain,
@@ -148,7 +179,8 @@ V2.7c stabilizes that boundary around one active run per long-lived runtime, cor
 logs, export-time rejection of unsupported human approval, and detailed workflow events carrying
 run and trace identity. The obsolete unauthenticated dashboard redirects to the authenticated React
 application. A deployment is durable availability of one immutable version; a run remains one
-bounded task. V2.8 registers already-running runtimes, while automated provisioning remains V3.
+bounded task. Registration and automated provisioning are now deferred until the Agent Studio,
+portfolio examples, and one reproducible remote demonstration are complete.
 
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow

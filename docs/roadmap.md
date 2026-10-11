@@ -3,13 +3,14 @@
 ## Product flow
 
 ```text
-Build visually or with the Builder LLM
-→ validate
-→ save draft
-→ create immutable version
-→ test and trace
-→ deploy
+BUILD       AgentSpec → immutable AgentVersion
+RUN         task → model/tools → result
+UNDERSTAND  events → trajectory → trace → metrics
+DEPLOY      AgentVersion → artifact → autonomous runtime
 ```
+
+Agent creation is the primary product path. Workflow construction is the advanced composition
+path; it must not be required to create or test a standalone agent.
 
 ## Completed foundation
 
@@ -35,6 +36,85 @@ Build visually or with the Builder LLM
 - Exported workflow-version artifacts and a generic standalone workflow runtime API.
 - Optional MLflow LangChain/LangGraph autotracing with runtime trace-ID correlation.
 - Real Docker verification of an exported workflow artifact and its nested MLflow trace.
+
+## Current delivery plan — Agent portfolio path
+
+This plan supersedes deployment-registry work as the immediate priority. It does not remove the
+implemented workflow, security, or remote-runtime capabilities.
+
+### P1 — Agent Studio MVP
+
+Status: implemented.
+
+1. Add a dedicated `/agents` product surface rather than requiring an inline workflow node.
+2. List saved agents and load the selected immutable version into a typed editor.
+3. Create an `AgentSpec` manually or generate one through the existing Builder endpoint.
+4. Edit the model, tools, Skills, goal, and instructions using backend catalogue data.
+5. Validate before persistence, create the first immutable version, and create later versions
+   without mutating earlier ones.
+
+Exit criterion: a user can generate, review, edit, validate, save, reload, and version an agent from
+one dedicated interface.
+
+### P2 — Direct run and understanding
+
+1. Run the selected immutable `AgentVersion` from the Agent Studio.
+2. Display queued/running/terminal state, model and tool lifecycle, final result, and safe failure.
+3. Display the stored trajectory, usage summary, and MLflow trace correlation without rebuilding
+   observability in React.
+
+Exit criterion: the complete `BUILD → RUN → UNDERSTAND` path is demonstrable without using the
+Workflow Studio.
+
+### P3 — Portfolio agents
+
+Ship two or three reproducible examples that exercise different engineering concerns:
+
+- research agent: web/data tools, reasoning, sources, and structured output;
+- repository analyst: MCP or trusted repository tools and architecture reporting;
+- document/RAG agent: retrieval and context pipeline, implemented only as the smallest real vertical
+  slice needed by the example.
+
+Examples are normal `AgentSpec` data and trusted capabilities, never special generated services.
+
+Exit criterion: each example can be created or loaded, versioned, run, and inspected by another
+developer following repository instructions.
+
+### P4 — Reproducible remote Docker demonstration
+
+Use the existing artifact and authenticated remote-runtime boundary before building a deployment
+control plane:
+
+```text
+Agent Studio
+→ AgentVersion
+→ export artifact
+→ Docker runtime on another host
+→ authenticated invoke
+→ events, result, and trace correlation
+```
+
+A script and concise Linux/Windows instructions are sufficient. Runtime registration and automated
+provisioning are not prerequisites.
+
+Exit criterion: one portfolio agent created in Heart runs on a second Docker environment and its
+result and trace correlation are retrieved from the original machine.
+
+### P5 — Deep Agents evaluation
+
+Evaluate `deepagents` as an optional agent-construction adapter, not as a replacement workflow
+engine. Run the same model, tools, instructions, Skills, and task through `create_agent` and
+`create_deep_agent`; compare task quality, tool behavior, trajectory, tokens, latency,
+observability, authorization compatibility, and Docker portability.
+
+Do not change the public `AgentSpec` during the spike. If the comparison demonstrates a meaningful
+benefit for long research, context management, filesystem work, or subagent delegation, introduce a
+small declarative runtime choice behind the existing runner boundary. Pin the pre-1.0 dependency
+and keep all Deep Agents runtime objects out of public specifications.
+
+Exit criterion: a recorded comparison supports either rejecting the integration or adding a
+minimal `standard`/`deep` runtime choice without changing version, run, tool, or observability
+contracts.
 
 ## V2 objective
 
@@ -218,7 +298,7 @@ observe lifecycle events, and retrieve its final result and trace identifier.
 Per-model invocation context enforcement follows this MVP and remains independent from remote run
 transport.
 
-## V2.8 — Deployment registry and remote runs
+## Deferred — Deployment registry and remote runs
 
 1. Register one already-running runtime endpoint against one immutable `AgentVersion`.
 2. Persist runtime identity, endpoint, credential reference, health-derived status, and timestamps.
@@ -231,7 +311,7 @@ transport.
 Exit criterion: Heart can register an existing runtime, verify that it serves the expected immutable
 version, send it work, follow the remote run, and retain its final result and trace correlation.
 
-## V2.9 — Deployment and execution UI
+## Deferred — Deployment and execution UI
 
 1. Register and inspect a runtime without implying that Heart provisioned it.
 2. Display deployment health and immutable source identity.
@@ -241,7 +321,7 @@ version, send it work, follow the remote run, and retain its final result and tr
 Exit criterion: an operator can register a runtime, send work, and observe the complete remote run
 from React.
 
-## V3 — Automated provisioning
+## Deferred — Automated provisioning
 
 Provision the generic runtime image, transfer and verify artifacts, inject external configuration,
 wait for health, and manage start, stop, restart, and rollback for one Docker host before adding
@@ -255,6 +335,9 @@ other targets.
 - Kubernetes and additional cloud providers;
 - generic OAuth providers and multi-tenant billing;
 - automatic retries of non-idempotent external side effects.
+- deployment registration, health management, and remote-run persistence until the agent portfolio
+  path is complete;
+- full Deep Agents integration until the isolated comparison is conclusive.
 
 Do not add UI-only execution concepts, custom agent loops, custom workflow traversal, or duplicate
 tracing/evaluation platforms.

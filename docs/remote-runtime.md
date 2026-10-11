@@ -114,8 +114,10 @@ Deployment = durable availability of one immutable version
 Run        = one bounded task executed by that deployment
 ```
 
-V2.8 initially registers an already-running endpoint. Automated container provisioning, artifact
-installation, credential injection, health convergence, and rollback belong to V3.
+Deployment registration is deferred until the Agent Studio, portfolio examples, and reproducible
+remote Docker demonstration are complete. When it resumes, the first increment registers an
+already-running endpoint. Automated container provisioning, artifact installation, credential
+injection, health convergence, and rollback remain later work.
 
 ## Control-plane client
 

@@ -1,13 +1,44 @@
 # Heart of the Swarm
 
-Heart of the Swarm designs, validates, versions, and runs LangChain agents and LangGraph workflows.
-It includes a visual editor, OpenAI and OpenRouter providers, PostgreSQL persistence, structured
-audit logs, model-usage aggregation, portable Docker runtimes, and optional MLflow traces.
+Heart of the Swarm turns declarative configuration into tested, traced, versioned, and portable
+LangChain agents and LangGraph workflows. It is a portfolio project focused on the engineering
+boundaries behind useful GenAI systems: immutable specifications, trusted tool registries, durable
+execution, human approval, observability, and standalone Docker runtimes.
+
+The product has two complementary creation surfaces:
+
+- **Agent Studio** builds and versions one autonomous LangChain agent from a model, instructions,
+  tools, and Markdown Skills.
+- **Workflow Studio** composes saved agents with deterministic connectors, transforms, conditions,
+  approvals, supervisors, subworkflows, loops, and parallel branches through LangGraph.
+
+## Product tour
+
+### Agent Studio
+
+Create an `AgentSpec` manually or generate an editable draft with the Builder, validate it against
+the trusted model/tool catalogues, and save immutable versions. Saved versions automatically become
+available to Workflow Studio.
+
+![Agent Studio showing the agent catalogue, typed configuration editor, and AgentSpec review](docs/images/agent-studio.png)
+
+### Workflow Studio
+
+Compose execution dependencies visually while state mappings carry structured data between nodes.
+The backend validates the public `WorkflowSpec` before compiling it to a LangGraph `StateGraph`.
+
+![Workflow Studio showing the node palette, React Flow canvas, and typed inspector](docs/images/workflow-studio.png)
+
+The current priority is the next [`Agent Studio`](docs/agent-studio.md) increment: run an exact
+saved `AgentVersion` and inspect its lifecycle, trajectory, result, usage, and trace from the same
+screen. Deployment registration and automated provisioning remain deferred until this portfolio
+path and one reproducible remote Docker demonstration are complete.
 
 For the frozen V1 architecture, its boundaries, and a reproducible five-minute demonstration, see
 [`docs/v1-demo.md`](docs/v1-demo.md).
 
-The ordered V2 milestones are in [`docs/roadmap.md`](docs/roadmap.md). Runtime contracts for
+The current delivery order and completed V2 milestones are in
+[`docs/roadmap.md`](docs/roadmap.md). Runtime contracts for
 threads, checkpoints, controlled cycles, subworkflows, reducers, handoffs, and streaming are in
 [`docs/v2-runtime-semantics.md`](docs/v2-runtime-semantics.md).
 
@@ -35,6 +66,7 @@ docker compose up --build
 | Service | URL | Purpose |
 | --- | --- | --- |
 | Application | <http://localhost:8000> | Configuration UI and API |
+| Agent Studio | <http://localhost:8000/agents/> | Create and version standalone agents |
 | Workflow editor | <http://localhost:8000/workflow-editor/> | React Flow workflow configuration |
 | API documentation | <http://localhost:8000/docs> | OpenAPI interface |
 | MLflow | <http://localhost:5000> | Trace exploration |

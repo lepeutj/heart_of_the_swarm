@@ -48,6 +48,25 @@ export interface AgentOption {
   version: number;
 }
 
+export interface AgentDetail extends AgentOption {
+  goal: string;
+  spec: AgentSpec;
+  prompt_version: string;
+  system_prompt: string;
+  created_at: string;
+}
+
+export interface AgentValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface AgentDesignResult {
+  design_id: string;
+  trace_id: string;
+  spec: AgentSpec;
+}
+
 export interface ToolCapability {
   id: string;
   source: "builtin" | "mcp";
@@ -296,8 +315,41 @@ export function loadAgents(): Promise<AgentOption[]> {
   return request("/api/v1/agents");
 }
 
-export function createAgent(spec: AgentSpec): Promise<AgentOption> {
+export function designAgent(
+  task: string,
+  provider?: string,
+  modelId?: string,
+): Promise<AgentDesignResult> {
+  return request("/api/v1/agents/design", {
+    method: "POST",
+    body: JSON.stringify({
+      task,
+      provider: provider || null,
+      model_id: modelId || null,
+    }),
+  });
+}
+
+export function validateAgent(spec: AgentSpec): Promise<AgentValidationResult> {
+  return request("/api/v1/agents/validate", {
+    method: "POST",
+    body: JSON.stringify(spec),
+  });
+}
+
+export function createAgent(spec: AgentSpec): Promise<AgentDetail> {
   return request("/api/v1/agents", {
+    method: "POST",
+    body: JSON.stringify(spec),
+  });
+}
+
+export function loadAgent(id: string): Promise<AgentDetail> {
+  return request(`/api/v1/agents/${id}`);
+}
+
+export function addAgentVersion(id: string, spec: AgentSpec): Promise<AgentDetail> {
+  return request(`/api/v1/agents/${id}/versions`, {
     method: "POST",
     body: JSON.stringify(spec),
   });

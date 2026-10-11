@@ -108,6 +108,14 @@ def test_workflow_editor_build_is_served() -> None:
     assert '<div id="root"></div>' in response.text
 
 
+def test_agent_studio_build_is_served() -> None:
+    with TestClient(app) as client:
+        response = client.get("/agents/")
+
+    assert response.status_code == 200
+    assert '<div id="root"></div>' in response.text
+
+
 def test_markdown_skill_can_be_uploaded_and_listed(tmp_path) -> None:
     runtime = SimpleNamespace(skills=SkillRegistry(tmp_path))
     app.dependency_overrides[get_application] = lambda: runtime

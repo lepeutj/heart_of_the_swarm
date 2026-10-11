@@ -100,6 +100,30 @@ async def test_run_service_queues_the_selected_immutable_agent_version() -> None
         await database.close()
 
 
+async def test_historical_agent_detail_uses_immutable_version_metadata() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        async with database.session() as session:
+            repository = AgentRepository(session)
+            first = await repository.create(make_spec("ResearchAgent"), "1", "First prompt")
+            second_spec = make_spec("RenamedAgent").model_copy(
+                update={"goal": "Analyze a repository"}
+            )
+            await repository.add_version(first.id, second_spec, "1", "Second prompt")
+
+        async with database.session() as session:
+            historical = await AgentRepository(session).get_version(first.version_id)
+
+        assert historical is not None
+        assert historical.name == "ResearchAgent"
+        assert historical.goal == "Research a subject"
+        assert historical.spec.name == historical.name
+        assert historical.spec.goal == historical.goal
+    finally:
+        await database.close()
+
+
 async def test_mcp_sources_are_persisted_for_other_processes() -> None:
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_schema()

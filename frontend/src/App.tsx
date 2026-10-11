@@ -35,6 +35,7 @@ import {
 import { EdgeInspector } from "./components/EdgeInspector";
 import { NodeInspector } from "./components/NodeInspector";
 import { ParallelStateEditor } from "./components/ParallelStateEditor";
+import { AgentStudio } from "./components/agents/AgentStudio";
 import { MCPServerPanel } from "./components/mcp/MCPServerPanel";
 import { WorkflowRunPanel } from "./components/runs/WorkflowRunPanel";
 import {
@@ -82,6 +83,7 @@ const AUTH_TOKEN_KEY = "heart-of-the-swarm.auth-token";
 export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(AUTH_TOKEN_KEY) ?? "");
   const [draft, setDraft] = useState("");
+  const isAgentStudio = window.location.pathname.startsWith("/agents");
 
   if (!token) {
     return (
@@ -111,21 +113,23 @@ export default function App() {
               onChange={(event) => setDraft(event.target.value)}
             />
           </label>
-          <button type="submit" className="primary">Open workflow editor</button>
+          <button type="submit" className="primary">
+            {isAgentStudio ? "Open Agent Studio" : "Open Workflow Studio"}
+          </button>
         </form>
       </main>
     );
   }
 
   setAuthenticationToken(token);
+  const logout = () => {
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    setAuthenticationToken(null);
+    setToken("");
+  };
+  if (isAgentStudio) return <AgentStudio onLogout={logout} />;
   return (
-    <WorkflowEditor
-      onLogout={() => {
-        sessionStorage.removeItem(AUTH_TOKEN_KEY);
-        setAuthenticationToken(null);
-        setToken("");
-      }}
-    />
+    <WorkflowEditor onLogout={logout} />
   );
 }
 
@@ -531,7 +535,8 @@ function WorkflowEditor({ onLogout }: { onLogout: () => void }) {
           <h1>Workflow editor</h1>
         </div>
         <div className="topbar-actions">
-          <a href="/">Overview</a>
+          <a href="/agents/">Agent Studio</a>
+          <a className="active" href="/workflow-editor/">Workflow Studio</a>
           <button type="button" onClick={onLogout}>Sign out</button>
           <button type="button" onClick={validate}>Validate</button>
           <button type="button" onClick={saveDraft}>Save draft</button>

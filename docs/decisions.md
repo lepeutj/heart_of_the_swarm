@@ -135,8 +135,15 @@ the normative field-level rules.
   normative contract is in `docs/remote-runtime.md`.
 - **ADR-054 — Deployments are durable availability, not executions.** One deployment binds one
   immutable version to one long-lived runtime container and accepts successive runs, one active run
-  at a time for the MVP. A run is one bounded task. V2.8 registers existing runtimes; automated
-  Docker provisioning remains V3.
+  at a time for the MVP. A run is one bounded task. When deployment work resumes, its first
+  increment registers existing runtimes; automated Docker provisioning remains later work.
+- **ADR-055 — Agent creation is the primary portfolio path.** Heart prioritizes a dedicated Agent
+  Studio and the visible `BUILD → RUN → UNDERSTAND → DEPLOY` story before deployment registration,
+  provisioning, or additional platform administration. Workflow Studio remains the advanced
+  explicit-composition surface. The existing artifact and authenticated runtime are sufficient for
+  the next remote demonstration. Deep Agents is evaluated first as an isolated construction adapter
+  using the same agent inputs; the public `AgentSpec` changes only if that comparison proves a
+  meaningful benefit.
 
 ## Current implementation limits
 

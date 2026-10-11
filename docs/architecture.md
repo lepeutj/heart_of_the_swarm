@@ -28,6 +28,30 @@ React editor ─────────────────┘
 The Builder generates configuration only. The application translates trusted, validated
 configuration into framework objects; it never executes generated Python.
 
+## Product surfaces
+
+Heart exposes three complementary surfaces rather than forcing every use case into one graph:
+
+```text
+Agent Studio
+→ generate or edit AgentSpec
+→ create immutable AgentVersion
+→ run and inspect one agent
+
+Workflow Studio
+→ compose agents, connectors, conditions, transforms, and outputs
+→ create immutable WorkflowVersion
+
+Remote Runtime
+→ load one immutable artifact
+→ accept authenticated tasks
+→ expose lifecycle, result, and trace correlation
+```
+
+Agent Studio is the primary creation path. Workflow Studio remains the explicit orchestration path
+and must not be required to create a standalone agent. Remote Runtime proves portability; it is not
+yet a deployment control plane.
+
 ## Control plane and runtime
 
 The main application is the control plane. It owns agent design, validation, immutable versions,
@@ -70,6 +94,12 @@ final assistant response. It contains no HTTP, database, queue, or business-run 
 `AgentFactory` is the thinner construction adapter. It resolves allow-listed tools, renders or
 accepts the stored system prompt, maps the agent name, and calls `langchain.agents.create_agent`. It
 must not implement a second model/tool loop.
+
+An optional Deep Agents adapter may be introduced only after an isolated evaluation proves a
+material benefit. `create_deep_agent` would remain another trusted construction adapter behind the
+same version, run, capability, security, and observability boundaries. Deep Agents planning,
+filesystem, memory, and subagent behavior must not be projected into synthetic React Flow nodes or
+reimplemented by Heart.
 
 The database worker wraps `AgentRunner` with claiming, cancellation checks, heartbeats, trajectory
 persistence, and run status transitions. A future standalone runtime can reuse `AgentRunner`
@@ -140,6 +170,10 @@ MLflow trace
 The runtime rebuilds the executable agent from declarative configuration. It never serializes Python
 objects or compiled LangGraph graphs. Credentials are injected when the service starts. Streaming,
 deployment management, and VPS targets follow only after the basic local Docker contract works.
+
+The immediate portfolio path uses manual artifact export and runtime startup. Durable deployment
+registration and automated container provisioning are intentionally deferred until the dedicated
+agent creation and inspection experience is complete.
 
 ## Workflow architecture
 

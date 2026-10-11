@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  addAgentVersion,
+  designAgent,
   parseEventStreamFrame,
   openWorkflowRunEventStream,
   request,
@@ -69,6 +71,64 @@ describe("API responses", () => {
     const headers = fetchMock.mock.calls[0][1].headers as Headers;
     expect(headers.get("Authorization")).toBe("Bearer session-token");
     expect(headers.get("X-Request-Kind")).toBe("test");
+  });
+
+  it("sends the Agent Studio design request through the existing builder contract", async () => {
+    const spec = {
+      name: "ResearchAgent",
+      goal: "Research one topic",
+      instructions: "Compare sources.",
+      model: { provider: "openrouter", model_id: "model-a", temperature: 0 },
+      tools: ["web_search"],
+      skills: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      design_id: "design-1",
+      trace_id: "trace-1",
+      spec,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await designAgent("Research recent news", "openrouter", "model-a");
+
+    expect(result.spec).toEqual(spec);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/agents/design",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          task: "Research recent news",
+          provider: "openrouter",
+          model_id: "model-a",
+        }),
+      }),
+    );
+  });
+
+  it("creates a new immutable version for the selected saved agent", async () => {
+    const spec = {
+      name: "ResearchAgent",
+      goal: "Research one topic",
+      instructions: "Compare sources and cite them.",
+      model: { provider: "openrouter", model_id: "model-a", temperature: 0 },
+      tools: ["web_search"],
+      skills: ["research"],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "agent-1",
+      version_id: "version-2",
+      version: 2,
+      ...spec,
+      spec,
+    }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await addAgentVersion("agent-1", spec);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/agents/agent-1/versions",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(spec) }),
+    );
   });
 
   it("parses an SSE frame while ignoring transport formatting", () => {

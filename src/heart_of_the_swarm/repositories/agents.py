@@ -138,14 +138,15 @@ class AgentRepository(RepositoryBase):
 
     @staticmethod
     def _detail(agent: AgentRecord, version: AgentVersionRecord) -> AgentDetail:
+        spec = AgentSpec.model_validate(version.spec)
         return AgentDetail(
             id=agent.id,
             version_id=version.id,
-            name=agent.name,
-            goal=agent.goal,
+            name=spec.name,
+            goal=spec.goal,
             version=version.version,
             created_at=agent.created_at,
-            spec=AgentSpec.model_validate(version.spec),
+            spec=spec,
             prompt_version=version.prompt_version,
             system_prompt=version.system_prompt,
         )

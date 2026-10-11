@@ -136,6 +136,11 @@ app.mount(
     StaticFiles(directory=PACKAGE_DIR / "static" / "workflow-editor", html=True, check_dir=False),
     name="workflow-editor",
 )
+app.mount(
+    "/agents",
+    StaticFiles(directory=PACKAGE_DIR / "static" / "workflow-editor", html=True, check_dir=False),
+    name="agent-studio",
+)
 
 
 @app.middleware("http")
