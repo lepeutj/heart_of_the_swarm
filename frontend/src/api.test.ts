@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   addAgentVersion,
+  createAgentVersionRun,
   designAgent,
+  loadAgentVersions,
   parseEventStreamFrame,
   openWorkflowRunEventStream,
   request,
@@ -128,6 +130,35 @@ describe("API responses", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/agents/agent-1/versions",
       expect.objectContaining({ method: "POST", body: JSON.stringify(spec) }),
+    );
+  });
+
+  it("loads historical versions and queues the exact selected version", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { id: "agent-1", version_id: "version-2", version: 2 },
+        { id: "agent-1", version_id: "version-1", version: 1 },
+      ]), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        run_id: "run-1",
+        trace_id: "trace-1",
+        agent_id: "agent-1",
+        agent_version: 1,
+        status: "queued",
+      }), { status: 202, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const versions = await loadAgentVersions("agent-1");
+    const run = await createAgentVersionRun("version-1", "Use historical behavior");
+
+    expect(versions.map((version) => version.version_id)).toEqual(["version-2", "version-1"]);
+    expect(run.agent_version).toBe(1);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v1/agent-versions/version-1/runs",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ input: "Use historical behavior" }),
+      }),
     );
   });
 

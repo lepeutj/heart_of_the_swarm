@@ -29,10 +29,12 @@ The backend validates the public `WorkflowSpec` before compiling it to a LangGra
 
 ![Workflow Studio showing the node palette, React Flow canvas, and typed inspector](docs/images/workflow-studio.png)
 
-The current priority is the next [`Agent Studio`](docs/agent-studio.md) increment: run an exact
-saved `AgentVersion` and inspect its lifecycle, trajectory, result, usage, and trace from the same
-screen. Deployment registration and automated provisioning remain deferred until this portfolio
-path and one reproducible remote Docker demonstration are complete.
+[`Agent Studio`](docs/agent-studio.md) now runs an explicitly selected historical or current
+`AgentVersion` and shows its lifecycle, result, stored model/tool trajectory, run-scoped usage, and
+trace correlation from the same screen. The current priority is exporting that same tested version
+as the existing `manifest.json` + `agent.json` Docker artifact. Deployment registration and
+automated provisioning remain deferred until one reproducible remote Docker demonstration is
+complete.
 
 For the frozen V1 architecture, its boundaries, and a reproducible five-minute demonstration, see
 [`docs/v1-demo.md`](docs/v1-demo.md).
@@ -319,11 +321,14 @@ POST /api/v1/agents
 POST /api/v1/agents/{id}/versions
 GET  /api/v1/agents
 GET  /api/v1/agents/{id}
+GET  /api/v1/agents/{id}/versions
 POST /api/v1/agents/{id}/runs
+POST /api/v1/agent-versions/{id}/runs
 GET  /api/v1/agents/{id}/runs
 GET  /api/v1/runs/{id}
 GET  /api/v1/runs/{id}/events
 GET  /api/v1/runs/{id}/trajectory
+GET  /api/v1/runs/{id}/usage
 POST /api/v1/runs/{id}/cancel
 GET  /api/v1/usage/summary
 ```

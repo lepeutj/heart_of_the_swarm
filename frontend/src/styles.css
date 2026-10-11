@@ -199,6 +199,27 @@ pre { max-height: 360px; overflow: auto; padding: 10px; border-radius: 6px; colo
 .capability-checks small { color: #718077; font-size: 9px; text-transform: uppercase; }
 .agent-review .workflow-facts { margin-top: 18px; }
 .agent-review details { margin-top: 18px; }
+.agent-version-select { display: grid; gap: 7px; margin: 18px 0; max-width: 360px; }
+.agent-run-card {
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid #2b3831;
+  border-radius: 10px;
+  background: #101713;
+}
+.agent-run-card textarea { min-height: 96px; }
+.agent-run-card > button { margin-top: 10px; }
+.run-status { padding: 5px 9px; border-radius: 999px; color: #8fa097; background: #1b2520; font-size: 10px; text-transform: uppercase; }
+.run-status.running, .run-status.queued, .run-status.cancel_requested { color: #f4c66d; }
+.run-status.completed { color: #79d19c; }
+.run-status.failed, .run-status.cancelled, .run-status.timed_out, .run-status.interrupted { color: #ff938c; }
+.agent-run-details { display: grid; gap: 14px; margin-top: 18px; }
+.agent-run-result { padding: 14px; border-left: 3px solid #71d29a; background: #15231c; }
+.agent-run-result p { margin-bottom: 0; white-space: pre-wrap; }
+.trajectory-list { display: grid; gap: 8px; max-height: 420px; overflow: auto; margin-top: 10px; }
+.trajectory-list article { padding: 10px; border: 1px solid #27332c; border-radius: 7px; background: #0b100d; }
+.trajectory-list article > span { margin-left: 8px; color: #718077; font-size: 10px; }
+.trajectory-list pre { margin-bottom: 0; }
 
 @media (max-width: 1180px) {
   body { min-width: 900px; }

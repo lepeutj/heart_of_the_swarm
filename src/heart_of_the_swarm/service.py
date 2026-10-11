@@ -136,6 +136,11 @@ class AgentService:
         async with self.database.session() as session:
             return await AgentRepository(session).get(agent_id)
 
+    async def list_versions(self, agent_id: str) -> list[AgentDetail]:
+        """List the immutable configurations available for exact execution."""
+        async with self.database.session() as session:
+            return await AgentRepository(session).list_versions(agent_id)
+
     async def get_agent_version(self, agent_id: str, version: int) -> AgentDetail | None:
         """Resolve the immutable version used by a persisted agent run."""
         async with self.database.session() as session:

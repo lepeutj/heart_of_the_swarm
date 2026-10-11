@@ -213,6 +213,44 @@ def test_start_run_returns_an_accepted_queue_record() -> None:
     assert response.json()["trace_id"] == response.headers["X-Trace-ID"]
 
 
+def test_start_run_uses_the_explicit_immutable_agent_version() -> None:
+    class FakeRuns:
+        async def queue(self, version_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
+            assert version_id == "historical-version"
+            assert agent_input == "Use the old behavior"
+            return AgentRunAccepted(
+                run_id="run-historical",
+                trace_id=trace_id,
+                agent_id="agent-1",
+                agent_version=1,
+                status="queued",
+            )
+
+    class FakeAgents:
+        async def get_version(self, version_id):
+            assert version_id == "historical-version"
+            return SimpleNamespace(
+                id="agent-1",
+                version_id="historical-version",
+                version=1,
+            )
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        runs=FakeRuns(), agents=FakeAgents()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/agent-versions/historical-version/runs",
+                json={"input": "Use the old behavior"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 202
+    assert response.json()["agent_version"] == 1
+
+
 def test_unknown_run_trajectory_returns_not_found() -> None:
     class FakeRuns:
         async def get(self, run_id: str):

@@ -58,6 +58,8 @@ one dedicated interface.
 
 ### P2 — Direct run and understanding
 
+Status: implemented.
+
 1. Run the selected immutable `AgentVersion` from the Agent Studio.
 2. Display queued/running/terminal state, model and tool lifecycle, final result, and safe failure.
 3. Display the stored trajectory, usage summary, and MLflow trace correlation without rebuilding

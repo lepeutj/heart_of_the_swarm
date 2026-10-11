@@ -212,6 +212,8 @@ async def test_repository_persists_versions_runs_and_usage() -> None:
             run = await RunRepository(session).get(queued.run_id)
             events = await RunRepository(session).list_events(queued.run_id)
             summary = await ObservabilityRepository(session).usage_summary()
+            run_summary = await ObservabilityRepository(session).run_usage_summary(queued.run_id)
+            versions = await AgentRepository(session).list_versions(agent.id)
         assert run is not None
         assert run.status == "completed"
         assert run.output == "Done"
@@ -219,6 +221,11 @@ async def test_repository_persists_versions_runs_and_usage() -> None:
         assert summary[0].calls == 1
         assert summary[0].total_tokens == 15
         assert summary[0].cost == 0.01
+        assert run_summary == summary
+        assert [(version.version, version.name) for version in versions] == [
+            (2, "UpdatedAgent"),
+            (1, "ResearchAgent"),
+        ]
     finally:
         await database.close()
 

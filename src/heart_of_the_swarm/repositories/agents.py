@@ -76,6 +76,19 @@ class AgentRepository(RepositoryBase):
         await self.session.commit()
         return self._detail(agent, version)
 
+    async def list_versions(self, agent_id: str) -> list[AgentDetail]:
+        """Return every immutable version of one agent, newest first."""
+        agent = await self.session.get(AgentRecord, agent_id)
+        if agent is None:
+            return []
+        statement = (
+            select(AgentVersionRecord)
+            .where(AgentVersionRecord.agent_id == agent_id)
+            .order_by(AgentVersionRecord.version.desc())
+        )
+        versions = (await self.session.execute(statement)).scalars()
+        return [self._detail(agent, version) for version in versions]
+
     async def get(self, agent_id: str, version: int | None = None) -> AgentDetail | None:
         agent = await self.session.get(AgentRecord, agent_id)
         if agent is None:

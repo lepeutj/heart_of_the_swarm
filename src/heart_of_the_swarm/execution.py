@@ -19,7 +19,13 @@ from heart_of_the_swarm.repositories import (
     ObservabilityRepository,
     RunRepository,
 )
-from heart_of_the_swarm.spec import AgentRunAccepted, AgentRunDetail, RunEvent, TrajectoryStep
+from heart_of_the_swarm.spec import (
+    AgentRunAccepted,
+    AgentRunDetail,
+    RunEvent,
+    TrajectoryStep,
+    UsageSummary,
+)
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.validator import AgentSpecValidator
 
@@ -70,6 +76,14 @@ class RunService:
             if await repository.get(run_id) is None:
                 return None
             return await ObservabilityRepository(session).list_trajectory(run_id)
+
+    async def usage(self, run_id: str) -> list[UsageSummary] | None:
+        """Return model usage attached to one existing direct run."""
+        async with self.database.session() as session:
+            repository = RunRepository(session)
+            if await repository.get(run_id) is None:
+                return None
+            return await ObservabilityRepository(session).run_usage_summary(run_id)
 
     async def cancel(self, run_id: str) -> AgentRunDetail | None:
         async with self.database.session() as session:

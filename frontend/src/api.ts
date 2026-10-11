@@ -67,6 +67,66 @@ export interface AgentDesignResult {
   spec: AgentSpec;
 }
 
+export type AgentRunStatus =
+  | "queued"
+  | "running"
+  | "cancel_requested"
+  | "interrupted"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timed_out";
+
+export interface AgentRunAccepted {
+  run_id: string;
+  trace_id: string;
+  agent_id: string;
+  agent_version: number;
+  status: AgentRunStatus;
+}
+
+export interface AgentRun extends AgentRunAccepted {
+  input: string;
+  output: string | null;
+  error: string | null;
+  attempt: number;
+  queued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface AgentRunEvent {
+  id: string;
+  run_id: string;
+  event_type: string;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TrajectoryStep {
+  id: string;
+  run_id: string;
+  attempt: number;
+  sequence: number;
+  event_type: string;
+  component: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface UsageSummary {
+  provider: string;
+  model_id: string;
+  stage: string;
+  calls: number;
+  failures: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost: number;
+  average_latency_ms: number;
+}
+
 export interface ToolCapability {
   id: string;
   source: "builtin" | "mcp";
@@ -348,11 +408,41 @@ export function loadAgent(id: string): Promise<AgentDetail> {
   return request(`/api/v1/agents/${id}`);
 }
 
+export function loadAgentVersions(id: string): Promise<AgentDetail[]> {
+  return request(`/api/v1/agents/${id}/versions`);
+}
+
 export function addAgentVersion(id: string, spec: AgentSpec): Promise<AgentDetail> {
   return request(`/api/v1/agents/${id}/versions`, {
     method: "POST",
     body: JSON.stringify(spec),
   });
+}
+
+export function createAgentVersionRun(
+  versionId: string,
+  input: string,
+): Promise<AgentRunAccepted> {
+  return request(`/api/v1/agent-versions/${versionId}/runs`, {
+    method: "POST",
+    body: JSON.stringify({ input }),
+  });
+}
+
+export function loadAgentRun(runId: string): Promise<AgentRun> {
+  return request(`/api/v1/runs/${runId}`);
+}
+
+export function loadAgentRunEvents(runId: string): Promise<AgentRunEvent[]> {
+  return request(`/api/v1/runs/${runId}/events`);
+}
+
+export function loadAgentRunTrajectory(runId: string): Promise<TrajectoryStep[]> {
+  return request(`/api/v1/runs/${runId}/trajectory`);
+}
+
+export function loadAgentRunUsage(runId: string): Promise<UsageSummary[]> {
+  return request(`/api/v1/runs/${runId}/usage`);
 }
 
 export function loadWorkflows(): Promise<WorkflowSummary[]> {

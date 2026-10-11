@@ -4,7 +4,7 @@ import {
   addAgentVersion,
   createAgent,
   designAgent,
-  loadAgent,
+  loadAgentVersions,
   loadAgents,
   loadProviderNames,
   loadSkillNames,
@@ -17,6 +17,7 @@ import {
 } from "../../api";
 import type { JsonObject } from "../../workflow";
 import { ModelEditor } from "../ModelEditor";
+import { AgentRunPanel } from "./AgentRunPanel";
 
 function emptyAgent(provider = ""): AgentSpec {
   return {
@@ -42,6 +43,7 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [loadedAgent, setLoadedAgent] = useState<AgentDetail | null>(null);
+  const [versions, setVersions] = useState<AgentDetail[]>([]);
   const [spec, setSpec] = useState<AgentSpec>(() => emptyAgent());
   const [tools, setTools] = useState<ToolCapability[]>([]);
   const [skillNames, setSkillNames] = useState<string[]>([]);
@@ -97,6 +99,7 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
   function startNewAgent() {
     setSelectedAgentId("");
     setLoadedAgent(null);
+    setVersions([]);
     setSpec(emptyAgent(providerNames[0] ?? ""));
     setDesignTask("");
     setDesignTraceId(null);
@@ -112,9 +115,12 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
     setBusy(true);
     reportStatus("Loading agent…");
     try {
-      const agent = await loadAgent(agentId);
+      const availableVersions = await loadAgentVersions(agentId);
+      const agent = availableVersions[0];
+      if (!agent) throw new Error("Agent has no saved version");
       setSelectedAgentId(agent.id);
       setLoadedAgent(agent);
+      setVersions(availableVersions);
       setSpec(agent.spec);
       setDesignTraceId(null);
       setErrors([]);
@@ -124,6 +130,15 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function selectVersion(versionId: string) {
+    const version = versions.find((item) => item.version_id === versionId);
+    if (!version) return;
+    setLoadedAgent(version);
+    setSpec(version.spec);
+    setErrors([]);
+    reportStatus(`Loaded immutable version ${version.version}`);
   }
 
   async function generateDraft() {
@@ -181,7 +196,12 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
       const saved = selectedAgentId
         ? await addAgentVersion(selectedAgentId, spec)
         : await createAgent(spec);
-      setAgents(await loadAgents());
+      const [nextAgents, nextVersions] = await Promise.all([
+        loadAgents(),
+        loadAgentVersions(saved.id),
+      ]);
+      setAgents(nextAgents);
+      setVersions(nextVersions);
       setSelectedAgentId(saved.id);
       setLoadedAgent(saved);
       setSpec(saved.spec);
@@ -256,6 +276,25 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
               {loadedAgent ? "Editing creates a new version" : "Unsaved draft"}
             </span>
           </div>
+
+          {versions.length > 0 && (
+            <label className="agent-version-select">
+              Immutable version
+              <select
+                value={loadedAgent?.version_id ?? ""}
+                onChange={(event) => selectVersion(event.target.value)}
+              >
+                {versions.map((version) => (
+                  <option key={version.version_id} value={version.version_id}>
+                    Version {version.version}
+                  </option>
+                ))}
+              </select>
+              <span className="field-help">
+                Editing never changes this version. Save creates the next immutable version.
+              </span>
+            </label>
+          )}
 
           <section className="agent-builder-card">
             <h3>Generate a draft with AI</h3>
@@ -345,6 +384,8 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
               )}
             </fieldset>
           </div>
+
+          <AgentRunPanel version={loadedAgent} />
         </section>
 
         <aside className="agent-review">

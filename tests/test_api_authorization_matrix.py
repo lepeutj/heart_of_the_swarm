@@ -8,12 +8,15 @@ from heart_of_the_swarm.api import (
     design_agent,
     get_agent,
     get_run_trajectory,
+    get_run_usage,
     get_workflow,
+    list_agent_versions,
     list_workflow_interruptions,
     list_workflow_run_events,
     list_workflows,
     providers,
     run_agent,
+    run_agent_version,
     run_workflow_version,
     usage_summary,
 )
@@ -56,6 +59,12 @@ class FakeAgents:
     async def get_agent(self, _agent_id):
         return SimpleNamespace(id="agent-1", version_id="agent-version-1")
 
+    async def get_version(self, _version_id):
+        return SimpleNamespace(id="agent-1", version_id="agent-version-1")
+
+    async def list_versions(self, _agent_id):
+        return []
+
     async def usage_summary(self):
         return []
 
@@ -73,6 +82,9 @@ class FakeRuns:
         )
 
     async def trajectory(self, _run_id):
+        return []
+
+    async def usage(self, _run_id):
         return []
 
 
@@ -170,14 +182,29 @@ CASES = (
         "GET", "/api/v1/agents/{id}", AuthorizationAction.AGENT_READ, "agent:agent-1"
     ),
     AuthorizationCase(
+        "GET", "/api/v1/agents/{id}/versions", AuthorizationAction.AGENT_READ, "agent:agent-1"
+    ),
+    AuthorizationCase(
         "POST",
         "/api/v1/agents/{id}/runs",
         AuthorizationAction.AGENT_EXECUTE,
         "agent_version:agent-version-1",
     ),
     AuthorizationCase(
+        "POST",
+        "/api/v1/agent-versions/{id}/runs",
+        AuthorizationAction.AGENT_EXECUTE,
+        "agent_version:agent-version-1",
+    ),
+    AuthorizationCase(
         "GET",
         "/api/v1/runs/{id}/trajectory",
+        AuthorizationAction.TRACE_READ,
+        "trace:trace-agent-run",
+    ),
+    AuthorizationCase(
+        "GET",
+        "/api/v1/runs/{id}/usage",
         AuthorizationAction.TRACE_READ,
         "trace:trace-agent-run",
     ),
@@ -217,10 +244,16 @@ async def test_http_operation_uses_its_declared_authorization_contract(
         await design_agent(DesignRequest(task="Design an agent"), app, authorizer)
     elif case.endpoint == "/api/v1/agents/{id}":
         await get_agent("agent-1", app, authorizer)
+    elif case.endpoint == "/api/v1/agents/{id}/versions":
+        await list_agent_versions("agent-1", app, authorizer)
     elif case.endpoint == "/api/v1/agents/{id}/runs":
         await run_agent("agent-1", AgentRunRequest(input="Run it"), app, authorizer)
+    elif case.endpoint == "/api/v1/agent-versions/{id}/runs":
+        await run_agent_version("agent-version-1", AgentRunRequest(input="Run it"), app, authorizer)
     elif case.endpoint == "/api/v1/runs/{id}/trajectory":
         await get_run_trajectory("run-1", app, authorizer)
+    elif case.endpoint == "/api/v1/runs/{id}/usage":
+        await get_run_usage("run-1", app, authorizer)
     elif case.endpoint == "/api/v1/usage/summary":
         await usage_summary(app, authorizer)
     else:

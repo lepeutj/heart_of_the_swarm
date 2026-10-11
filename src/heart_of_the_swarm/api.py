@@ -897,6 +897,17 @@ async def add_agent_version(
     return agent
 
 
+@api_router.get("/api/v1/agents/{agent_id}/versions", response_model=list[AgentDetail])
+async def list_agent_versions(
+    agent_id: str, runtime: Runtime, authorizer: Authorizer
+) -> list[AgentDetail]:
+    agent = await runtime.agents.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    await authorizer.require(AuthorizationAction.AGENT_READ, f"agent:{agent.id}")
+    return await runtime.agents.list_versions(agent_id)
+
+
 @api_router.get("/api/v1/agents/{agent_id}", response_model=AgentDetail)
 async def get_agent(agent_id: str, runtime: Runtime, authorizer: Authorizer) -> AgentDetail:
     agent = await runtime.agents.get_agent(agent_id)
@@ -906,20 +917,13 @@ async def get_agent(agent_id: str, runtime: Runtime, authorizer: Authorizer) -> 
     return agent
 
 
-@api_router.post(
-    "/api/v1/agents/{agent_id}/runs",
-    response_model=AgentRunAccepted,
-    status_code=202,
-)
-async def run_agent(
-    agent_id: str,
+async def _queue_agent_version(
+    agent: AgentDetail,
     request: AgentRunRequest,
     runtime: Runtime,
     authorizer: Authorizer,
 ) -> AgentRunAccepted:
-    agent = await runtime.agents.get_agent(agent_id)
-    if agent is None:
-        raise HTTPException(status_code=404, detail="agent not found")
+    """Authorize and queue exactly the immutable version already resolved by the route."""
     await authorizer.require(AuthorizationAction.AGENT_EXECUTE, f"agent_version:{agent.version_id}")
     try:
         accepted = await runtime.runs.queue(
@@ -937,6 +941,40 @@ async def run_agent(
         ) from exc
     authorizer.grant_created(grant_trace, accepted.trace_id)
     return accepted
+
+
+@api_router.post(
+    "/api/v1/agent-versions/{version_id}/runs",
+    response_model=AgentRunAccepted,
+    status_code=202,
+)
+async def run_agent_version(
+    version_id: str,
+    request: AgentRunRequest,
+    runtime: Runtime,
+    authorizer: Authorizer,
+) -> AgentRunAccepted:
+    agent = await runtime.agents.get_version(version_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent version not found")
+    return await _queue_agent_version(agent, request, runtime, authorizer)
+
+
+@api_router.post(
+    "/api/v1/agents/{agent_id}/runs",
+    response_model=AgentRunAccepted,
+    status_code=202,
+)
+async def run_agent(
+    agent_id: str,
+    request: AgentRunRequest,
+    runtime: Runtime,
+    authorizer: Authorizer,
+) -> AgentRunAccepted:
+    agent = await runtime.agents.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    return await _queue_agent_version(agent, request, runtime, authorizer)
 
 
 @api_router.get("/api/v1/runs/{run_id}", response_model=AgentRunDetail)
@@ -986,6 +1024,20 @@ async def get_run_trajectory(
     if trajectory is None:
         raise HTTPException(status_code=404, detail="run not found")
     return trajectory
+
+
+@api_router.get("/api/v1/runs/{run_id}/usage", response_model=list[UsageSummary])
+async def get_run_usage(
+    run_id: str, runtime: Runtime, authorizer: Authorizer
+) -> list[UsageSummary]:
+    run = await runtime.runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    await authorizer.require(AuthorizationAction.TRACE_READ, f"trace:{run.trace_id}")
+    usage = await runtime.runs.usage(run_id)
+    if usage is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return usage
 
 
 @api_router.post("/api/v1/runs/{run_id}/cancel", response_model=AgentRunDetail)

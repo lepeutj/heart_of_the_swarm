@@ -57,6 +57,13 @@ class ObservabilityRepository(RepositoryBase):
         ]
 
     async def usage_summary(self) -> list[UsageSummary]:
+        return await self._usage_summary()
+
+    async def run_usage_summary(self, run_id: str) -> list[UsageSummary]:
+        """Aggregate model usage for one direct agent run."""
+        return await self._usage_summary(run_id)
+
+    async def _usage_summary(self, run_id: str | None = None) -> list[UsageSummary]:
         statement = (
             select(
                 ModelUsageRecord.provider,
@@ -73,6 +80,8 @@ class ObservabilityRepository(RepositoryBase):
             .group_by(ModelUsageRecord.provider, ModelUsageRecord.model_id, ModelUsageRecord.stage)
             .order_by(ModelUsageRecord.provider, ModelUsageRecord.model_id)
         )
+        if run_id is not None:
+            statement = statement.where(ModelUsageRecord.run_id == run_id)
         rows = (await self.session.execute(statement)).all()
         return [
             UsageSummary(

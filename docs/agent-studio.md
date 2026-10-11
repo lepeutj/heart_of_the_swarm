@@ -36,6 +36,8 @@ It is not a second agent specification and does not require a `WorkflowSpec`.
 - Runs always reference the exact immutable version selected by the user.
 - Tools and Skills are selected from trusted backend catalogues.
 - Agent Studio reuses existing run and observability APIs rather than creating a parallel lifecycle.
+- Run lifecycle events are polled while execution is active; the model/tool trajectory and usage
+  are loaded from persisted observability records when the attempt ends.
 - Workflow Studio remains available for explicit multi-step and multi-agent composition.
 
 ## MVP layout
