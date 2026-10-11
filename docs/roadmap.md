@@ -84,6 +84,9 @@ developer following repository instructions.
 
 ### P4 — Reproducible remote Docker demonstration
 
+Status: in progress. Exact AgentVersion artifact download is implemented; the cross-host runtime
+demonstration remains.
+
 Use the existing artifact and authenticated remote-runtime boundary before building a deployment
 control plane:
 

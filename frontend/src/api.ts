@@ -315,6 +315,23 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   return body as T;
 }
 
+async function requestBlob(path: string): Promise<Blob> {
+  const response = await fetch(path, { headers: authenticatedHeaders() });
+  if (!response.ok) {
+    const text = await response.text();
+    let body: unknown = text;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        // Preserve a non-JSON server response for the shared safe error formatter.
+      }
+    }
+    throw new Error(errorMessage(response, body));
+  }
+  return response.blob();
+}
+
 export function loadCapabilities(): Promise<WorkflowCapabilities> {
   return request("/api/v1/workflows/capabilities");
 }
@@ -427,6 +444,10 @@ export function createAgentVersionRun(
     method: "POST",
     body: JSON.stringify({ input }),
   });
+}
+
+export function exportAgentVersion(versionId: string): Promise<Blob> {
+  return requestBlob(`/api/v1/agent-versions/${versionId}/artifact`);
 }
 
 export function loadAgentRun(runId: string): Promise<AgentRun> {

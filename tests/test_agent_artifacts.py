@@ -42,6 +42,8 @@ async def test_exported_artifact_is_complete_and_database_independent(tmp_path: 
     loaded = load_agent_artifact(tmp_path)
     assert loaded == exported
     assert loaded.manifest.provider == "openai"
+    assert loaded.manifest.runtime_type == "agent"
+    assert loaded.manifest.created_at is not None
     assert loaded.manifest.tools == ("calculator",)
     serialized = (tmp_path / "agent.json").read_text(encoding="utf-8")
     assert "api_key" not in serialized
@@ -68,3 +70,34 @@ async def test_export_returns_none_for_unknown_version(tmp_path: Path) -> None:
 
     assert artifact is None
     assert list(tmp_path.iterdir()) == []
+
+
+async def test_export_preserves_the_selected_historical_version(tmp_path: Path) -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        first_spec = agent_spec()
+        second_spec = first_spec.model_copy(update={"goal": "A newer behavior"})
+        async with database.session() as session:
+            first = await AgentRepository(session).create(
+                first_spec,
+                "1",
+                render_system_prompt(first_spec),
+            )
+        async with database.session() as session:
+            await AgentRepository(session).add_version(
+                first.id,
+                second_spec,
+                "1",
+                render_system_prompt(second_spec),
+            )
+
+        exported = await AgentArtifactExporter(database).export(UUID(first.version_id), tmp_path)
+        loaded = load_agent_artifact(tmp_path)
+    finally:
+        await database.close()
+
+    assert exported is not None
+    assert loaded.agent.agent_version_id == UUID(first.version_id)
+    assert loaded.agent.version == 1
+    assert loaded.agent.spec.goal == "Run independently"

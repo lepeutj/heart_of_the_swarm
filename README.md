@@ -30,11 +30,10 @@ The backend validates the public `WorkflowSpec` before compiling it to a LangGra
 ![Workflow Studio showing the node palette, React Flow canvas, and typed inspector](docs/images/workflow-studio.png)
 
 [`Agent Studio`](docs/agent-studio.md) now runs an explicitly selected historical or current
-`AgentVersion` and shows its lifecycle, result, stored model/tool trajectory, run-scoped usage, and
-trace correlation from the same screen. The current priority is exporting that same tested version
-as the existing `manifest.json` + `agent.json` Docker artifact. Deployment registration and
-automated provisioning remain deferred until one reproducible remote Docker demonstration is
-complete.
+`AgentVersion`, shows its lifecycle, result, stored model/tool trajectory, run-scoped usage, and
+trace correlation, then downloads that same version as the existing `manifest.json` + `agent.json`
+Docker artifact. The current priority is validating this archive through the generic runtime on a
+second Docker environment. Deployment registration and automated provisioning remain deferred.
 
 For the frozen V1 architecture, its boundaries, and a reproducible five-minute demonstration, see
 [`docs/v1-demo.md`](docs/v1-demo.md).
@@ -324,6 +323,7 @@ GET  /api/v1/agents/{id}
 GET  /api/v1/agents/{id}/versions
 POST /api/v1/agents/{id}/runs
 POST /api/v1/agent-versions/{id}/runs
+GET  /api/v1/agent-versions/{id}/artifact
 GET  /api/v1/agents/{id}/runs
 GET  /api/v1/runs/{id}
 GET  /api/v1/runs/{id}/events

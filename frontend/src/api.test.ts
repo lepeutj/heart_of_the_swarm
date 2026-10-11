@@ -4,6 +4,7 @@ import {
   addAgentVersion,
   createAgentVersionRun,
   designAgent,
+  exportAgentVersion,
   loadAgentVersions,
   parseEventStreamFrame,
   openWorkflowRunEventStream,
@@ -159,6 +160,23 @@ describe("API responses", () => {
         method: "POST",
         body: JSON.stringify({ input: "Use historical behavior" }),
       }),
+    );
+  });
+
+  it("downloads the exact selected agent artifact with bearer authentication", async () => {
+    const archive = new Blob(["portable-agent"], { type: "application/zip" });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(archive, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    setAuthenticationToken("session-token");
+
+    const downloaded = await exportAgentVersion("version-3");
+
+    expect(await downloaded.text()).toBe("portable-agent");
+    const headers = fetchMock.mock.calls[0][1].headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer session-token");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/agent-versions/version-3/artifact",
+      expect.objectContaining({ headers: expect.any(Headers) }),
     );
   });
 

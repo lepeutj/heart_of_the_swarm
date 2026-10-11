@@ -1,8 +1,10 @@
 import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from io import BytesIO
 from types import SimpleNamespace
 from uuid import UUID
+from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -249,6 +251,40 @@ def test_start_run_uses_the_explicit_immutable_agent_version() -> None:
 
     assert response.status_code == 202
     assert response.json()["agent_version"] == 1
+
+
+def test_export_download_contains_only_the_exact_portable_agent_files() -> None:
+    version_id = "dc36aa94-3399-45d9-b285-e82787e8ca5d"
+
+    class FakeAgents:
+        async def get_version(self, received_version_id):
+            assert received_version_id == version_id
+            return SimpleNamespace(
+                id="47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+                version_id=version_id,
+                version=3,
+                name="ResearchAgent",
+            )
+
+        async def export_version(self, received_version_id, directory):
+            assert str(received_version_id) == version_id
+            (directory / "manifest.json").write_text('{"format_version":"1"}', encoding="utf-8")
+            (directory / "agent.json").write_text('{"version":3}', encoding="utf-8")
+            return SimpleNamespace()
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(agents=FakeAgents())
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/api/v1/agent-versions/{version_id}/artifact")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert "researchagent-v3-artifact.zip" in response.headers["content-disposition"]
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert archive.namelist() == ["manifest.json", "agent.json"]
+        assert json.loads(archive.read("agent.json"))["version"] == 3
 
 
 def test_unknown_run_trajectory_returns_not_found() -> None:

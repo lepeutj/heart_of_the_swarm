@@ -11,6 +11,7 @@ describe or edit
 → create immutable AgentVersion
 → run a task
 → inspect lifecycle, trajectory, result, usage, and trace
+→ export that exact version for Docker
 ```
 
 It is not a second agent specification and does not require a `WorkflowSpec`.
@@ -26,6 +27,7 @@ It is not a second agent specification and does not require a `WorkflowSpec`.
 6. Select an exact version, provide one task, and queue a direct agent run.
 7. Follow status and safe model/tool lifecycle events.
 8. Inspect the final response, stored trajectory, usage, and MLflow trace correlation.
+9. Download the selected version as a portable `manifest.json` + `agent.json` archive.
 
 ## Boundaries
 
@@ -34,6 +36,7 @@ It is not a second agent specification and does not require a `WorkflowSpec`.
 - Builder output is always an editable draft and is never executed automatically.
 - Editing an agent creates a new `AgentVersion`; an existing version is never mutated.
 - Runs always reference the exact immutable version selected by the user.
+- Exports always reference that same selected version and never resolve an active or latest version.
 - Tools and Skills are selected from trusted backend catalogues.
 - Agent Studio reuses existing run and observability APIs rather than creating a parallel lifecycle.
 - Run lifecycle events are polled while execution is active; the model/tool trajectory and usage
@@ -71,6 +74,7 @@ Run exact version            Tool/model trajectory
 - editing creates a new version and preserves previous versions;
 - a task can be run against an explicitly selected version;
 - the UI shows terminal result or safe failure plus trajectory and trace correlation;
+- the selected version can be downloaded as a verified portable Docker artifact;
 - the path works with at least one reproducible portfolio example.
 
 ## Out of scope

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -27,7 +28,9 @@ class AgentArtifactManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     format_version: Literal["1"] = "1"
+    runtime_type: Literal["agent"] = "agent"
     runtime_version: str
+    created_at: datetime | None = None
     agent_id: UUID
     agent_version_id: UUID
     agent_version: int = Field(ge=1)

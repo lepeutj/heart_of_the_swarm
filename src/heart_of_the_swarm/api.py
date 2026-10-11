@@ -3,12 +3,15 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated, Any
 from uuid import UUID, uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
@@ -958,6 +961,38 @@ async def run_agent_version(
     if agent is None:
         raise HTTPException(status_code=404, detail="agent version not found")
     return await _queue_agent_version(agent, request, runtime, authorizer)
+
+
+@api_router.get("/api/v1/agent-versions/{version_id}/artifact")
+async def export_agent_version(
+    version_id: UUID,
+    runtime: Runtime,
+    authorizer: Authorizer,
+) -> Response:
+    version = await runtime.agents.get_version(str(version_id))
+    if version is None:
+        raise HTTPException(status_code=404, detail="agent version not found")
+    await authorizer.require(
+        AuthorizationAction.AGENT_READ,
+        f"agent_version:{version.version_id}",
+    )
+
+    with TemporaryDirectory(prefix="heart-agent-export-") as temporary:
+        directory = Path(temporary)
+        artifact = await runtime.agents.export_version(version_id, directory)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="agent version not found")
+        archive = BytesIO()
+        with ZipFile(archive, "w", compression=ZIP_DEFLATED) as bundle:
+            bundle.write(directory / "manifest.json", "manifest.json")
+            bundle.write(directory / "agent.json", "agent.json")
+
+    filename = f"{version.name.lower()}-v{version.version}-artifact.zip"
+    return Response(
+        content=archive.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @api_router.post(

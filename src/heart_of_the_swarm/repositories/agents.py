@@ -158,7 +158,7 @@ class AgentRepository(RepositoryBase):
             name=spec.name,
             goal=spec.goal,
             version=version.version,
-            created_at=agent.created_at,
+            created_at=version.created_at,
             spec=spec,
             prompt_version=version.prompt_version,
             system_prompt=version.system_prompt,

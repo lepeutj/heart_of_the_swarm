@@ -6,6 +6,7 @@ import pytest
 
 from heart_of_the_swarm.api import (
     design_agent,
+    export_agent_version,
     get_agent,
     get_run_trajectory,
     get_run_usage,
@@ -60,7 +61,17 @@ class FakeAgents:
         return SimpleNamespace(id="agent-1", version_id="agent-version-1")
 
     async def get_version(self, _version_id):
-        return SimpleNamespace(id="agent-1", version_id="agent-version-1")
+        return SimpleNamespace(
+            id="agent-1",
+            version_id="agent-version-1",
+            name="AgentOne",
+            version=1,
+        )
+
+    async def export_version(self, _version_id, directory):
+        (directory / "manifest.json").write_text("{}", encoding="utf-8")
+        (directory / "agent.json").write_text("{}", encoding="utf-8")
+        return SimpleNamespace()
 
     async def list_versions(self, _agent_id):
         return []
@@ -198,6 +209,12 @@ CASES = (
     ),
     AuthorizationCase(
         "GET",
+        "/api/v1/agent-versions/{id}/artifact",
+        AuthorizationAction.AGENT_READ,
+        "agent_version:agent-version-1",
+    ),
+    AuthorizationCase(
+        "GET",
         "/api/v1/runs/{id}/trajectory",
         AuthorizationAction.TRACE_READ,
         "trace:trace-agent-run",
@@ -250,6 +267,8 @@ async def test_http_operation_uses_its_declared_authorization_contract(
         await run_agent("agent-1", AgentRunRequest(input="Run it"), app, authorizer)
     elif case.endpoint == "/api/v1/agent-versions/{id}/runs":
         await run_agent_version("agent-version-1", AgentRunRequest(input="Run it"), app, authorizer)
+    elif case.endpoint == "/api/v1/agent-versions/{id}/artifact":
+        await export_agent_version(OBJECT_ID, app, authorizer)
     elif case.endpoint == "/api/v1/runs/{id}/trajectory":
         await get_run_trajectory("run-1", app, authorizer)
     elif case.endpoint == "/api/v1/runs/{id}/usage":

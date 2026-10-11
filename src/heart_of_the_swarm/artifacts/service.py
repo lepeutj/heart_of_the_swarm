@@ -45,6 +45,7 @@ class AgentArtifactExporter:
         )
         manifest = AgentArtifactManifest(
             runtime_version=__version__,
+            created_at=version.created_at,
             agent_id=payload.agent_id,
             agent_version_id=payload.agent_version_id,
             agent_version=payload.version,

@@ -17,6 +17,7 @@ import {
 } from "../../api";
 import type { JsonObject } from "../../workflow";
 import { ModelEditor } from "../ModelEditor";
+import { AgentExportPanel } from "./AgentExportPanel";
 import { AgentRunPanel } from "./AgentRunPanel";
 
 function emptyAgent(provider = ""): AgentSpec {
@@ -386,6 +387,7 @@ export function AgentStudio({ onLogout }: { onLogout: () => void }) {
           </div>
 
           <AgentRunPanel version={loadedAgent} />
+          <AgentExportPanel version={loadedAgent} />
         </section>
 
         <aside className="agent-review">
