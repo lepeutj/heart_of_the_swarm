@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -404,13 +405,18 @@ async def test_workflow_run_executes_version_and_persists_node_events() -> None:
         await database.close()
 
 
-async def test_workflow_timeout_is_terminal_and_marks_active_node_failed() -> None:
-    database = Database("sqlite+aiosqlite:///:memory:")
+async def test_workflow_timeout_is_terminal_and_marks_active_node_failed(
+    tmp_path: Path,
+) -> None:
+    # Cancellation can invalidate SQLite's in-memory connection and erase its schema.
+    # A file-backed database keeps the timeout assertion independent of connection reuse.
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'workflow-timeout.db'}"
+    database = Database(database_url)
     await database.create_schema()
     tools = ToolRegistry([slow_echo])
     validator = WorkflowValidator(lambda: tools.names, [])
     settings = Settings(
-        database_url="sqlite+aiosqlite:///:memory:",
+        database_url=database_url,
         workflow_timeout_seconds=0.05,
     )
     try:
