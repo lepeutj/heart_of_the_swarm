@@ -217,6 +217,34 @@ and tool calling. The deterministic regression version of this scenario is
 `tests/test_workflow_end_to_end.py`; it uses a local RSS response and fake model messages while
 exercising the real LangChain agent, tool registry, `rss_reader`, and LangGraph workflow runtime.
 
+## Portfolio demonstration: read-only PostgreSQL through MCP
+
+The repository also contains a reproducible business-data demonstration:
+
+```text
+PostgreSQL read-only role
+→ FastMCP bounded analytics tools
+→ shared Heart capability catalogue
+→ deterministic CONNECTOR or autonomous AGENT
+→ result, events, and MLflow trace
+```
+
+Start it alongside the normal stack:
+
+```bash
+docker compose -f compose.yaml -f compose.sales-demo.yaml up --build -d
+```
+
+The MCP server cannot modify the database: PostgreSQL grants its dedicated role only `CONNECT`,
+schema `USAGE`, and table `SELECT`, while the server exposes fixed parameterized business queries
+rather than arbitrary SQL. Ready-to-use agent and workflow declarations, permission checks, sample
+tasks, and Linux/PowerShell commands are documented in
+[`examples/sales_mcp/README.md`](examples/sales_mcp/README.md).
+
+The verified local execution, security checks, immutable export, standalone runtime invocation,
+ordered events, and MLflow trace are recorded in
+[`docs/test-results/read-only-sales-agent.md`](docs/test-results/read-only-sales-agent.md).
+
 ## Standalone workflow runtime
 
 Export the immutable generated RSS workflow version printed by the reference demonstration:

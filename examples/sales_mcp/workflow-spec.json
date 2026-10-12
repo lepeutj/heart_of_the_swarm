@@ -1,0 +1,93 @@
+{
+  "schema_version": "2",
+  "id": "db857df5-719f-437b-9504-4ec9ea8a7673",
+  "name": "Read-only sales report",
+  "description": "Fetch sales metrics deterministically through MCP, then let an inline agent explain them.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "days": {"type": "integer", "minimum": 1, "maximum": 365}
+    },
+    "required": ["days"],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "report": {"type": "string"},
+      "approved": {"type": "boolean"}
+    },
+    "required": ["report", "approved"],
+    "additionalProperties": false
+  },
+  "entrypoint": "input",
+  "nodes": [
+    {"id": "input", "type": "input", "name": "Input", "config": {}},
+    {
+      "id": "fetch_sales",
+      "type": "connector",
+      "name": "Fetch sales summary",
+      "config": {
+        "capability_id": "sales__sales_summary",
+        "inputs": {"days": {"from_state": "$.days"}},
+        "outputs": {
+          "days": {"to_state": "$.sales.days"},
+          "order_count": {"to_state": "$.sales.order_count"},
+          "revenue": {"to_state": "$.sales.revenue"},
+          "average_order_value": {"to_state": "$.sales.average_order_value"}
+        }
+      }
+    },
+    {
+      "id": "explain",
+      "type": "agent",
+      "name": "Explain results",
+      "config": {
+        "source": {
+          "type": "inline",
+          "agent": {
+            "name": "SalesReporter",
+            "goal": "Explain a trusted sales summary clearly.",
+            "model": {
+              "provider": "openrouter",
+              "model_id": "apodex/apodex-1.1-mini:free",
+              "temperature": 0,
+              "max_tokens": 800
+            },
+            "tools": [],
+            "skills": [],
+            "instructions": "Write a concise French business summary. Use only the supplied figures, mention the period, and do not invent comparisons or causes."
+          }
+        },
+        "input_path": "$.sales",
+        "output_path": "$.report"
+      }
+    },
+    {
+      "id": "approve_report",
+      "type": "human_approval",
+      "name": "Approve report",
+      "config": {
+        "prompt": "Approve this database-backed report before it is returned?",
+        "output": {"to_state": "$.approved"}
+      }
+    },
+    {
+      "id": "output",
+      "type": "output",
+      "name": "Output",
+      "config": {
+        "outputs": {
+          "report": {"from_state": "$.report"},
+          "approved": {"from_state": "$.approved"}
+        }
+      }
+    }
+  ],
+  "edges": [
+    {"source": "input", "target": "fetch_sales"},
+    {"source": "fetch_sales", "target": "explain"},
+    {"source": "explain", "target": "approve_report"},
+    {"source": "approve_report", "target": "output"}
+  ]
+}

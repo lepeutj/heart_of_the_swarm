@@ -182,6 +182,17 @@ application. A deployment is durable availability of one immutable version; a ru
 bounded task. Registration and automated provisioning are now deferred until the Agent Studio,
 portfolio examples, and one reproducible remote demonstration are complete.
 
+The first portfolio data example is now defined as a separate read-only sales database and FastMCP
+server. PostgreSQL enforces a dedicated SELECT-only role, MCP exposes bounded parameterized business
+queries, and the same discovered capabilities can be used by a deterministic `CONNECTOR` or selected
+autonomously by an agent. This example is development infrastructure, not a second capability
+registry or a production credential pattern.
+
+Direct Agent Studio runs currently have no conversational continuity. After the exported-version
+Docker/Raspberry demonstration, durable agent conversations will pin one immutable `AgentVersion`,
+persist ordered user/assistant messages, and create one bounded run per user turn. Workflow
+`HUMAN_APPROVAL` remains a separate boolean decision primitive and must not be presented as chat.
+
 Persistence and observability internals are organized by responsibility. Avoid universal service
 or repository classes; composition belongs in `Application`, while product services choose narrow
 repositories and framework adapters.

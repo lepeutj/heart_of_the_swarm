@@ -70,6 +70,9 @@ Workflow Studio.
 
 ### P3 — Portfolio agents
 
+Status: in progress. A reproducible read-only PostgreSQL + MCP sales analyst example is available;
+the repository and document/RAG examples remain.
+
 Ship two or three reproducible examples that exercise different engineering concerns:
 
 - research agent: web/data tools, reasoning, sources, and structured output;
@@ -105,7 +108,22 @@ provisioning are not prerequisites.
 Exit criterion: one portfolio agent created in Heart runs on a second Docker environment and its
 result and trace correlation are retrieved from the original machine.
 
-### P5 — Deep Agents evaluation
+### P5 — Durable agent conversations
+
+Status: planned after the remote Docker demonstration.
+
+1. Add an `AgentConversation` pinned to one immutable `AgentVersion`.
+2. Persist ordered user and assistant messages as product data.
+3. Treat every user turn as a bounded `AgentRun`; no worker waits between messages.
+4. Reuse LangGraph thread/checkpoint semantics without making checkpoint data the conversation
+   source of truth.
+5. Add a dedicated conversation API and minimal chat surface; Agent Studio only links to it.
+6. Preserve per-turn events, trajectory, usage, authorization, and MLflow trace IDs.
+
+Exit criterion: a user can leave and reopen a conversation, send another message to the same
+immutable agent version, and inspect each bounded run without losing prior messages.
+
+### P6 — Deep Agents evaluation
 
 Evaluate `deepagents` as an optional agent-construction adapter, not as a replacement workflow
 engine. Run the same model, tools, instructions, Skills, and task through `create_agent` and
