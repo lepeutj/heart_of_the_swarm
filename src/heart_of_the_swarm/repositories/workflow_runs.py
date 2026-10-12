@@ -3,17 +3,25 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
-from heart_of_the_swarm.models import WorkflowRunEventRecord, WorkflowRunRecord
+from heart_of_the_swarm.models import (
+    ExecutionThreadRecord,
+    WorkflowInterruptionRecord,
+    WorkflowRunEventRecord,
+    WorkflowRunRecord,
+)
 from heart_of_the_swarm.repositories.base import RepositoryBase
 from heart_of_the_swarm.repositories.workflows import WorkflowRepository
 from heart_of_the_swarm.spec import RunStatus
 from heart_of_the_swarm.workflows.documents import WorkflowVersionDetail
+from heart_of_the_swarm.workflows.interruptions import WorkflowInterruptionStatus
 from heart_of_the_swarm.workflows.runs import (
+    ExecutionThreadStatus,
     WorkflowRunAccepted,
     WorkflowRunDetail,
     WorkflowRunEvent,
+    WorkflowRunEventBatch,
     WorkflowRunOrigin,
 )
 
@@ -25,6 +33,10 @@ class WorkflowExecutionContext:
     trace_id: str
     input: dict[str, Any]
     version: WorkflowVersionDetail
+    thread_id: str | None
+    resume_checkpoint_id: str | None
+    resume_value: dict[str, Any] | None
+    attempt_index: int
 
 
 class WorkflowRunRepository(RepositoryBase):
@@ -37,9 +49,19 @@ class WorkflowRunRepository(RepositoryBase):
         workflow_input: dict[str, Any],
         origin: WorkflowRunOrigin | None = None,
     ) -> WorkflowRunAccepted:
+        now = datetime.now(UTC)
+        thread = ExecutionThreadRecord(
+            id=str(uuid4()),
+            workflow_version_id=str(version.id),
+            status=ExecutionThreadStatus.ACTIVE,
+            created_at=now,
+            updated_at=now,
+        )
         run = WorkflowRunRecord(
             id=str(uuid4()),
             workflow_version_id=str(version.id),
+            thread_id=thread.id,
+            attempt_index=1,
             trace_id=trace_id,
             trigger_id=str(origin.trigger_id) if origin else None,
             trigger_type=origin.trigger_type if origin else None,
@@ -47,10 +69,16 @@ class WorkflowRunRepository(RepositoryBase):
             status=RunStatus.QUEUED,
             input=workflow_input,
             event_sequence=0,
-            queued_at=datetime.now(UTC),
+            queued_at=now,
         )
+        self.session.add(thread)
         self.session.add(run)
         await self.session.flush()
+        self._add_event(
+            run,
+            "thread.created",
+            {"thread_id": thread.id},
+        )
         self._add_event(
             run,
             "workflow.queued",
@@ -62,6 +90,69 @@ class WorkflowRunRepository(RepositoryBase):
             },
         )
         await self.session.commit()
+        return self._accepted(run, version)
+
+    async def resume(
+        self,
+        previous_run_id: str,
+        checkpoint_id: str,
+        trace_id: str,
+        *,
+        commit: bool = True,
+    ) -> WorkflowRunAccepted:
+        previous = await self._required(WorkflowRunRecord, previous_run_id)
+        if previous.thread_id is None:
+            raise ValueError("workflow run does not belong to a resumable thread")
+        if previous.status not in {RunStatus.INTERRUPTED, RunStatus.FAILED}:
+            raise ValueError("only interrupted or failed workflow runs can be resumed")
+        latest_attempt = (
+            await self.session.execute(
+                select(func.max(WorkflowRunRecord.attempt_index)).where(
+                    WorkflowRunRecord.thread_id == previous.thread_id
+                )
+            )
+        ).scalar_one()
+        if latest_attempt != previous.attempt_index:
+            raise ValueError("workflow run is not the latest attempt in its thread")
+
+        thread = await self._required(ExecutionThreadRecord, previous.thread_id)
+        if thread.status == ExecutionThreadStatus.CLOSED:
+            raise ValueError("execution thread is closed")
+        version = await WorkflowRepository(self.session).get_version(previous.workflow_version_id)
+        if version is None:
+            raise ValueError("workflow version not found")
+
+        now = datetime.now(UTC)
+        run = WorkflowRunRecord(
+            id=str(uuid4()),
+            workflow_version_id=previous.workflow_version_id,
+            thread_id=previous.thread_id,
+            attempt_index=previous.attempt_index + 1,
+            resumed_from_run_id=previous.id,
+            resume_checkpoint_id=checkpoint_id,
+            trace_id=trace_id,
+            status=RunStatus.QUEUED,
+            input=previous.input,
+            event_sequence=0,
+            queued_at=now,
+        )
+        thread.status = ExecutionThreadStatus.ACTIVE
+        thread.updated_at = now
+        self.session.add(run)
+        await self.session.flush()
+        self._add_event(
+            run,
+            "workflow.resumed",
+            {
+                "thread_id": thread.id,
+                "resumed_from_run_id": previous.id,
+                "checkpoint_id": checkpoint_id,
+                "attempt_index": run.attempt_index,
+            },
+        )
+        self._add_event(run, "workflow.queued", {"workflow_version": version.version})
+        if commit:
+            await self.session.commit()
         return self._accepted(run, version)
 
     async def claim_next(self, worker_id: str, lease_seconds: int) -> str | None:
@@ -97,12 +188,29 @@ class WorkflowRunRepository(RepositoryBase):
         version = await WorkflowRepository(self.session).get_version(run.workflow_version_id)
         if version is None:
             return None
+        resume_value = None
+        if run.resumed_from_run_id is not None and run.resume_checkpoint_id is not None:
+            interruption = (
+                await self.session.execute(
+                    select(WorkflowInterruptionRecord).where(
+                        WorkflowInterruptionRecord.workflow_run_id == run.resumed_from_run_id,
+                        WorkflowInterruptionRecord.checkpoint_id == run.resume_checkpoint_id,
+                        WorkflowInterruptionRecord.status == WorkflowInterruptionStatus.RESOLVED,
+                    )
+                )
+            ).scalar_one_or_none()
+            if interruption is not None:
+                resume_value = interruption.response
         return WorkflowExecutionContext(
             run_id=run.id,
             attempt=run.attempt,
             trace_id=run.trace_id,
             input=run.input,
             version=version,
+            thread_id=run.thread_id,
+            resume_checkpoint_id=run.resume_checkpoint_id,
+            resume_value=resume_value,
+            attempt_index=run.attempt_index,
         )
 
     async def get(self, run_id: str) -> WorkflowRunDetail | None:
@@ -112,10 +220,18 @@ class WorkflowRunRepository(RepositoryBase):
         version = await WorkflowRepository(self.session).get_version(run.workflow_version_id)
         return self._detail(run, version) if version else None
 
-    async def list_events(self, run_id: str) -> list[WorkflowRunEvent]:
+    async def list_events(
+        self,
+        run_id: str,
+        after_sequence: int = 0,
+    ) -> list[WorkflowRunEvent]:
+        """Return persisted events after a cursor in their durable run order."""
         statement = (
             select(WorkflowRunEventRecord)
-            .where(WorkflowRunEventRecord.workflow_run_id == run_id)
+            .where(
+                WorkflowRunEventRecord.workflow_run_id == run_id,
+                WorkflowRunEventRecord.sequence > after_sequence,
+            )
             .order_by(WorkflowRunEventRecord.sequence)
         )
         events = (await self.session.execute(statement)).scalars()
@@ -130,6 +246,21 @@ class WorkflowRunRepository(RepositoryBase):
             )
             for event in events
         ]
+
+    async def event_batch(
+        self,
+        run_id: str,
+        after_sequence: int,
+    ) -> WorkflowRunEventBatch | None:
+        """Read run status and subsequent events without loading the immutable version."""
+        run = await self.session.get(WorkflowRunRecord, run_id)
+        if run is None:
+            return None
+        return WorkflowRunEventBatch(
+            status=run.status,
+            thread_id=run.thread_id,
+            events=tuple(await self.list_events(run_id, after_sequence)),
+        )
 
     async def add_event(
         self,
@@ -151,16 +282,88 @@ class WorkflowRunRepository(RepositoryBase):
         await self.session.commit()
         return True
 
+    async def consume_model_call(self, thread_id: str, limit: int) -> int | None:
+        """Atomically reserve one model call without allowing the thread to exceed its limit."""
+        statement = (
+            update(ExecutionThreadRecord)
+            .where(
+                ExecutionThreadRecord.id == thread_id,
+                ExecutionThreadRecord.model_calls < limit,
+            )
+            .values(
+                model_calls=ExecutionThreadRecord.model_calls + 1,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(ExecutionThreadRecord.model_calls)
+        )
+        consumed = (await self.session.execute(statement)).scalar_one_or_none()
+        if consumed is not None:
+            await self.session.commit()
+        else:
+            await self.session.rollback()
+        return consumed
+
+    async def consume_tool_call(self, thread_id: str, limit: int) -> int | None:
+        """Atomically reserve one tool call without allowing the thread to exceed its limit."""
+        statement = (
+            update(ExecutionThreadRecord)
+            .where(
+                ExecutionThreadRecord.id == thread_id,
+                ExecutionThreadRecord.tool_calls < limit,
+            )
+            .values(
+                tool_calls=ExecutionThreadRecord.tool_calls + 1,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(ExecutionThreadRecord.tool_calls)
+        )
+        consumed = (await self.session.execute(statement)).scalar_one_or_none()
+        if consumed is not None:
+            await self.session.commit()
+        else:
+            await self.session.rollback()
+        return consumed
+
     async def finish(self, run_id: str, output: Any, executed_nodes: tuple[str, ...]) -> None:
         run = await self._required(WorkflowRunRecord, run_id)
         run.status = RunStatus.COMPLETED
         run.output = output
         run.completed_at = datetime.now(UTC)
         run.lease_expires_at = None
+        if run.thread_id is not None:
+            thread = await self._required(ExecutionThreadRecord, run.thread_id)
+            thread.status = ExecutionThreadStatus.CLOSED
+            thread.updated_at = run.completed_at
         self._add_event(
             run,
             "workflow.completed",
             {"executed_nodes": list(executed_nodes)},
+        )
+        await self.session.commit()
+
+    async def interrupt(
+        self,
+        run_id: str,
+        checkpoint_id: str,
+        executed_nodes: tuple[str, ...],
+    ) -> None:
+        run = await self._required(WorkflowRunRecord, run_id)
+        now = datetime.now(UTC)
+        run.status = RunStatus.INTERRUPTED
+        run.resume_checkpoint_id = checkpoint_id
+        run.completed_at = now
+        run.lease_expires_at = None
+        if run.thread_id is not None:
+            thread = await self._required(ExecutionThreadRecord, run.thread_id)
+            thread.status = ExecutionThreadStatus.INTERRUPTED
+            thread.updated_at = now
+        self._add_event(
+            run,
+            "workflow.interrupted",
+            {
+                "checkpoint_id": checkpoint_id,
+                "executed_nodes": list(executed_nodes),
+            },
         )
         await self.session.commit()
 
@@ -170,6 +373,10 @@ class WorkflowRunRepository(RepositoryBase):
         run.error = f"{type(error).__name__}: {error}"
         run.completed_at = datetime.now(UTC)
         run.lease_expires_at = None
+        if run.thread_id is not None:
+            thread = await self._required(ExecutionThreadRecord, run.thread_id)
+            thread.status = ExecutionThreadStatus.INTERRUPTED
+            thread.updated_at = run.completed_at
         self._add_event(
             run,
             "workflow.timed_out" if timed_out else "workflow.failed",
@@ -194,6 +401,10 @@ class WorkflowRunRepository(RepositoryBase):
             run.worker_id = None
             run.heartbeat_at = None
             run.lease_expires_at = None
+            if run.thread_id is not None:
+                thread = await self._required(ExecutionThreadRecord, run.thread_id)
+                thread.status = ExecutionThreadStatus.INTERRUPTED
+                thread.updated_at = now
         if runs:
             await self.session.commit()
         return len(runs)
@@ -228,6 +439,10 @@ class WorkflowRunRepository(RepositoryBase):
             workflow_version_id=version.id,
             workflow_version=version.version,
             status=run.status,
+            thread_id=run.thread_id,
+            attempt_index=run.attempt_index,
+            resumed_from_run_id=run.resumed_from_run_id,
+            resume_checkpoint_id=run.resume_checkpoint_id,
             trigger_id=run.trigger_id,
             trigger_type=run.trigger_type,
             trigger_event_id=run.trigger_event_id,

@@ -8,6 +8,8 @@ from heart_of_the_swarm.workflows.conditions import ConditionSpec, evaluate_cond
 from heart_of_the_swarm.workflows.enums import ConditionOperator, NodeType
 from heart_of_the_swarm.workflows.execution import (
     AgentVersionResolver,
+    ExecutionInterruption,
+    ExecutionPolicy,
     ExecutionResult,
     ResolvedAgentVersion,
     WorkflowEventSink,
@@ -16,15 +18,29 @@ from heart_of_the_swarm.workflows.execution import (
     WorkflowExecutionIssue,
     WorkflowGraph,
     WorkflowGraphFactory,
-    WorkflowRuntimePolicy,
+    WorkflowVersionResolver,
     WorkflowVersionRunner,
     validate_workflow_input,
 )
+from heart_of_the_swarm.workflows.interruptions import (
+    ApprovalResponse,
+    WorkflowInterruptionDetail,
+    WorkflowInterruptionStatus,
+)
 from heart_of_the_swarm.workflows.spec import (
+    ParallelBranch,
+    ParallelRegion,
+    StateFieldSpec,
+    StateReducer,
     ValidatedWorkflowSpec,
     WorkflowEdge,
     WorkflowNode,
     WorkflowSpec,
+)
+from heart_of_the_swarm.workflows.supervisors import (
+    FinishDecision,
+    HandoffDecision,
+    SupervisorDecision,
 )
 from heart_of_the_swarm.workflows.validation import (
     WorkflowValidationError,
@@ -34,11 +50,21 @@ from heart_of_the_swarm.workflows.validation import (
 
 __all__ = [
     "AgentVersionResolver",
+    "ApprovalResponse",
     "ConditionOperator",
     "ConditionSpec",
     "ExecutionResult",
+    "ExecutionPolicy",
+    "ExecutionInterruption",
+    "FinishDecision",
+    "HandoffDecision",
     "NodeType",
+    "ParallelBranch",
+    "ParallelRegion",
     "ResolvedAgentVersion",
+    "StateFieldSpec",
+    "StateReducer",
+    "SupervisorDecision",
     "ValidatedWorkflowSpec",
     "WorkflowEdge",
     "WorkflowCapabilities",
@@ -46,10 +72,12 @@ __all__ = [
     "WorkflowExecutionIssue",
     "WorkflowGraph",
     "WorkflowGraphFactory",
+    "WorkflowInterruptionDetail",
+    "WorkflowInterruptionStatus",
     "WorkflowEventSink",
     "WorkflowExecutionEvent",
-    "WorkflowRuntimePolicy",
     "WorkflowVersionRunner",
+    "WorkflowVersionResolver",
     "WorkflowNodeCapability",
     "WorkflowNode",
     "WorkflowSpec",

@@ -21,6 +21,7 @@ import {
   loadWorkflow,
   loadWorkflows,
   saveWorkflow,
+  setAuthenticationToken,
   uploadSkill,
   validateWorkflow,
   type AgentOption,
@@ -33,6 +34,8 @@ import {
 } from "./api";
 import { EdgeInspector } from "./components/EdgeInspector";
 import { NodeInspector } from "./components/NodeInspector";
+import { ParallelStateEditor } from "./components/ParallelStateEditor";
+import { AgentStudio } from "./components/agents/AgentStudio";
 import { MCPServerPanel } from "./components/mcp/MCPServerPanel";
 import { WorkflowRunPanel } from "./components/runs/WorkflowRunPanel";
 import {
@@ -44,12 +47,14 @@ import {
 import {
   defaultConfig,
   normalizeLoadedNode,
+  supervisorTargetOptions,
   toWorkflowSpec,
   type EditorEdge,
   type EditorNode,
   type JsonObject,
   type NodeType,
   type WorkflowEditorDocument,
+  type WorkflowStateSchema,
 } from "./workflow";
 
 const initialNodes: EditorNode[] = [
@@ -73,7 +78,62 @@ const initialEdges: EditorEdge[] = [
   { id: "input-output", source: "input", target: "output", data: {} },
 ];
 
+const AUTH_TOKEN_KEY = "heart-of-the-swarm.auth-token";
+
 export default function App() {
+  const [token, setToken] = useState(() => sessionStorage.getItem(AUTH_TOKEN_KEY) ?? "");
+  const [draft, setDraft] = useState("");
+  const isAgentStudio = window.location.pathname.startsWith("/agents");
+
+  if (!token) {
+    return (
+      <main className="authentication-screen">
+        <form
+          className="authentication-card"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const nextToken = draft.trim();
+            if (!nextToken) return;
+            sessionStorage.setItem(AUTH_TOKEN_KEY, nextToken);
+            setAuthenticationToken(nextToken);
+            setToken(nextToken);
+          }}
+        >
+          <p className="eyebrow">Heart of the Swarm</p>
+          <h1>Authenticate</h1>
+          <p className="field-help">
+            Enter the development token or a JWT supplied by your identity provider.
+          </p>
+          <label>
+            Bearer token
+            <input
+              type="password"
+              autoComplete="off"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </label>
+          <button type="submit" className="primary">
+            {isAgentStudio ? "Open Agent Studio" : "Open Workflow Studio"}
+          </button>
+        </form>
+      </main>
+    );
+  }
+
+  setAuthenticationToken(token);
+  const logout = () => {
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    setAuthenticationToken(null);
+    setToken("");
+  };
+  if (isAgentStudio) return <AgentStudio onLogout={logout} />;
+  return (
+    <WorkflowEditor onLogout={logout} />
+  );
+}
+
+function WorkflowEditor({ onLogout }: { onLogout: () => void }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<EditorNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<EditorEdge>(initialEdges);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof loadCapabilities>> | null>(null);
@@ -82,6 +142,7 @@ export default function App() {
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
   const [savedWorkflows, setSavedWorkflows] = useState<WorkflowSummary[]>([]);
+  const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([]);
   const [publishedVersion, setPublishedVersion] = useState<WorkflowVersion | null>(null);
   const [runNodeStates, setRunNodeStates] = useState<Record<string, string>>({});
   const [revision, setRevision] = useState<number | null>(null);
@@ -105,6 +166,7 @@ export default function App() {
     properties: { result: { type: "string" } },
     required: ["result"],
   });
+  const [stateSchema, setStateSchema] = useState<WorkflowStateSchema>({});
   const [showRunPanel, setShowRunPanel] = useState(false);
   const workflowId = useRef<string>(crypto.randomUUID());
   const sequence = useRef(1);
@@ -122,13 +184,19 @@ export default function App() {
       loadAgents(),
       loadWorkflows(),
     ])
-      .then(([catalogue, loadedTools, skills, providers, agents, workflows]) => {
+      .then(async ([catalogue, loadedTools, skills, providers, agents, workflows]) => {
+        const versions = (await Promise.all(
+          workflows
+            .filter((workflow) => workflow.latest_version > 0)
+            .map((workflow) => loadLatestWorkflowVersion(workflow.id)),
+        )).filter((version): version is WorkflowVersion => version !== null);
         setCapabilities(catalogue);
         setTools(loadedTools);
         setSkillNames(skills);
         setProviderNames(providers);
         setAgentOptions(agents);
         setSavedWorkflows(workflows);
+        setWorkflowVersions(versions);
         setStatus("Editor ready");
       })
       .catch((error: Error) => setStatus(error.message));
@@ -164,6 +232,10 @@ export default function App() {
       : false,
     [edges, nodes, selectedNode],
   );
+  const supervisorTargets = useMemo(
+    () => supervisorTargetOptions(nodes, edges),
+    [edges, nodes],
+  );
   const spec = useMemo(
     () => toWorkflowSpec(
       {
@@ -172,12 +244,13 @@ export default function App() {
         description,
         inputSchema,
         outputSchema,
+        stateSchema,
         entrypoint,
       },
       nodes,
       edges,
     ),
-    [description, edges, entrypoint, inputSchema, name, nodes, outputSchema],
+    [description, edges, entrypoint, inputSchema, name, nodes, outputSchema, stateSchema],
   );
 
   function addNode(nodeType: NodeType) {
@@ -190,7 +263,11 @@ export default function App() {
         data: {
           label: nodeType.charAt(0).toUpperCase() + nodeType.slice(1),
           nodeType,
-          config: defaultConfig(nodeType, providerNames[0]),
+          config: defaultConfig(
+            nodeType,
+            providerNames[0],
+            supervisorTargets.find((target) => target.eligible)?.id,
+          ),
         },
       },
     ]);
@@ -315,6 +392,10 @@ export default function App() {
     try {
       const version = await createWorkflowVersion(saved.id);
       setPublishedVersion(version);
+      setWorkflowVersions((current) => [
+        ...current.filter((item) => item.workflow_id !== version.workflow_id),
+        version,
+      ]);
       setRunNodeStates({});
       setSavedWorkflows(await loadWorkflows());
       setStatus(`Workflow version ${version.version} created`);
@@ -368,6 +449,7 @@ export default function App() {
       setEntrypoint(saved.spec.entrypoint);
       setInputSchema(saved.spec.input_schema);
       setOutputSchema(saved.spec.output_schema);
+      setStateSchema(saved.spec.state_schema ?? {});
       setNodes(saved.spec.nodes.map((node, index) => {
         const normalized = normalizeLoadedNode(node);
         return {
@@ -385,7 +467,7 @@ export default function App() {
         source: edge.source,
         target: edge.target,
         label: edge.label,
-        data: { condition: edge.condition ?? null },
+        data: { condition: edge.condition ?? null, loop: edge.loop ?? null },
       })));
       setRevision(saved.revision);
       setPublishedVersion(latestVersion);
@@ -418,6 +500,7 @@ export default function App() {
       required: ["result"],
       additionalProperties: false,
     });
+    setStateSchema({});
     setNodes(initialNodes);
     setEdges(initialEdges);
     setRevision(null);
@@ -452,7 +535,9 @@ export default function App() {
           <h1>Workflow editor</h1>
         </div>
         <div className="topbar-actions">
-          <a href="/">Overview</a>
+          <a href="/agents/">Agent Studio</a>
+          <a className="active" href="/workflow-editor/">Workflow Studio</a>
+          <button type="button" onClick={onLogout}>Sign out</button>
           <button type="button" onClick={validate}>Validate</button>
           <button type="button" onClick={saveDraft}>Save draft</button>
           <button type="button" onClick={publishVersion}>Create version</button>
@@ -567,6 +652,10 @@ export default function App() {
               skillNames={skillNames}
               providerNames={providerNames}
               agentOptions={agentOptions}
+              supervisorTargets={supervisorTargets}
+              workflowVersions={workflowVersions.filter(
+                (version) => version.workflow_id !== workflowId.current,
+              )}
               canDetach={canDetachSelectedNode}
               onChange={updateSelectedNode}
               onDetach={detachSelectedNode}
@@ -614,6 +703,7 @@ export default function App() {
                 <div><dt>Draft</dt><dd>{revision === null ? "Unsaved" : `Revision ${revision}`}</dd></div>
                 <div><dt>Published</dt><dd>{publishedVersion ? `Version ${publishedVersion.version}` : "No version"}</dd></div>
               </dl>
+              <ParallelStateEditor value={stateSchema} onChange={setStateSchema} />
             </section>
           )}
 

@@ -8,7 +8,7 @@ export interface NodeCapability {
 }
 
 export interface WorkflowCapabilities {
-  schema_version: "1";
+  schema_version: "2";
   workflow_schema: Record<string, unknown>;
   nodes: NodeCapability[];
 }
@@ -46,6 +46,85 @@ export interface AgentOption {
   version_id: string;
   name: string;
   version: number;
+}
+
+export interface AgentDetail extends AgentOption {
+  goal: string;
+  spec: AgentSpec;
+  prompt_version: string;
+  system_prompt: string;
+  created_at: string;
+}
+
+export interface AgentValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface AgentDesignResult {
+  design_id: string;
+  trace_id: string;
+  spec: AgentSpec;
+}
+
+export type AgentRunStatus =
+  | "queued"
+  | "running"
+  | "cancel_requested"
+  | "interrupted"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timed_out";
+
+export interface AgentRunAccepted {
+  run_id: string;
+  trace_id: string;
+  agent_id: string;
+  agent_version: number;
+  status: AgentRunStatus;
+}
+
+export interface AgentRun extends AgentRunAccepted {
+  input: string;
+  output: string | null;
+  error: string | null;
+  attempt: number;
+  queued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface AgentRunEvent {
+  id: string;
+  run_id: string;
+  event_type: string;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TrajectoryStep {
+  id: string;
+  run_id: string;
+  attempt: number;
+  sequence: number;
+  event_type: string;
+  component: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface UsageSummary {
+  provider: string;
+  model_id: string;
+  stage: string;
+  calls: number;
+  failures: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost: number;
+  average_latency_ms: number;
 }
 
 export interface ToolCapability {
@@ -115,8 +194,11 @@ export interface WorkflowVersion {
 export type WorkflowRunStatus =
   | "queued"
   | "running"
+  | "cancel_requested"
+  | "interrupted"
   | "completed"
   | "failed"
+  | "cancelled"
   | "timed_out";
 
 export interface WorkflowRun {
@@ -142,6 +224,28 @@ export interface WorkflowRunAccepted {
   workflow_version_id: string;
   workflow_version: number;
   status: WorkflowRunStatus;
+  thread_id?: string | null;
+  attempt_index?: number;
+  resumed_from_run_id?: string | null;
+  resume_checkpoint_id?: string | null;
+}
+
+export type WorkflowInterruptionStatus = "pending" | "resolved" | "cancelled";
+
+export interface WorkflowInterruption {
+  id: string;
+  workflow_version_id: string;
+  thread_id: string;
+  workflow_run_id: string;
+  node_id: string;
+  kind: "approval";
+  prompt: string;
+  response_schema: Record<string, unknown>;
+  checkpoint_id: string;
+  status: WorkflowInterruptionStatus;
+  response: { approved: boolean } | null;
+  created_at: string;
+  resolved_at: string | null;
 }
 
 export interface WorkflowRunEvent {
@@ -151,6 +255,28 @@ export interface WorkflowRunEvent {
   event_type: string;
   data: Record<string, unknown>;
   created_at: string;
+}
+
+interface WorkflowRunStreamEnvelope {
+  event_id: string;
+  run_id: string;
+  thread_id: string | null;
+  sequence: number;
+  event_type: string;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+let authenticationToken: string | null = null;
+
+export function setAuthenticationToken(token: string | null): void {
+  authenticationToken = token?.trim() || null;
+}
+
+function authenticatedHeaders(existing?: HeadersInit): Headers {
+  const headers = new Headers(existing);
+  if (authenticationToken) headers.set("Authorization", `Bearer ${authenticationToken}`);
+  return headers;
 }
 
 function errorMessage(response: Response, body: unknown): string {
@@ -168,9 +294,11 @@ function errorMessage(response: Response, body: unknown): string {
 }
 
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers = authenticatedHeaders(options?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers,
   });
   const text = await response.text();
   let body: unknown = null;
@@ -185,6 +313,23 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
     throw new Error(errorMessage(response, body));
   }
   return body as T;
+}
+
+async function requestBlob(path: string): Promise<Blob> {
+  const response = await fetch(path, { headers: authenticatedHeaders() });
+  if (!response.ok) {
+    const text = await response.text();
+    let body: unknown = text;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        // Preserve a non-JSON server response for the shared safe error formatter.
+      }
+    }
+    throw new Error(errorMessage(response, body));
+  }
+  return response.blob();
 }
 
 export function loadCapabilities(): Promise<WorkflowCapabilities> {
@@ -247,11 +392,78 @@ export function loadAgents(): Promise<AgentOption[]> {
   return request("/api/v1/agents");
 }
 
-export function createAgent(spec: AgentSpec): Promise<AgentOption> {
+export function designAgent(
+  task: string,
+  provider?: string,
+  modelId?: string,
+): Promise<AgentDesignResult> {
+  return request("/api/v1/agents/design", {
+    method: "POST",
+    body: JSON.stringify({
+      task,
+      provider: provider || null,
+      model_id: modelId || null,
+    }),
+  });
+}
+
+export function validateAgent(spec: AgentSpec): Promise<AgentValidationResult> {
+  return request("/api/v1/agents/validate", {
+    method: "POST",
+    body: JSON.stringify(spec),
+  });
+}
+
+export function createAgent(spec: AgentSpec): Promise<AgentDetail> {
   return request("/api/v1/agents", {
     method: "POST",
     body: JSON.stringify(spec),
   });
+}
+
+export function loadAgent(id: string): Promise<AgentDetail> {
+  return request(`/api/v1/agents/${id}`);
+}
+
+export function loadAgentVersions(id: string): Promise<AgentDetail[]> {
+  return request(`/api/v1/agents/${id}/versions`);
+}
+
+export function addAgentVersion(id: string, spec: AgentSpec): Promise<AgentDetail> {
+  return request(`/api/v1/agents/${id}/versions`, {
+    method: "POST",
+    body: JSON.stringify(spec),
+  });
+}
+
+export function createAgentVersionRun(
+  versionId: string,
+  input: string,
+): Promise<AgentRunAccepted> {
+  return request(`/api/v1/agent-versions/${versionId}/runs`, {
+    method: "POST",
+    body: JSON.stringify({ input }),
+  });
+}
+
+export function exportAgentVersion(versionId: string): Promise<Blob> {
+  return requestBlob(`/api/v1/agent-versions/${versionId}/artifact`);
+}
+
+export function loadAgentRun(runId: string): Promise<AgentRun> {
+  return request(`/api/v1/runs/${runId}`);
+}
+
+export function loadAgentRunEvents(runId: string): Promise<AgentRunEvent[]> {
+  return request(`/api/v1/runs/${runId}/events`);
+}
+
+export function loadAgentRunTrajectory(runId: string): Promise<TrajectoryStep[]> {
+  return request(`/api/v1/runs/${runId}/trajectory`);
+}
+
+export function loadAgentRunUsage(runId: string): Promise<UsageSummary[]> {
+  return request(`/api/v1/runs/${runId}/usage`);
 }
 
 export function loadWorkflows(): Promise<WorkflowSummary[]> {
@@ -299,6 +511,107 @@ export function loadWorkflowRun(runId: string): Promise<WorkflowRun> {
   return request(`/api/v1/workflow-runs/${runId}`);
 }
 
-export function loadWorkflowRunEvents(runId: string): Promise<WorkflowRunEvent[]> {
-  return request(`/api/v1/workflow-runs/${runId}/events`);
+export function parseWorkflowRunStreamEvent(data: string): WorkflowRunEvent {
+  const envelope = JSON.parse(data) as WorkflowRunStreamEnvelope;
+  return {
+    id: envelope.event_id,
+    workflow_run_id: envelope.run_id,
+    sequence: envelope.sequence,
+    event_type: envelope.event_type,
+    data: envelope.data,
+    created_at: envelope.created_at,
+  };
+}
+
+export function openWorkflowRunEventStream(
+  runId: string,
+  onEvent: (event: WorkflowRunEvent) => void,
+  onError: () => void,
+): WorkflowRunEventStream {
+  const controller = new AbortController();
+  let closed = false;
+  let lastEventId: string | null = null;
+
+  async function connect(): Promise<void> {
+    while (!closed) {
+      try {
+        const headers = authenticatedHeaders({ Accept: "text/event-stream" });
+        if (lastEventId) headers.set("Last-Event-ID", lastEventId);
+        const response = await fetch(`/api/v1/workflow-runs/${runId}/stream`, {
+          headers,
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error(`SSE request failed: ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!closed) {
+          const { done, value } = await reader.read();
+          buffer = (buffer + decoder.decode(value, { stream: !done })).replaceAll("\r\n", "\n");
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary >= 0) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const parsed = parseEventStreamFrame(frame);
+            if (parsed?.event === "workflow.event") {
+              if (parsed.id) lastEventId = parsed.id;
+              onEvent(parseWorkflowRunStreamEvent(parsed.data));
+            }
+            boundary = buffer.indexOf("\n\n");
+          }
+          if (done) break;
+        }
+      } catch (error) {
+        if (closed || (error instanceof DOMException && error.name === "AbortError")) return;
+        onError();
+      }
+      if (!closed) await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    }
+  }
+
+  void connect();
+  return {
+    close() {
+      closed = true;
+      controller.abort();
+    },
+  };
+}
+
+export interface WorkflowRunEventStream {
+  close(): void;
+}
+
+export function parseEventStreamFrame(
+  frame: string,
+): { id: string | null; event: string; data: string } | null {
+  if (!frame || frame.startsWith(":")) return null;
+  let id: string | null = null;
+  let event = "message";
+  const data: string[] = [];
+  for (const line of frame.split("\n")) {
+    const separator = line.indexOf(":");
+    const field = separator >= 0 ? line.slice(0, separator) : line;
+    const value = separator >= 0 ? line.slice(separator + 1).replace(/^ /, "") : "";
+    if (field === "id") id = value;
+    if (field === "event") event = value;
+    if (field === "data") data.push(value);
+  }
+  return data.length ? { id, event, data: data.join("\n") } : null;
+}
+
+export function loadWorkflowInterruptions(
+  status: WorkflowInterruptionStatus = "pending",
+): Promise<WorkflowInterruption[]> {
+  return request(`/api/v1/workflow-interruptions?status=${encodeURIComponent(status)}`);
+}
+
+export function respondToWorkflowInterruption(
+  interruptionId: string,
+  approved: boolean,
+): Promise<WorkflowRunAccepted> {
+  return request(`/api/v1/workflow-interruptions/${interruptionId}/response`, {
+    method: "POST",
+    body: JSON.stringify({ approved }),
+  });
 }

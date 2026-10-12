@@ -11,6 +11,8 @@ button, input, select, textarea { font: inherit; }
 button, a { transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
 
 .app-shell { min-height: 100vh; background: #0c100e; }
+.authentication-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #0c100e; }
+.authentication-card { width: min(420px, 100%); display: grid; gap: 16px; padding: 28px; border: 1px solid #324039; border-radius: 14px; background: #151b18; }
 .topbar {
   height: 76px;
   display: flex;
@@ -21,9 +23,11 @@ button, a { transition: border-color 120ms ease, background 120ms ease, color 12
   background: #111714;
 }
 .topbar h1 { margin: 2px 0 0; font-size: 21px; }
+.topbar > div:first-child { flex: 0 0 auto; }
 .eyebrow { margin: 0; color: #77d49e; font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
-.topbar-actions { display: flex; align-items: center; gap: 12px; }
+.topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .topbar a { color: #a8b7ad; text-decoration: none; }
+.topbar a.active { color: #77d49e; }
 
 button {
   border: 1px solid #35443b;
@@ -141,9 +145,87 @@ textarea { min-height: 76px; resize: vertical; font-family: ui-monospace, SFMono
 .run-events { display: grid; gap: 4px; max-height: 180px; overflow: auto; padding-left: 20px; }
 .run-events li { color: #8fa097; font-size: 11px; }
 .run-events strong { margin-right: 6px; color: #c7d5cd; }
+.approval-request { margin: 14px 0; padding: 14px; border: 1px solid #8c713e; border-radius: 8px; background: #1e1a11; }
+.approval-request h3 { margin: 4px 0 8px; font-size: 15px; }
+.approval-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.approval-actions .danger { width: auto; margin-top: 0; }
 .react-flow__node.node-run-running { box-shadow: 0 0 0 2px #f4c66d; }
 .react-flow__node.node-run-completed { box-shadow: 0 0 0 2px #79d19c; }
 .react-flow__node.node-run-failed { box-shadow: 0 0 0 2px #ff938c; }
 details { margin-top: 20px; }
 summary { cursor: pointer; color: #a8b7ad; font-size: 12px; }
 pre { max-height: 360px; overflow: auto; padding: 10px; border-radius: 6px; color: #b9c9bf; background: #090c0a; font-size: 10px; white-space: pre-wrap; }
+
+.agent-studio {
+  min-height: calc(100vh - 76px);
+  display: grid;
+  grid-template-columns: 250px minmax(560px, 1fr) 330px;
+  background: #0c100e;
+}
+.agent-library, .agent-review { padding: 20px; background: #111714; }
+.agent-library { border-right: 1px solid #27332c; }
+.agent-review { border-left: 1px solid #27332c; }
+.agent-definition { overflow-y: auto; padding: 24px clamp(24px, 4vw, 54px) 48px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.section-heading h2, .agent-review h2 { margin: 3px 0 0; font-size: 20px; }
+.agent-list { display: grid; gap: 8px; margin-top: 18px; }
+.agent-list button { display: grid; gap: 4px; text-align: left; background: #0e1411; }
+.agent-list button.selected { border-color: #71d29a; background: #18271f; }
+.agent-list button span { color: #7f8e84; font-size: 10px; }
+.agent-help-card, .agent-builder-card {
+  margin-top: 22px;
+  padding: 16px;
+  border: 1px solid #2b3831;
+  border-radius: 9px;
+  background: #0e1411;
+}
+.agent-help-card p { color: #8fa097; font-size: 12px; line-height: 1.5; }
+.agent-help-card a { color: #77d49e; font-size: 12px; text-decoration: none; }
+.agent-builder-card h3 { margin: 0 0 6px; font-size: 15px; }
+.agent-builder-card textarea { min-height: 96px; }
+.agent-builder-card button { margin-top: 10px; }
+.agent-builder-card small { display: block; margin-top: 10px; color: #7f8e84; overflow-wrap: anywhere; }
+.version-badge { padding: 6px 9px; border: 1px solid #35443b; border-radius: 999px; color: #91a399; font-size: 10px; }
+.agent-form-grid, .agent-capability-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.agent-form-grid { margin-top: 22px; }
+.agent-instructions { min-height: 140px; }
+.agent-config-section { margin: 22px 0 0; padding: 16px; border: 1px solid #35443b; border-radius: 9px; }
+.agent-config-section legend { color: #c6d6cc; font-size: 13px; font-weight: 750; }
+.capability-checks { display: grid; gap: 7px; max-height: 260px; overflow-y: auto; }
+.capability-checks label { display: flex; align-items: flex-start; gap: 9px; margin: 0; padding: 9px; border: 1px solid #2b3831; border-radius: 7px; background: #0c100e; cursor: pointer; }
+.capability-checks input { width: auto; margin-top: 2px; }
+.capability-checks span { display: grid; gap: 2px; min-width: 0; }
+.capability-checks strong { overflow-wrap: anywhere; color: #dce7df; font-size: 11px; }
+.capability-checks small { color: #718077; font-size: 9px; text-transform: uppercase; }
+.agent-review .workflow-facts { margin-top: 18px; }
+.agent-review details { margin-top: 18px; }
+.agent-version-select { display: grid; gap: 7px; margin: 18px 0; max-width: 360px; }
+.agent-run-card, .agent-export-card {
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid #2b3831;
+  border-radius: 10px;
+  background: #101713;
+}
+.agent-export-card { margin-top: 18px; }
+.agent-export-card .status { margin-bottom: 0; }
+.artifact-files { max-width: 280px; margin: 14px 0; }
+.agent-run-card textarea { min-height: 96px; }
+.agent-run-card > button { margin-top: 10px; }
+.run-status { padding: 5px 9px; border-radius: 999px; color: #8fa097; background: #1b2520; font-size: 10px; text-transform: uppercase; }
+.run-status.running, .run-status.queued, .run-status.cancel_requested { color: #f4c66d; }
+.run-status.completed { color: #79d19c; }
+.run-status.failed, .run-status.cancelled, .run-status.timed_out, .run-status.interrupted { color: #ff938c; }
+.agent-run-details { display: grid; gap: 14px; margin-top: 18px; }
+.agent-run-result { padding: 14px; border-left: 3px solid #71d29a; background: #15231c; }
+.agent-run-result p { margin-bottom: 0; white-space: pre-wrap; }
+.trajectory-list { display: grid; gap: 8px; max-height: 420px; overflow: auto; margin-top: 10px; }
+.trajectory-list article { padding: 10px; border: 1px solid #27332c; border-radius: 7px; background: #0b100d; }
+.trajectory-list article > span { margin-left: 8px; color: #718077; font-size: 10px; }
+.trajectory-list pre { margin-bottom: 0; }
+
+@media (max-width: 1180px) {
+  body { min-width: 900px; }
+  .agent-studio { grid-template-columns: 210px minmax(500px, 1fr); }
+  .agent-review { grid-column: 1 / -1; border-top: 1px solid #27332c; border-left: 0; }
+}

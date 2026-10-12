@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -38,6 +39,21 @@ class AcceptingValidator:
 
     def validate_execution(self, spec: AgentSpec) -> None:
         return None
+
+
+class HangingRunner:
+    capability_authorizer = None
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.cancelled = False
+
+    async def invoke(self, *_args: Any, **_kwargs: Any) -> str:
+        self.calls += 1
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled = True
 
 
 async def execute_model(
@@ -159,6 +175,57 @@ async def test_executor_failure_is_persisted_with_an_event() -> None:
         assert events[-1].event_type == "failed"
         assert [step.event_type for step in trajectory] == ["model.started", "model.failed"]
         assert trajectory[-1].payload["error_message"] == "model unavailable"
+    finally:
+        await database.close()
+
+
+async def test_executor_timeout_is_terminal_and_cancels_active_invocation() -> None:
+    settings = Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        agent_timeout_seconds=0.01,
+    )
+    database = Database(settings.database_url)
+    await database.create_schema()
+    runner = HangingRunner()
+    spec = AgentSpec(
+        name="SlowAgent",
+        goal="Wait forever",
+        instructions="Wait.",
+        model={"provider": "test", "model_id": "fake"},
+    )
+    async with database.session() as session:
+        agent = await AgentRepository(session).create(spec, "1", "System prompt")
+        queued = await RunRepository(session).queue(agent, "trace-timeout", "Test input")
+        await RunRepository(session).claim_next("worker-1", 60)
+
+    try:
+        executor = AgentExecutor(
+            settings,
+            database,
+            runner,  # type: ignore[arg-type]
+            Telemetry(settings),
+        )
+        await executor.execute(queued.run_id, "worker-1")
+
+        async with database.session() as session:
+            repository = RunRepository(session)
+            timed_out = await repository.get(queued.run_id)
+            events = await repository.list_events(queued.run_id)
+            recovered = await repository.recover_expired(max_attempts=3)
+
+        assert timed_out is not None
+        assert timed_out.status == "timed_out"
+        assert "agent execution exceeded" in (timed_out.error or "")
+        assert events[-1].event_type == "timed_out"
+        assert events[-1].data == {
+            "error_type": "AgentExecutionTimeoutError",
+            "error_message": "agent execution exceeded 0.01 seconds",
+            "error_code": "agent.execution_timeout",
+            "timeout_seconds": 0.01,
+        }
+        assert runner.calls == 1
+        assert runner.cancelled is True
+        assert recovered == 0
     finally:
         await database.close()
 

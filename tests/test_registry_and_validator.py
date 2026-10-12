@@ -66,8 +66,15 @@ def test_settings_parse_comma_separated_allowed_models(monkeypatch: pytest.Monke
 
 def test_settings_parse_mcp_server_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_SERVERS", '{"weather":"https://weather.example.com/mcp"}')
+    monkeypatch.setenv("MCP_BEARER_CREDENTIALS", '{"weather":"weather_token"}')
 
     assert Settings().mcp_servers == {"weather": "https://weather.example.com/mcp"}
+    assert Settings().mcp_bearer_credentials == {"weather": "weather_token"}
+
+
+def test_settings_reject_credentials_for_unknown_mcp_servers() -> None:
+    with pytest.raises(ValidationError, match="must reference configured MCP servers"):
+        Settings(mcp_bearer_credentials={"missing": "weather_token"})
 
 
 def test_settings_reject_unsafe_worker_timing() -> None:

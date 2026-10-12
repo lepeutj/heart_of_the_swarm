@@ -4,7 +4,9 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 
+from heart_of_the_swarm.credentials import CredentialRef
 from heart_of_the_swarm.database import Database
+from heart_of_the_swarm.execution import RunService
 from heart_of_the_swarm.mcp_service import MCPServerService
 from heart_of_the_swarm.observability import ModelUsageEvent, TrajectoryEvent
 from heart_of_the_swarm.repositories import (
@@ -66,6 +68,62 @@ def make_workflow_draft(expected_revision: int | None = None) -> WorkflowDraftSa
     )
 
 
+class AcceptingExecutionValidator:
+    def validate_execution(self, _spec: AgentSpec) -> None:
+        pass
+
+
+async def test_run_service_queues_the_selected_immutable_agent_version() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        async with database.session() as session:
+            repository = AgentRepository(session)
+            first = await repository.create(make_spec(), "1", "First prompt")
+            second = await repository.add_version(
+                first.id,
+                make_spec("UpdatedAgent"),
+                "1",
+                "Second prompt",
+            )
+        assert second is not None
+
+        queued = await RunService(database, AcceptingExecutionValidator()).queue(
+            first.version_id,
+            "Use the authorized version",
+            "trace-immutable-version",
+        )
+
+        assert queued.agent_version == first.version
+        assert queued.agent_version != second.version
+    finally:
+        await database.close()
+
+
+async def test_historical_agent_detail_uses_immutable_version_metadata() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    try:
+        async with database.session() as session:
+            repository = AgentRepository(session)
+            first = await repository.create(make_spec("ResearchAgent"), "1", "First prompt")
+            second_spec = make_spec("RenamedAgent").model_copy(
+                update={"goal": "Analyze a repository"}
+            )
+            await repository.add_version(first.id, second_spec, "1", "Second prompt")
+
+        async with database.session() as session:
+            historical = await AgentRepository(session).get_version(first.version_id)
+
+        assert historical is not None
+        assert historical.name == "ResearchAgent"
+        assert historical.goal == "Research a subject"
+        assert historical.spec.name == historical.name
+        assert historical.spec.goal == historical.goal
+    finally:
+        await database.close()
+
+
 async def test_mcp_sources_are_persisted_for_other_processes() -> None:
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_schema()
@@ -73,22 +131,33 @@ async def test_mcp_sources_are_persisted_for_other_processes() -> None:
     second_process = MCPServerService(database)
     try:
         created = await first_process.create(
-            MCPServerCreate(name="github", url="https://mcp.example.test/tools")
+            MCPServerCreate(
+                name="github",
+                url="https://mcp.example.test/tools",
+                bearer_credential_ref=CredentialRef(id="github_mcp_token"),
+            )
         )
 
-        assert await second_process.enabled_sources() == {
-            "github": "https://mcp.example.test/tools"
-        }
+        enabled = await second_process.enabled_sources()
+        assert enabled["github"].url == "https://mcp.example.test/tools"
+        assert enabled["github"].bearer_credential_ref == CredentialRef(id="github_mcp_token")
         loaded = await second_process.get(str(created.id))
         assert loaded is not None
-        assert (loaded.id, loaded.name, loaded.url, loaded.enabled) == (
+        assert (
+            loaded.id,
+            loaded.name,
+            loaded.url,
+            loaded.bearer_credential_ref,
+            loaded.enabled,
+        ) == (
             created.id,
             created.name,
             created.url,
+            CredentialRef(id="github_mcp_token"),
             created.enabled,
         )
         await second_process.seed({"github": "https://seed.example.test/tools"})
-        assert await first_process.enabled_sources() == {"github": "https://mcp.example.test/tools"}
+        assert (await first_process.enabled_sources())["github"] == enabled["github"]
         with pytest.raises(ValueError, match="already exists"):
             await second_process.create(
                 MCPServerCreate(name="github", url="https://other.example.test/tools")
@@ -143,6 +212,8 @@ async def test_repository_persists_versions_runs_and_usage() -> None:
             run = await RunRepository(session).get(queued.run_id)
             events = await RunRepository(session).list_events(queued.run_id)
             summary = await ObservabilityRepository(session).usage_summary()
+            run_summary = await ObservabilityRepository(session).run_usage_summary(queued.run_id)
+            versions = await AgentRepository(session).list_versions(agent.id)
         assert run is not None
         assert run.status == "completed"
         assert run.output == "Done"
@@ -150,6 +221,11 @@ async def test_repository_persists_versions_runs_and_usage() -> None:
         assert summary[0].calls == 1
         assert summary[0].total_tokens == 15
         assert summary[0].cost == 0.01
+        assert run_summary == summary
+        assert [(version.version, version.name) for version in versions] == [
+            (2, "UpdatedAgent"),
+            (1, "ResearchAgent"),
+        ]
     finally:
         await database.close()
 

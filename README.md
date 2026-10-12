@@ -4,16 +4,54 @@
   <img src="front_1.png" alt="Heart of the Swarm interface" width="48%">
   <img src="front.png" alt="Heart of the Swarm workflow" width="48%">
 </p>
-Heart of the Swarm designs, validates, versions, and runs LangChain agents and LangGraph workflows.
-It includes a visual editor, OpenAI and OpenRouter providers, PostgreSQL persistence, structured
-audit logs, model-usage aggregation, portable Docker runtimes, and optional MLflow traces.
+
+Heart of the Swarm turns declarative configuration into tested, traced, versioned, and portable
+LangChain agents and LangGraph workflows. It is a portfolio project focused on the engineering
+boundaries behind useful GenAI systems: immutable specifications, trusted tool registries, durable
+execution, human approval, observability, and standalone Docker runtimes.
+
+The product has two complementary creation surfaces:
+
+- **Agent Studio** builds and versions one autonomous LangChain agent from a model, instructions,
+  tools, and Markdown Skills.
+- **Workflow Studio** composes saved agents with deterministic connectors, transforms, conditions,
+  approvals, supervisors, subworkflows, loops, and parallel branches through LangGraph.
+
+## Product tour
+
+### Agent Studio
+
+Create an `AgentSpec` manually or generate an editable draft with the Builder, validate it against
+the trusted model/tool catalogues, and save immutable versions. Saved versions automatically become
+available to Workflow Studio.
+
+![Agent Studio showing the agent catalogue, typed configuration editor, and AgentSpec review](docs/images/agent-studio.png)
+
+### Workflow Studio
+
+Compose execution dependencies visually while state mappings carry structured data between nodes.
+The backend validates the public `WorkflowSpec` before compiling it to a LangGraph `StateGraph`.
+
+![Workflow Studio showing the node palette, React Flow canvas, and typed inspector](docs/images/workflow-studio.png)
+
+[`Agent Studio`](docs/agent-studio.md) now runs an explicitly selected historical or current
+`AgentVersion`, shows its lifecycle, result, stored model/tool trajectory, run-scoped usage, and
+trace correlation, then downloads that same version as the existing `manifest.json` + `agent.json`
+Docker artifact. The current priority is validating this archive through the generic runtime on a
+second Docker environment. Deployment registration and automated provisioning remain deferred.
 
 For the frozen V1 architecture, its boundaries, and a reproducible five-minute demonstration, see
 [`docs/v1-demo.md`](docs/v1-demo.md).
 
+The current delivery order and completed V2 milestones are in
+[`docs/roadmap.md`](docs/roadmap.md). Runtime contracts for
+threads, checkpoints, controlled cycles, subworkflows, reducers, handoffs, and streaming are in
+[`docs/v2-runtime-semantics.md`](docs/v2-runtime-semantics.md).
+
 ## Docker pack
 
-Copy the environment file, add at least one provider key, and start the stack:
+Copy the environment file, set `DEVELOPMENT_AUTH_TOKEN`, add at least one provider key, and start
+the stack. The workflow editor asks for that token and keeps it in browser session storage only.
 Commands that differ are shown for Linux/macOS first and Windows PowerShell second. Commands not
 split by platform use the same syntax on both.
 
@@ -34,6 +72,7 @@ docker compose up --build
 | Service | URL | Purpose |
 | --- | --- | --- |
 | Application | <http://localhost:8000> | Configuration UI and API |
+| Agent Studio | <http://localhost:8000/agents/> | Create and version standalone agents |
 | Workflow editor | <http://localhost:8000/workflow-editor/> | React Flow workflow configuration |
 | API documentation | <http://localhost:8000/docs> | OpenAPI interface |
 | MLflow | <http://localhost:5000> | Trace exploration |
@@ -43,6 +82,17 @@ docker compose up --build
 
 PostgreSQL and MLflow artifacts use named Docker volumes. Application audit logs are written to
 the host `logs` directory.
+
+Runtime capability access is default-deny. After publishing a version, add exact grants to `.env`
+and restart the worker before executing tools:
+
+```ini
+CAPABILITY_POLICIES={"agent_version:AGENT_VERSION_UUID":["web_search"],"workflow_node:WORKFLOW_VERSION_UUID/fetch":["rss_reader"]}
+CAPABILITY_APPROVAL_POLICIES={"workflow_node:WORKFLOW_VERSION_UUID/publish":["remote.publish"]}
+```
+
+The requested tools in an `AgentSpec` do not grant permission. The policy key must identify the
+immutable saved agent version or published workflow node that performs the invocation.
 
 `/health` is a process liveness check. `/ready` verifies the database connection, required tables,
 and expected Alembic revision; Docker uses readiness when deciding whether the API is healthy.
@@ -71,6 +121,7 @@ Build and run the generic runtime image with the artifact mounted read-only.
 docker build -f docker/agent-runtime.Dockerfile -t heart-of-the-swarm-agent-runtime .
 docker run --rm -p 8080:8000 \
   --mount type=bind,source="$(pwd)/artifact",target=/app/artifact,readonly \
+  -e RUNTIME_API_TOKEN="replace-with-a-runtime-service-token" \
   -e OPENAI_API_KEY \
   heart-of-the-swarm-agent-runtime
 ```
@@ -82,32 +133,43 @@ docker build -f docker/agent-runtime.Dockerfile -t heart-of-the-swarm-agent-runt
 $artifact = (Resolve-Path .\artifact).Path
 docker run --rm -p 8080:8000 `
   --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
+  -e "RUNTIME_API_TOKEN=replace-with-a-runtime-service-token" `
   -e "OPENAI_API_KEY=$env:OPENAI_API_KEY" `
   heart-of-the-swarm-agent-runtime
 ```
 
-Use `OPENROUTER_API_KEY` instead for an OpenRouter artifact. The running container exposes only
-`GET /health`, `GET /metadata`, and `POST /invoke`. It does not connect to PostgreSQL, the control
-plane API, or the worker.
+Use `OPENROUTER_API_KEY` instead for an OpenRouter artifact. `GET /health` is public. The operational
+endpoints `GET /metadata`, `POST /invoke`, `GET /runs/{run_id}`, and
+`GET /runs/{run_id}/events` require the configured Bearer token. The runtime accepts one active run
+at a time and keeps only bounded, ephemeral run history in memory. It does not connect to
+PostgreSQL, the control plane API, or the worker.
 
 ### Linux / macOS
 
 ```bash
 curl http://localhost:8080/health
-curl http://localhost:8080/metadata
+TOKEN="replace-with-a-runtime-service-token"
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/metadata
 curl -X POST http://localhost:8080/invoke \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"input":"Complete the assigned task."}'
+# Read the run_id from the 202 response, then poll:
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/runs/<run_id>
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/runs/<run_id>/events
 ```
 
 ### Windows PowerShell
 
 ```powershell
 Invoke-RestMethod http://localhost:8080/health
-Invoke-RestMethod http://localhost:8080/metadata
+$headers = @{ Authorization = 'Bearer replace-with-a-runtime-service-token' }
+Invoke-RestMethod http://localhost:8080/metadata -Headers $headers
 Invoke-RestMethod -Method Post http://localhost:8080/invoke `
+  -Headers $headers `
   -ContentType 'application/json' `
   -Body (@{ input = 'Complete the assigned task.' } | ConvertTo-Json)
+# Read run_id from the accepted response, then call /runs/{run_id} and /runs/{run_id}/events.
 ```
 
 ## Agent workflow
@@ -160,6 +222,34 @@ and tool calling. The deterministic regression version of this scenario is
 `tests/test_workflow_end_to_end.py`; it uses a local RSS response and fake model messages while
 exercising the real LangChain agent, tool registry, `rss_reader`, and LangGraph workflow runtime.
 
+## Portfolio demonstration: read-only PostgreSQL through MCP
+
+The repository also contains a reproducible business-data demonstration:
+
+```text
+PostgreSQL read-only role
+→ FastMCP bounded analytics tools
+→ shared Heart capability catalogue
+→ deterministic CONNECTOR or autonomous AGENT
+→ result, events, and MLflow trace
+```
+
+Start it alongside the normal stack:
+
+```bash
+docker compose -f compose.yaml -f compose.sales-demo.yaml up --build -d
+```
+
+The MCP server cannot modify the database: PostgreSQL grants its dedicated role only `CONNECT`,
+schema `USAGE`, and table `SELECT`, while the server exposes fixed parameterized business queries
+rather than arbitrary SQL. Ready-to-use agent and workflow declarations, permission checks, sample
+tasks, and Linux/PowerShell commands are documented in
+[`examples/sales_mcp/README.md`](examples/sales_mcp/README.md).
+
+The verified local execution, security checks, immutable export, standalone runtime invocation,
+ordered events, and MLflow trace are recorded in
+[`docs/test-results/read-only-sales-agent.md`](docs/test-results/read-only-sales-agent.md).
+
 ## Standalone workflow runtime
 
 Export the immutable generated RSS workflow version printed by the reference demonstration:
@@ -176,6 +266,7 @@ The output contains `manifest.json` and `workflow.json`. Build and run the gener
 docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflow-runtime .
 docker run --rm -p 8080:8000 \
   --mount type=bind,source="$(pwd)/workflow-artifact",target=/app/artifact,readonly \
+  -e RUNTIME_API_TOKEN="replace-with-a-runtime-service-token" \
   -e OPENROUTER_API_KEY \
   heart-of-the-swarm-workflow-runtime
 ```
@@ -187,6 +278,7 @@ docker build -f docker/workflow-runtime.Dockerfile -t heart-of-the-swarm-workflo
 $artifact = (Resolve-Path .\workflow-artifact).Path
 docker run --rm -p 8080:8000 `
   --mount "type=bind,source=$artifact,target=/app/artifact,readonly" `
+  -e "RUNTIME_API_TOKEN=replace-with-a-runtime-service-token" `
   -e "OPENROUTER_API_KEY=$env:OPENROUTER_API_KEY" `
   heart-of-the-swarm-workflow-runtime
 ```
@@ -197,6 +289,7 @@ Invoke it with the workflow's declared object input:
 
 ```bash
 curl -X POST http://localhost:8080/invoke \
+  -H "Authorization: Bearer replace-with-a-runtime-service-token" \
   -H "Content-Type: application/json" \
   -d '{"input":{"feed_url":"https://feeds.bbci.co.uk/news/technology/rss.xml","request":"Résume en français les principaux thèmes des cinq dernières publications."}}'
 ```
@@ -205,6 +298,7 @@ curl -X POST http://localhost:8080/invoke \
 
 ```powershell
 Invoke-RestMethod -Method Post http://localhost:8080/invoke `
+  -Headers @{ Authorization = 'Bearer replace-with-a-runtime-service-token' } `
   -ContentType 'application/json' `
   -Body (@{
     input = @{
@@ -214,12 +308,14 @@ Invoke-RestMethod -Method Post http://localhost:8080/invoke `
   } | ConvertTo-Json -Depth 3)
 ```
 
-The runtime reconstructs LangGraph from the declaration and uses the same portable runner as the
-worker. It does not connect to PostgreSQL. V1 supports built-in capabilities and inline agents;
-MCP capabilities, saved-agent references, and external Skill files are rejected during export.
+The `202 Accepted` response contains the run ID used with the authenticated status and event
+endpoints shown above. The runtime reconstructs LangGraph from the declaration and uses the same
+portable runner as the worker. It does not connect to PostgreSQL. Portable export supports built-in
+capabilities and inline agents; MCP capabilities, saved-agent references, external Skill files,
+subworkflows, and `HUMAN_APPROVAL` are rejected during export until their remote dependencies exist.
 
 Set `MLFLOW_ENABLED=true`, `MLFLOW_TRACKING_URI`, and `MLFLOW_EXPERIMENT` when starting either
-standalone runtime to enable LangChain/LangGraph autotracing. `/invoke` then returns both the
+standalone runtime to enable LangChain/LangGraph autotracing. The run detail then exposes the
 product `trace_id` and `mlflow_trace_id`. If MLflow is unavailable, execution continues and the
 MLflow identifier is omitted.
 
@@ -257,11 +353,15 @@ POST /api/v1/agents
 POST /api/v1/agents/{id}/versions
 GET  /api/v1/agents
 GET  /api/v1/agents/{id}
+GET  /api/v1/agents/{id}/versions
 POST /api/v1/agents/{id}/runs
+POST /api/v1/agent-versions/{id}/runs
+GET  /api/v1/agent-versions/{id}/artifact
 GET  /api/v1/agents/{id}/runs
 GET  /api/v1/runs/{id}
 GET  /api/v1/runs/{id}/events
 GET  /api/v1/runs/{id}/trajectory
+GET  /api/v1/runs/{id}/usage
 POST /api/v1/runs/{id}/cancel
 GET  /api/v1/usage/summary
 ```

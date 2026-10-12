@@ -1,0 +1,83 @@
+services:
+  sales-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sales_owner
+      POSTGRES_PASSWORD: ${SALES_DB_OWNER_PASSWORD:?set SALES_DB_OWNER_PASSWORD in .env}
+      POSTGRES_DB: sales_demo
+      SALES_DB_READER_PASSWORD: ${SALES_DB_READER_PASSWORD:?set SALES_DB_READER_PASSWORD in .env}
+    volumes:
+      - sales_demo_data:/var/lib/postgresql/data
+      - ./docker/sales-demo/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sales_owner -d sales_demo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  sales-mcp:
+    build: .
+    command:
+      - uvicorn
+      - examples.sales_mcp.server:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    environment:
+      SALES_DATABASE_URL: postgresql://heart_sales_reader:${SALES_DB_READER_PASSWORD:?set SALES_DB_READER_PASSWORD in .env}@sales-db:5432/sales_demo
+    volumes:
+      - ./examples:/app/examples:ro
+    ports:
+      - "8001:8001"
+    depends_on:
+      sales-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8001), 2).close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    environment:
+      MCP_SERVERS: '{"sales":"http://sales-mcp:8001/mcp"}'
+      NETWORK_ALLOW_PRIVATE: "true"
+    depends_on:
+      sales-mcp:
+        condition: service_healthy
+
+  worker:
+    environment:
+      MCP_SERVERS: '{"sales":"http://sales-mcp:8001/mcp"}'
+      NETWORK_ALLOW_PRIVATE: "true"
+    depends_on:
+      sales-mcp:
+        condition: service_healthy
+
+  sales-agent-runtime:
+    profiles: ["remote-demo"]
+    build:
+      context: .
+      dockerfile: docker/agent-runtime.Dockerfile
+    env_file: .env
+    environment:
+      AGENT_ARTIFACT_DIR: /app/artifact
+      RUNTIME_ID: sales-demo-runtime
+      RUNTIME_API_TOKEN: ${SALES_RUNTIME_API_TOKEN:-replace-with-a-runtime-service-token}
+      MCP_SERVERS: '{"sales":"http://sales-mcp:8001/mcp"}'
+      NETWORK_ALLOW_PRIVATE: "true"
+      CAPABILITY_POLICIES: '{"agent_version:${SALES_AGENT_VERSION_ID:-replace-with-exported-version-id}":["sales__database_access","sales__sales_summary","sales__top_products","sales__recent_orders"]}'
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ${SALES_AGENT_ARTIFACT_DIR:-./output/sales-agent-artifact}:/app/artifact:ro
+    ports:
+      - "8080:8000"
+    depends_on:
+      sales-mcp:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+
+volumes:
+  sales_demo_data:

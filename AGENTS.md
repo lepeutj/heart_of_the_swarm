@@ -3,10 +3,11 @@
 Heart of the Swarm turns declarative agent and workflow configuration into tested, traced,
 versioned, and deployable LangChain/LangGraph runtimes.
 
-Before significant changes, read `PROJECT.md`, `docs/roadmap.md`, `docs/decisions.md`, and the
-relevant contract document. When local planning files such as `tasks/current.md` or
-`reports/latest.md` are present, use them as additional context. Do not silently replace accepted
-decisions or redesign unrelated code.
+Before significant changes, read `PROJECT.md`, the active milestone in `docs/roadmap.md`, the
+concise `docs/decisions.md` index, and only the contract sections relevant to the task. When local
+planning files such as `tasks/current.md` or `reports/latest.md` are present, read those first to
+avoid reopening completed work. Do not reread deferred sections without a concrete need, silently
+replace accepted decisions, or redesign unrelated code.
 
 ## Language
 
@@ -42,6 +43,16 @@ asked otherwise.
 
 ## Development
 
+- Follow KISS: choose the smallest clear implementation that satisfies correctness, observability,
+  and known performance constraints. Avoid speculative abstractions, duplicated framework features,
+  and flexibility without an active use case. Do not introduce obviously unbounded work, unnecessary
+  deep copies, or repeated computation that can be performed once at validation or compilation time.
+  Measure real workloads before adding caches, schedulers, or other performance machinery.
+- Document non-obvious business and runtime functions with concise, precise docstrings. Add a short
+  explanatory comment around a complex framework boundary or code block when its purpose or
+  constraint is not evident from the code. Explain responsibility and intent; do not restate syntax
+  or write long narratives. A human reviewer must be able to understand why the code exists and what
+  contract it preserves.
 - Use `uv`, never `pip install` instructions.
 - Justify new dependencies and avoid overlapping libraries.
 - Test meaningful behavior, invalid input, and important failures; every bug fix needs a regression

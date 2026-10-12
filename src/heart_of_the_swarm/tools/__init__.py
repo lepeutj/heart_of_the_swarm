@@ -1,4 +1,10 @@
 from heart_of_the_swarm.config import Settings, get_settings
+from heart_of_the_swarm.tools.authorized import (
+    AuthorizedTool,
+    approval_capable_tool_view,
+    authorized_tool_view,
+    budgeted_tool_view,
+)
 from heart_of_the_swarm.tools.builtin import (
     calculator,
     create_database_query,
@@ -7,7 +13,7 @@ from heart_of_the_swarm.tools.builtin import (
     rss_reader,
     web_search,
 )
-from heart_of_the_swarm.tools.mcp import MCPToolLoader
+from heart_of_the_swarm.tools.mcp import MCPConnection, MCPToolLoader
 from heart_of_the_swarm.tools.models import (
     CapabilityContract,
     CapabilityDescriptor,
@@ -43,9 +49,14 @@ __all__ = [
     "MCPServerStatus",
     "MCPServerTestResult",
     "MCPServerView",
+    "MCPConnection",
     "MCPToolLoader",
     "RegisteredCapability",
     "ToolCatalogueResponse",
     "ToolRegistry",
+    "AuthorizedTool",
+    "approval_capable_tool_view",
+    "authorized_tool_view",
+    "budgeted_tool_view",
     "create_default_registry",
 ]

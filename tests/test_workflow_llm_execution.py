@@ -138,9 +138,11 @@ async def test_llm_node_passes_workflow_metadata_to_agent_runner() -> None:
     assert runner.calls[0]["callbacks"] == [callback]
     assert runner.calls[0]["metadata"] == {
         "workflow_id": str(workflow.id),
+        "workflow_version_id": None,
         "workflow_run_id": "run-1",
         "node_id": "research",
         "node_type": "agent",
+        "execution_path": "root/research",
     }
 
 

@@ -1,14 +1,29 @@
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, NoReturn
+from uuid import UUID
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import validator_for
+from langchain_core.callbacks import BaseCallbackHandler
+from langgraph.errors import GraphBubbleUp
+from pydantic import BaseModel
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.approval_grants import (
+    ApprovalGrantConsumer,
+    fingerprint_capability_arguments,
+)
+from heart_of_the_swarm.authorization import AuthorizationContext, AuthorizationDecision
+from heart_of_the_swarm.capability_authorization import (
+    CapabilityApprovalRequired,
+    CapabilityAuthorizationError,
+    CapabilityAuthorizer,
+    ExecutionSecurityContext,
+)
 from heart_of_the_swarm.observability import RuntimeCallbackHandler
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows.conditions import ConditionEvaluationError, evaluate_condition
@@ -19,6 +34,7 @@ from heart_of_the_swarm.workflows.configs import (
     InlineAgentSource,
     InputNodeConfig,
     OutputNodeConfig,
+    SupervisorNodeConfig,
     TransformNodeConfig,
     VersionedAgentSource,
 )
@@ -27,6 +43,14 @@ from heart_of_the_swarm.workflows.execution.agent_versions import AgentVersionRe
 from heart_of_the_swarm.workflows.execution.errors import (
     WorkflowExecutionError,
     WorkflowExecutionIssue,
+)
+from heart_of_the_swarm.workflows.execution.execution_budget import (
+    ExecutionBudget,
+    ExecutionBudgetExceededError,
+)
+from heart_of_the_swarm.workflows.execution.state_budget import (
+    WorkflowStateBudgetError,
+    enforce_state_size,
 )
 from heart_of_the_swarm.workflows.execution.validation import validate_workflow_input
 from heart_of_the_swarm.workflows.spec import (
@@ -41,6 +65,7 @@ from heart_of_the_swarm.workflows.state import (
     resolve_value,
     set_path,
 )
+from heart_of_the_swarm.workflows.supervisors import SupervisorDecision
 
 
 @dataclass(frozen=True)
@@ -52,6 +77,7 @@ class NodeExecution:
     selected_target: str | None = None
     output: Any = None
     is_output: bool = False
+    supervisor_decision: SupervisorDecision | None = None
 
 
 class WorkflowNodeRunner:
@@ -68,6 +94,14 @@ class WorkflowNodeRunner:
         workflow_run_id: str | None = None,
         event_sink: Callable[[str, ValidatedWorkflowNode, dict[str, Any]], Awaitable[None]]
         | None = None,
+        workflow_version_id: str | None = None,
+        execution_path: str = "root",
+        runtime_context: dict[str, Any] | None = None,
+        capability_authorizer: CapabilityAuthorizer | None = None,
+        approval_grants: ApprovalGrantConsumer | None = None,
+        max_state_bytes: int = 5_000_000,
+        agent_callbacks: Sequence[BaseCallbackHandler] = (),
+        execution_budget: ExecutionBudget | None = None,
     ) -> None:
         self.workflow = workflow
         self.callback = callback
@@ -76,6 +110,14 @@ class WorkflowNodeRunner:
         self.agent_runner = agent_runner
         self.agent_versions = agent_versions
         self.capabilities = capabilities
+        self.workflow_version_id = workflow_version_id
+        self.execution_path = execution_path
+        self.runtime_context = dict(runtime_context or {})
+        self.capability_authorizer = capability_authorizer
+        self.approval_grants = approval_grants
+        self.max_state_bytes = max_state_bytes
+        self.agent_callbacks = tuple(agent_callbacks)
+        self.execution_budget = execution_budget
 
     async def run(
         self,
@@ -83,17 +125,13 @@ class WorkflowNodeRunner:
         outgoing_edges: list[WorkflowEdge],
         state: WorkflowState,
         executed_nodes: tuple[str, ...],
+        event_context: dict[str, Any] | None = None,
+        agent_input_overrides: dict[str, Any] | None = None,
+        approval_grant_id: UUID | None = None,
     ) -> NodeExecution:
         """Execute one node with normalized errors and trajectory events."""
-        if node.id in executed_nodes:
-            self._raise(
-                code="workflow.execution.repeated_node",
-                message=f"Node '{node.id}' was selected more than once.",
-                node=node,
-            )
-
         current_execution = (*executed_nodes, node.id)
-        await self._record_node("node.started", node)
+        await self._record_node("node.started", node, context=event_context)
         try:
             if isinstance(node.config, InputNodeConfig):
                 validate_workflow_input(self.workflow, state, node)
@@ -102,12 +140,29 @@ class WorkflowNodeRunner:
                 result = NodeExecution(self._apply_transform(node, state), current_execution)
             elif isinstance(node.config, AgentNodeConfig):
                 result = NodeExecution(
-                    await self._invoke_agent(node, state),
+                    await self._invoke_agent(
+                        node,
+                        state,
+                        event_context,
+                        agent_input_overrides,
+                    ),
                     current_execution,
+                )
+            elif isinstance(node.config, SupervisorNodeConfig):
+                decision = await self._invoke_supervisor(node, state, event_context)
+                result = NodeExecution(
+                    state,
+                    current_execution,
+                    supervisor_decision=decision,
                 )
             elif isinstance(node.config, ConnectorNodeConfig):
                 result = NodeExecution(
-                    await self._invoke_connector(node, state),
+                    await self._invoke_connector(
+                        node,
+                        state,
+                        event_context,
+                        approval_grant_id,
+                    ),
                     current_execution,
                 )
             elif isinstance(node.config, ConditionNodeConfig):
@@ -132,6 +187,7 @@ class WorkflowNodeRunner:
                     message=f"Node type '{node.type}' is not supported by this runtime.",
                     node=node,
                 )
+            self.validate_state(node, result.state)
         except asyncio.CancelledError:
             await self._record_node(
                 "node.failed",
@@ -140,6 +196,7 @@ class WorkflowNodeRunner:
                     "error_code": "workflow.execution.cancelled",
                     "safe_message": f"Node '{node.id}' execution was cancelled.",
                 },
+                context=event_context,
             )
             raise
         except WorkflowExecutionError as exc:
@@ -150,11 +207,89 @@ class WorkflowNodeRunner:
                     "error_code": exc.issue.code,
                     "safe_message": exc.issue.message,
                 },
+                context=event_context,
             )
             raise
 
-        await self._record_node("node.completed", node)
+        await self._record_node("node.completed", node, context=event_context)
         return result
+
+    async def resume_connector(
+        self,
+        node: ValidatedWorkflowNode,
+        state: WorkflowState,
+        executed_nodes: tuple[str, ...],
+        grant_id: UUID,
+        event_context: dict[str, Any] | None = None,
+    ) -> NodeExecution:
+        """Complete an already-started connector node with one approved exact grant."""
+        try:
+            updated = await self._invoke_connector(node, state, event_context, grant_id)
+            self.validate_state(node, updated)
+        except WorkflowExecutionError as exc:
+            await self.record_failed(
+                node,
+                error_code=exc.issue.code,
+                safe_message=exc.issue.message,
+                context=event_context,
+            )
+            raise
+        await self.record_completed(node, event_context)
+        return NodeExecution(updated, (*executed_nodes, node.id))
+
+    def validate_state(self, node: ValidatedWorkflowNode, state: WorkflowState) -> None:
+        """Reject non-JSON or oversized shared state before LangGraph receives the update."""
+        try:
+            enforce_state_size(state, self.max_state_bytes)
+        except WorkflowStateBudgetError as exc:
+            self._raise(
+                code=exc.code,
+                message=str(exc),
+                node=node,
+                cause=exc,
+            )
+
+    async def record_started(
+        self,
+        node: ValidatedWorkflowNode,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """Record the start of a framework-managed composite node."""
+        await self._record_node("node.started", node, context=context)
+
+    async def record_completed(
+        self,
+        node: ValidatedWorkflowNode,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """Record the completion of a framework-managed composite node."""
+        await self._record_node("node.completed", node, context=context)
+
+    async def record_failed(
+        self,
+        node: ValidatedWorkflowNode,
+        *,
+        error_code: str,
+        safe_message: str,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a normalized failure for a framework-managed composite node."""
+        await self._record_node(
+            "node.failed",
+            node,
+            {"error_code": error_code, "safe_message": safe_message},
+            context=context,
+        )
+
+    async def record_event(
+        self,
+        event_type: str,
+        node: ValidatedWorkflowNode,
+        payload: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit one contextual workflow event outside normal node lifecycle events."""
+        await self._record_node(event_type, node, payload, context=context)
 
     def reject_non_object_input(self, node: ValidatedWorkflowNode) -> NoReturn:
         """Raise the stable workflow error used for non-object input."""
@@ -168,11 +303,85 @@ class WorkflowNodeRunner:
         self,
         node: ValidatedWorkflowNode,
         state: WorkflowState,
+        event_context: dict[str, Any] | None = None,
+        input_overrides: dict[str, Any] | None = None,
     ) -> WorkflowState:
         """Resolve one inline or saved agent and delegate its loop to AgentRunner."""
         config = node.config
         if not isinstance(config, AgentNodeConfig):
             raise TypeError(f"Node '{node.id}' has an inconsistent agent configuration.")
+        agent_input = self._resolve_agent_input(node, config, state, input_overrides)
+
+        output = await self._call_agent(
+            node,
+            config.source,
+            agent_input,
+            config.response_schema,
+            event_context,
+        )
+
+        try:
+            updated = self._write_agent_output(node, config, state, output)
+        except WorkflowExecutionError:
+            raise
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.agent_output_failed",
+                message=f"Output from agent node '{node.id}' could not be written to state.",
+                node=node,
+                cause=exc,
+            )
+        return updated
+
+    async def _invoke_supervisor(
+        self,
+        node: ValidatedWorkflowNode,
+        state: WorkflowState,
+        event_context: dict[str, Any] | None = None,
+    ) -> SupervisorDecision:
+        """Invoke one supervisor agent and validate its closed routing decision."""
+        config = self._require_config(node, SupervisorNodeConfig)
+        agent_input = self._serialize_named_inputs(node, config.inputs, state)
+        output = await self._call_agent(
+            node,
+            config.source,
+            agent_input,
+            SupervisorDecision,
+            event_context,
+        )
+        try:
+            decision = SupervisorDecision.model_validate(output)
+        except Exception as exc:
+            self._raise(
+                code="workflow.execution.supervisor_decision_invalid",
+                message=f"Supervisor node '{node.id}' returned an invalid routing decision.",
+                node=node,
+                cause=exc,
+            )
+        if decision.root.action == "handoff" and decision.root.target not in config.allowed_targets:
+            self._raise(
+                code="workflow.execution.supervisor_target_not_allowed",
+                message=(
+                    f"Supervisor node '{node.id}' selected an unavailable target "
+                    f"'{decision.root.target}'."
+                ),
+                node=node,
+            )
+        payload: dict[str, Any] = {"action": decision.root.action}
+        if decision.root.action == "handoff":
+            payload["target_node_id"] = decision.root.target
+        await self._record_node("supervisor.decision", node, payload, context=event_context)
+        return decision
+
+    async def _call_agent(
+        self,
+        node: ValidatedWorkflowNode,
+        source: InlineAgentSource | VersionedAgentSource,
+        agent_input: str,
+        response_schema: dict[str, Any] | type[BaseModel] | None,
+        event_context: dict[str, Any] | None,
+    ) -> Any:
+        """Resolve one agent source and delegate exactly one invocation to AgentRunner."""
         if self.agent_runner is None:
             self._raise(
                 code="workflow.execution.agent_runtime_unavailable",
@@ -180,13 +389,11 @@ class WorkflowNodeRunner:
                 node=node,
             )
 
-        agent_input = self._resolve_agent_input(node, config, state)
-
-        if isinstance(config.source, InlineAgentSource):
-            spec = config.source.agent
+        if isinstance(source, InlineAgentSource):
+            spec = source.agent
             system_prompt = None
+            security = self._workflow_security(node)
         else:
-            source = config.source
             if not isinstance(source, VersionedAgentSource):
                 raise TypeError(f"Node '{node.id}' has an inconsistent agent source.")
             if self.agent_versions is None:
@@ -204,18 +411,44 @@ class WorkflowNodeRunner:
                 )
             spec = resolved.spec
             system_prompt = resolved.system_prompt
+            security = self._agent_security(node, str(source.agent_version_id))
 
         try:
-            output = await self.agent_runner.invoke(
-                spec,
-                agent_input,
-                system_prompt=system_prompt,
-                callbacks=[self.callback] if self.callback is not None else [],
-                metadata=self._node_context(node),
-                response_schema=config.response_schema,
-            )
+            invocation_options: dict[str, Any] = {
+                "system_prompt": system_prompt,
+                "callbacks": [
+                    *([self.callback] if self.callback is not None else []),
+                    *self.agent_callbacks,
+                ],
+                "metadata": self._node_context(node, event_context),
+                "response_schema": response_schema,
+            }
+            if security is not None:
+                invocation_options["security"] = security
+            if self.approval_grants is not None and not (
+                event_context is not None and event_context.get("branch_id") is not None
+            ):
+                invocation_options["approval_grants"] = self.approval_grants
+            if self.execution_budget is not None:
+                invocation_options["execution_budget"] = self.execution_budget
+            output = await self.agent_runner.invoke(spec, agent_input, **invocation_options)
+        except GraphBubbleUp:
+            # LangGraph uses this control-flow signal to checkpoint nested agent interrupts.
+            raise
         except WorkflowExecutionError:
             raise
+        except ExecutionBudgetExceededError as exc:
+            code = (
+                "workflow.execution.model_call_budget_exceeded"
+                if exc.resource == "model_calls"
+                else "workflow.execution.tool_call_budget_exceeded"
+            )
+            self._raise(
+                code=code,
+                message=str(exc),
+                node=node,
+                cause=exc,
+            )
         except Exception as exc:
             self._raise(
                 code="workflow.execution.agent_failed",
@@ -223,29 +456,20 @@ class WorkflowNodeRunner:
                 node=node,
                 cause=exc,
             )
-
-        try:
-            updated = self._write_agent_output(node, config, state, output)
-        except WorkflowExecutionError:
-            raise
-        except Exception as exc:
-            self._raise(
-                code="workflow.execution.agent_output_failed",
-                message=f"Output from agent node '{node.id}' could not be written to state.",
-                node=node,
-                cause=exc,
-            )
-        return updated
+        return output
 
     def _resolve_agent_input(
         self,
         node: ValidatedWorkflowNode,
         config: AgentNodeConfig,
         state: WorkflowState,
+        input_overrides: dict[str, Any] | None = None,
     ) -> str:
         """Resolve one legacy input or serialize named state inputs for the agent."""
         try:
             if config.input_path is not None:
+                if input_overrides:
+                    raise ValueError("scalar agent input cannot receive delegated fields")
                 value = get_path(state, config.input_path)
                 if not isinstance(value, str):
                     self._raise(
@@ -259,6 +483,7 @@ class WorkflowNodeRunner:
                 name: get_path(state, binding.from_state)
                 for name, binding in (config.inputs or {}).items()
             }
+            inputs.update(deepcopy(input_overrides or {}))
         except StatePathError as exc:
             self._raise(
                 code="workflow.execution.agent_input_missing",
@@ -267,6 +492,30 @@ class WorkflowNodeRunner:
                 cause=exc,
             )
 
+        return self._serialize_inputs(node, inputs)
+
+    def _serialize_named_inputs(
+        self,
+        node: ValidatedWorkflowNode,
+        bindings: Mapping[str, Any],
+        state: WorkflowState,
+    ) -> str:
+        """Resolve declared named inputs and serialize them for one agent invocation."""
+        try:
+            inputs = {
+                name: get_path(state, binding.from_state) for name, binding in bindings.items()
+            }
+        except StatePathError as exc:
+            self._raise(
+                code="workflow.execution.agent_input_missing",
+                message=f"Input for agent node '{node.id}' could not be resolved.",
+                node=node,
+                cause=exc,
+            )
+        return self._serialize_inputs(node, inputs)
+
+    def _serialize_inputs(self, node: ValidatedWorkflowNode, inputs: dict[str, Any]) -> str:
+        """Serialize named agent inputs consistently across agents and supervisors."""
         if len(inputs) == 1:
             value = next(iter(inputs.values()))
             if isinstance(value, str):
@@ -315,6 +564,8 @@ class WorkflowNodeRunner:
         self,
         node: ValidatedWorkflowNode,
         state: WorkflowState,
+        event_context: dict[str, Any] | None = None,
+        approval_grant_id: UUID | None = None,
     ) -> WorkflowState:
         """Invoke one registered capability and project its result into state."""
         config = self._require_config(node, ConnectorNodeConfig)
@@ -325,13 +576,44 @@ class WorkflowNodeRunner:
                 node=node,
             )
         try:
-            arguments = {name: resolve_value(value, state) for name, value in config.inputs.items()}
+            arguments = self.capabilities.validate_arguments(
+                config.capability_id,
+                {name: resolve_value(value, state) for name, value in config.inputs.items()},
+            )
+            if self.capability_authorizer is not None:
+                security = self._workflow_security(node)
+                request, decision = await self.capability_authorizer.invocation_decision(
+                    security.principal,
+                    config.capability_id,
+                    context=security.authorization,
+                )
+                if decision == AuthorizationDecision.DENY:
+                    raise CapabilityAuthorizationError(request, decision)
+                if decision == AuthorizationDecision.APPROVAL_REQUIRED:
+                    fingerprint = fingerprint_capability_arguments(arguments)
+                    if approval_grant_id is None:
+                        if self.approval_grants is None or (
+                            event_context is not None and event_context.get("branch_id") is not None
+                        ):
+                            raise CapabilityAuthorizationError(request, decision)
+                        raise CapabilityApprovalRequired(request, fingerprint)
+                    if self.approval_grants is None:
+                        raise CapabilityAuthorizationError(request, decision)
+                    await self.approval_grants.consume(
+                        approval_grant_id,
+                        request,
+                        fingerprint,
+                    )
             result = await self.capabilities.invoke_one(
                 config.capability_id,
                 arguments,
+                execution_budget=self.execution_budget,
                 config={
-                    "callbacks": [self.callback] if self.callback is not None else [],
-                    "metadata": self._node_context(node),
+                    "callbacks": [
+                        *([self.callback] if self.callback is not None else []),
+                        *self.agent_callbacks,
+                    ],
+                    "metadata": self._node_context(node, event_context),
                 },
             )
             if isinstance(result, Mapping):
@@ -349,6 +631,15 @@ class WorkflowNodeRunner:
             return updated
         except WorkflowExecutionError:
             raise
+        except CapabilityApprovalRequired:
+            raise
+        except ExecutionBudgetExceededError as exc:
+            self._raise(
+                code="workflow.execution.tool_call_budget_exceeded",
+                message=str(exc),
+                node=node,
+                cause=exc,
+            )
         except Exception as exc:
             self._raise(
                 code="workflow.execution.connector_failed",
@@ -358,6 +649,41 @@ class WorkflowNodeRunner:
                 node=node,
                 cause=exc,
             )
+
+    def _workflow_security(self, node: ValidatedWorkflowNode) -> ExecutionSecurityContext | None:
+        """Build the immutable workflow-node identity when runtime authorization is enabled."""
+        if self.capability_authorizer is None:
+            return None
+        if self.workflow_version_id is None:
+            raise RuntimeError("capability authorization requires a workflow version id")
+        return ExecutionSecurityContext(
+            principal=self.capability_authorizer.workflow_node_principal(
+                self.workflow_version_id,
+                node.id,
+            ),
+            authorization=self._authorization_context(node),
+        )
+
+    def _agent_security(
+        self,
+        node: ValidatedWorkflowNode,
+        agent_version_id: str,
+    ) -> ExecutionSecurityContext | None:
+        """Build a saved-agent identity while retaining its invoking workflow as context."""
+        if self.capability_authorizer is None:
+            return None
+        return ExecutionSecurityContext(
+            principal=self.capability_authorizer.agent_version_principal(agent_version_id),
+            authorization=self._authorization_context(node),
+        )
+
+    def _authorization_context(self, node: ValidatedWorkflowNode) -> AuthorizationContext:
+        """Project trusted workflow execution identifiers into authorization metadata."""
+        return AuthorizationContext(
+            workflow_version_id=self.workflow_version_id,
+            node_id=node.id,
+            run_id=self.workflow_run_id,
+        )
 
     def _apply_transform(
         self,
@@ -437,13 +763,21 @@ class WorkflowNodeRunner:
                 cause=exc,
             )
 
-    def _node_context(self, node: ValidatedWorkflowNode) -> dict[str, Any]:
+    def _node_context(
+        self,
+        node: ValidatedWorkflowNode,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Build metadata shared by workflow-node and nested agent events."""
         return {
             "workflow_id": str(self.workflow.id),
+            "workflow_version_id": self.workflow_version_id,
             "workflow_run_id": self.workflow_run_id,
             "node_id": node.id,
             "node_type": str(node.type),
+            "execution_path": f"{self.execution_path}/{node.id}",
+            **self.runtime_context,
+            **(extra or {}),
         }
 
     async def _record_node(
@@ -451,9 +785,11 @@ class WorkflowNodeRunner:
         event_type: str,
         node: ValidatedWorkflowNode,
         payload: dict[str, Any] | None = None,
+        *,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """Record node lifecycle through the existing trajectory callback."""
-        event_payload = {**self._node_context(node), **(payload or {})}
+        event_payload = {**self._node_context(node, context), **(payload or {})}
         if self.callback is not None:
             self.callback.record(
                 event_type,

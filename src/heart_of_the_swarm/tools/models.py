@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
 
+from heart_of_the_swarm.credentials import CredentialRef
+
 
 class CapabilityDescriptor(BaseModel):
     """Serializable catalogue data for one registered runtime capability."""
@@ -36,6 +38,7 @@ class MCPServerCreate(BaseModel):
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]*$", min_length=1, max_length=50)
     url: AnyHttpUrl = Field(max_length=2048)
+    bearer_credential_ref: CredentialRef | None = None
     enabled: bool = True
 
 
@@ -45,6 +48,7 @@ class MCPServerDetail(BaseModel):
     id: UUID
     name: str
     url: str
+    bearer_credential_ref: CredentialRef | None = None
     enabled: bool
     created_at: datetime
     updated_at: datetime

@@ -10,10 +10,14 @@ from heart_of_the_swarm.workflows.configs import (
     NODE_CONFIG_TYPES,
     AgentNodeConfig,
     ConnectorNodeConfig,
+    HumanApprovalNodeConfig,
     InlineAgentSource,
+    SubworkflowNodeConfig,
+    SupervisorNodeConfig,
 )
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.spec import (
+    StateReducer,
     ValidatedWorkflowNode,
     ValidatedWorkflowSpec,
     WorkflowEdge,
@@ -30,6 +34,12 @@ from heart_of_the_swarm.workflows.validation.graph import (
     find_cycle,
     nodes_reaching_outputs,
     reachable_nodes,
+)
+from heart_of_the_swarm.workflows.validation.parallel import analyze_parallel_region
+from heart_of_the_swarm.workflows.validation.supervisor import (
+    supervisor_reachability_edges,
+    validate_supervisor_parallel_region,
+    validate_supervisors,
 )
 
 
@@ -59,8 +69,11 @@ class WorkflowValidator:
         issues.extend(self._structural_errors(spec))
         typed_nodes, config_issues = self._parse_nodes(spec.nodes)
         issues.extend(config_issues)
-        issues.extend(self._graph_errors(spec))
+        issues.extend(self._graph_errors(spec, typed_nodes))
         issues.extend(self._semantic_errors(spec, typed_nodes))
+        parallel_region, parallel_issues = analyze_parallel_region(spec, typed_nodes)
+        issues.extend(parallel_issues)
+        issues.extend(validate_supervisor_parallel_region(typed_nodes, parallel_region))
         if issues:
             raise WorkflowValidationError(issues)
         return ValidatedWorkflowSpec(
@@ -70,9 +83,11 @@ class WorkflowValidator:
             description=spec.description,
             input_schema=spec.input_schema,
             output_schema=spec.output_schema,
+            state_schema=spec.state_schema,
             nodes=typed_nodes,
             edges=spec.edges,
             entrypoint=spec.entrypoint,
+            parallel_region=parallel_region,
         )
 
     @staticmethod
@@ -178,7 +193,10 @@ class WorkflowValidator:
         return issues
 
     @staticmethod
-    def _graph_errors(spec: WorkflowSpec) -> list[WorkflowValidationIssue]:
+    def _graph_errors(
+        spec: WorkflowSpec,
+        typed_nodes: list[ValidatedWorkflowNode],
+    ) -> list[WorkflowValidationIssue]:
         issues: list[WorkflowValidationIssue] = []
         unique_nodes = {node.id: node for node in spec.nodes}
         valid_edges = [
@@ -191,6 +209,33 @@ class WorkflowValidator:
         for edge in valid_edges:
             incoming[edge.target].append(edge)
             outgoing[edge.source].append(edge)
+
+        loop_edges = [edge for edge in valid_edges if edge.loop is not None]
+        if spec.schema_version == "1" and loop_edges:
+            issues.append(
+                _issue(
+                    "workflow.loop.requires_schema_v2",
+                    "Loop edges require workflow schema version 2.",
+                    field="schema_version",
+                )
+            )
+        if len(loop_edges) > 1:
+            issues.append(
+                _issue(
+                    "workflow.loop.multiple_not_supported",
+                    "The first V2 runtime supports exactly one declared loop edge.",
+                    field="edges",
+                )
+            )
+        loop_ids = [edge.loop.id for edge in loop_edges if edge.loop is not None]
+        if len(loop_ids) != len(set(loop_ids)):
+            issues.append(
+                _issue(
+                    "workflow.loop.duplicate_id",
+                    "Loop identifiers must be unique.",
+                    field="edges",
+                )
+            )
 
         for node in unique_nodes.values():
             node_incoming = incoming[node.id]
@@ -216,6 +261,16 @@ class WorkflowValidator:
                     )
                 )
             if node.type == NodeType.CONDITION:
+                targets = [edge.target for edge in node_outgoing]
+                if len(targets) != len(set(targets)):
+                    issues.append(
+                        _issue(
+                            "workflow.condition.duplicate_target",
+                            f"Condition node '{node.id}' must use a distinct target per route.",
+                            node.id,
+                            "edges",
+                        )
+                    )
                 if not conditional:
                     issues.append(
                         _issue(
@@ -253,7 +308,7 @@ class WorkflowValidator:
                             "edges",
                         )
                     )
-                if len(fallback) > 1:
+                if len(fallback) > 1 and spec.schema_version == "1":
                     issues.append(
                         _issue(
                             "workflow.node.multiple_successors",
@@ -262,9 +317,24 @@ class WorkflowValidator:
                             "edges",
                         )
                     )
+                if any(edge.loop is not None for edge in node_outgoing):
+                    issues.append(
+                        _issue(
+                            "workflow.loop.source_not_condition",
+                            f"Loop edge source '{node.id}' must be a condition node.",
+                            node.id,
+                            "edges",
+                        )
+                    )
 
-        graph = adjacency(unique_nodes, valid_edges)
-        cycle = find_cycle(graph)
+        routing_edges = [
+            *valid_edges,
+            *supervisor_reachability_edges(typed_nodes, set(unique_nodes)),
+        ]
+        graph = adjacency(unique_nodes, routing_edges)
+        forward_edges = [edge for edge in valid_edges if edge.loop is None]
+        forward_graph = adjacency(unique_nodes, forward_edges)
+        cycle = find_cycle(forward_graph)
         if cycle:
             issues.append(
                 _issue(
@@ -273,6 +343,23 @@ class WorkflowValidator:
                     field="edges",
                 )
             )
+        for index, edge in enumerate(spec.edges):
+            if (
+                edge.loop is None
+                or edge.source not in unique_nodes
+                or edge.target not in unique_nodes
+            ):
+                continue
+            reachable_from_target = reachable_nodes(forward_graph, edge.target)
+            if edge.source not in reachable_from_target:
+                issues.append(
+                    _issue(
+                        "workflow.loop.not_back_edge",
+                        f"Loop edge '{edge.source} -> {edge.target}' does not close a cycle.",
+                        edge.source,
+                        f"edges.{index}.loop",
+                    )
+                )
         reachable = reachable_nodes(graph, spec.entrypoint)
         for node_id in sorted(set(unique_nodes) - reachable):
             issues.append(
@@ -319,12 +406,34 @@ class WorkflowValidator:
                     field="nodes",
                 )
             )
+        if spec.schema_version == "1" and any(
+            isinstance(node.config, SubworkflowNodeConfig) for node in nodes
+        ):
+            issues.append(
+                _issue(
+                    "workflow.subworkflow.requires_schema_v2",
+                    "Subworkflow nodes require workflow schema version 2.",
+                    field="schema_version",
+                )
+            )
+        if spec.schema_version == "1" and any(
+            isinstance(node.config, HumanApprovalNodeConfig) for node in nodes
+        ):
+            issues.append(
+                _issue(
+                    "workflow.human_approval.requires_schema_v2",
+                    "Human approval nodes require workflow schema version 2.",
+                    field="schema_version",
+                )
+            )
         issues.extend(_schema_errors(spec.input_schema, "input_schema"))
         if spec.output_schema is not None:
             issues.extend(_schema_errors(spec.output_schema, "output_schema"))
+        issues.extend(_state_schema_errors(spec))
+        issues.extend(validate_supervisors(spec, nodes))
         for node in nodes:
             config = node.config
-            if isinstance(config, AgentNodeConfig):
+            if isinstance(config, (AgentNodeConfig, SupervisorNodeConfig)):
                 if isinstance(config.source, InlineAgentSource):
                     agent = config.source.agent
                     issues.extend(self._provider_errors(node.id, agent.model.provider))
@@ -348,7 +457,7 @@ class WorkflowValidator:
                                     "config.source.agent.skills",
                                 )
                             )
-                if config.response_schema is not None:
+                if isinstance(config, AgentNodeConfig) and config.response_schema is not None:
                     issues.extend(
                         _response_schema_errors(
                             node.id, config.response_schema, config.outputs or {}
@@ -391,6 +500,39 @@ def _schema_errors(schema: dict[str, Any], field: str) -> list[WorkflowValidatio
             )
         ]
     return []
+
+
+def _state_schema_errors(spec: WorkflowSpec) -> list[WorkflowValidationIssue]:
+    """Validate state-field schemas and reducer compatibility."""
+    if not spec.state_schema:
+        return []
+    issues: list[WorkflowValidationIssue] = []
+    if spec.schema_version == "1":
+        issues.append(
+            _issue(
+                "workflow.state_schema.requires_schema_v2",
+                "Shared state declarations require workflow schema version 2.",
+                field="schema_version",
+            )
+        )
+    for path in spec.state_schema:
+        declaration = spec.state_schema[path]
+        field = f"state_schema.{path}"
+        issues.extend(_schema_errors(declaration.schema_, f"{field}.schema"))
+        expected_type = {
+            StateReducer.APPEND: "array",
+            StateReducer.MERGE_DICT: "object",
+        }.get(declaration.reducer)
+        if expected_type is not None and declaration.schema_.get("type") != expected_type:
+            issues.append(
+                _issue(
+                    "workflow.state_schema.reducer_type_mismatch",
+                    f"Reducer '{declaration.reducer}' at '{path}' requires a JSON Schema of "
+                    f"type '{expected_type}'.",
+                    field=f"{field}.reducer",
+                )
+            )
+    return issues
 
 
 def _response_schema_errors(

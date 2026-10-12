@@ -1,7 +1,11 @@
-# WorkflowSpec v1
+# WorkflowSpec
 
 `WorkflowSpec` is the portable executable graph edited by React and interpreted by LangGraph.
 It contains no layout, database records, framework objects, credentials, or executable source.
+
+Schema v1 remains frozen and acyclic. Schema v2 adds controlled loops, composition, parallel state,
+supervisor routing, and durable interaction contracts. Detailed V2 semantics are tracked in
+[`v2-runtime-semantics.md`](v2-runtime-semantics.md).
 
 ## Nodes
 
@@ -9,7 +13,10 @@ It contains no layout, database records, framework objects, credentials, or exec
 | --- | --- | --- |
 | `input` | Initialize and validate object input | Product adapter |
 | `agent` | Inline `AgentSpec` or immutable `AgentVersion`, named mappings | `AgentRunner` / `create_agent` |
+| `supervisor` | Bounded single-target routing through LangGraph `Command` | V2.4a |
+| `human_approval` | One durable boolean operator decision | LangGraph interrupt, response pending |
 | `connector` | One registered capability invocation, named mappings | Capability registry |
+| `subworkflow` | Immutable `WorkflowVersion`, isolated named mappings | LangGraph subgraph |
 | `transform` | Restricted state assignments | Product adapter |
 | `condition` | Ordered conditional routes and one fallback | LangGraph routing |
 | `output` | Named workflow output mappings | Product adapter |
@@ -17,6 +24,16 @@ It contains no layout, database records, framework objects, credentials, or exec
 Agent tools are selected by the model. Connectors deterministically invoke a capability once. Both
 use the same allow-listed registry implementations. Built-in tools and MCP-discovered tools are
 indistinguishable to workflow configuration and execution.
+
+`HUMAN_APPROVAL` compiles to LangGraph `interrupt()` and produces a minimal approval payload. The
+runtime checkpoints before a pending interruption is persisted and the worker releases the current
+run as interrupted. Nothing is written to the configured output path until a future valid response
+resumes execution. The application service accepts one response atomically, creates a continuation
+run in the same thread, and invokes LangGraph with `Command(resume=...)` without replaying prior
+nodes. The React catalogue and typed inspector edit the static prompt and boolean destination. The
+run panel displays a pending approval, submits approve/reject through the HTTP API, and follows the
+returned continuation run. Dynamic approval context sourced from workflow state is not part of the
+V2.5a contract.
 
 Connector arguments may be literals or state references. Capability input schemas are catalogue
 metadata used by the editor and by LangChain validation. MCP content and structured artifacts are
@@ -50,8 +67,10 @@ JSON Schema. The schema is delegated to LangChain structured output and the retu
 validated before its named fields are written atomically into state. Legacy `input_path` and
 `output_path` configurations remain executable during migration.
 
-Multiple mappings do not enable parallel execution. Exclusive condition routes may converge, but
-parallel fan-out, fan-in, and concurrent writes require explicit LangGraph reducers later.
+Multiple mappings do not enable parallel execution. Exclusive condition routes may converge. The
+V2.3 contract below defines ordinary-edge fan-out/fan-in and explicit state reducers. Its typed
+declarations, static conflict validation, runtime execution, checkpoint resume, and editor support
+are implemented.
 
 An output node always projects named values. The workflow `output_schema` is optional; when present,
 the runtime validates the complete projection before returning it.
@@ -64,7 +83,124 @@ set `equals`, `not_equals`, `exists`, `not_exists`, `contains`, `greater_than`, 
 Arbitrary Python, templates, JSONPath filters, callbacks, and imports are forbidden.
 
 Condition routes are evaluated in edge order. The first match wins; exactly one unconditional edge
-is the fallback. Schema v1 is acyclic.
+is the fallback. Routes from one condition must have distinct targets.
+
+## Bounded loop edge (schema v2)
+
+A loop is metadata on a conditional back edge, not a node or a custom traversal engine:
+
+```yaml
+- source: review
+  target: output
+  condition: {path: $.approved, operator: equals, value: true}
+
+- source: review
+  target: draft
+  loop: {id: revision, max_iterations: 3}
+```
+
+The first runtime accepts exactly one loop edge. Its source must be a condition, removing it must
+leave a DAG, and its target must reach its source through forward edges. The iteration counter is
+runtime-owned state, persists in LangGraph checkpoints, and exceeding the bound raises
+`workflow.execution.iteration_limit`. Nested and overlapping loops remain unsupported.
+
+## Immutable subworkflow (schema v2)
+
+`SUBWORKFLOW` references one published `WorkflowVersion`; it never embeds a draft or compiled
+graph. Parent and child exchange only explicitly mapped values:
+
+```yaml
+type: subworkflow
+config:
+  workflow_version_id: 8134eb0e-7d3b-4dd5-8fde-28d8e64336b1
+  inputs:
+    request: {from_state: $.request}
+  outputs:
+    summary: {to_state: $.research.summary}
+```
+
+The child is compiled as a native LangGraph subgraph in the same run and execution thread. Its
+business state is isolated, while checkpoint namespaces, trace context, and hierarchical event
+paths remain part of the parent execution. Publishing rejects invalid mappings, missing immutable
+versions, direct or indirect dependency recursion, and nesting beyond the configured bound. Runtime
+validation repeats these checks through an injected version resolver so the same compiler works in
+the worker, tests, and future artifact runtimes.
+
+## Parallel state contract (V2.3)
+
+Parallelism is inferred from ordinary edges: multiple unconditional successors form a fan-out and
+their convergence forms an `all` fan-in. Conditions remain exclusive routes; convergence after a
+condition accepts the selected predecessor and does not wait for unselected routes. No new node type
+is introduced.
+
+Shared intermediate paths may declare their type and reduction rule:
+
+```yaml
+state_schema:
+  $.research_results:
+    schema:
+      type: array
+      items: {type: object}
+    reducer: append
+  $.metadata:
+    schema: {type: object}
+    reducer: merge_dict
+```
+
+The closed reducer set is `replace`, `append`, and `merge_dict`. `replace` is the default and cannot
+resolve concurrent writes. `append` concatenates branch lists in declared branch order.
+`merge_dict` is shallow and rejects duplicate keys. Concurrent writes to the same path, or to
+ancestor/descendant paths, are rejected without an exact combinatory reducer declaration.
+
+The initial implementation supports one non-nested parallel region, required `all` joins,
+subworkflows inside branches, and loops only outside the region. Partial joins, quorum, first-result
+wins, nested parallelism, parallel loops, and custom reducers remain deferred. Normative checkpoint,
+event, and acceptance rules are in [`v2-runtime-semantics.md`](v2-runtime-semantics.md).
+
+Each branch runs through native LangGraph scheduling with an isolated runtime state frame. A grouped
+LangGraph edge waits for every branch completion marker before the public join executes once. The
+join merges only paths written by nodes that actually ran, in declared branch order. Checkpoints
+preserve branch frames, so resume does not replay a completed sibling. `branch_id` is runtime event
+context and never enters business state.
+
+## Supervisor contract (V2.4a)
+
+A supervisor is an agent declaration with a closed routing contract:
+
+```yaml
+type: supervisor
+config:
+  source:
+    type: version
+    agent_version_id: 9ab6cb56-f13c-4175-8237-bfe16d278f6b
+  inputs:
+    request: {from_state: $.request}
+  allowed_targets:
+    researcher: {task_field: task}
+    reviewer: {task_field: task}
+  finish_output: {to_state: $.final}
+  decision_schema: supervisor_decision_v1
+  max_handoffs_ref: execution_policy.max_handoffs
+```
+
+Each target is a different local `AGENT` node with structured inputs, explicit outputs, and no
+ordinary workflow edges. The selected decision task is injected at `task_field`; other target
+inputs and outputs remain the mappings declared by that agent node. The supervisor has one ordinary
+edge to an `OUTPUT` node that reads `finish_output`. Virtual supervisor/target relations are used
+only for static reachability validation and are never serialized as workflow edges.
+
+`SupervisorDecision` accepts exactly one of:
+
+```yaml
+{action: handoff, target: researcher, task: Find primary sources.}
+{action: finish, result: {summary: Complete.}}
+```
+
+`ExecutionPolicy.max_handoffs` is a positive application-bounded contract value. The runtime turns
+each valid decision into a native LangGraph `Command`, returns every completed target to the
+supervisor, and emits contextual decision and handoff events. A checkpoint after target completion
+resumes at the supervisor without replaying that target. The React inspector edits these fields
+directly; `allowed_targets` never become serialized React Flow edges.
 
 ## Validation and execution
 

@@ -10,6 +10,7 @@ from heart_of_the_swarm.workflows import WorkflowValidationError, WorkflowValida
 from heart_of_the_swarm.workflows.documents import WorkflowDraftSave
 
 WORKFLOW_ID = UUID("47d174a8-b35e-4563-bd86-3bc6b5b5947f")
+CHILD_WORKFLOW_ID = UUID("57d174a8-b35e-4563-bd86-3bc6b5b5947f")
 
 
 def draft(*, inline_agent: bool = False, valid: bool = True) -> WorkflowDraftSave:
@@ -68,6 +69,78 @@ def draft(*, inline_agent: bool = False, valid: bool = True) -> WorkflowDraftSav
                 "edges": edges,
             },
             "editor": {"positions": {"input": {"x": 0, "y": 0}}},
+        }
+    )
+
+
+def composable_draft(
+    workflow_id: UUID,
+    *,
+    child_version_id: UUID | None = None,
+    expected_revision: int | None = None,
+    include_required_input: bool = True,
+) -> WorkflowDraftSave:
+    middle: list[dict[str, Any]] = [
+        {
+            "id": "copy",
+            "type": "transform",
+            "name": "Copy",
+            "config": {"assign": {"$.result": {"from_state": "$.request"}}},
+        }
+    ]
+    if child_version_id is not None:
+        middle = [
+            {
+                "id": "child",
+                "type": "subworkflow",
+                "name": "Child",
+                "config": {
+                    "workflow_version_id": str(child_version_id),
+                    "inputs": (
+                        {"request": {"from_state": "$.request"}} if include_required_input else {}
+                    ),
+                    "outputs": {"result": {"to_state": "$.result"}},
+                },
+            }
+        ]
+    middle_id = middle[0]["id"]
+    return WorkflowDraftSave.model_validate(
+        {
+            "spec": {
+                "schema_version": "2" if child_version_id else "1",
+                "id": str(workflow_id),
+                "name": f"Workflow {workflow_id}",
+                "description": "Composable workflow",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"request": {"type": "string"}},
+                    "required": ["request"],
+                    "additionalProperties": False,
+                },
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"result": {"type": "string"}},
+                    "required": ["result"],
+                    "additionalProperties": False,
+                },
+                "entrypoint": "input",
+                "nodes": [
+                    {"id": "input", "type": "input", "name": "Input", "config": {}},
+                    *middle,
+                    {
+                        "id": "output",
+                        "type": "output",
+                        "name": "Output",
+                        "config": {"outputs": {"result": {"from_state": "$.result"}}},
+                    },
+                ],
+                "edges": [
+                    {"source": "input", "target": middle_id},
+                    {"source": middle_id, "target": "output"},
+                ],
+            },
+            "editor": {},
+            "expected_revision": expected_revision,
         }
     )
 
@@ -172,5 +245,65 @@ async def test_layout_rejects_unknown_node_ids() -> None:
     try:
         with pytest.raises(ValueError, match="unknown nodes"):
             await service.save(WORKFLOW_ID, invalid)
+    finally:
+        await database.close()
+
+
+async def test_publishing_validates_subworkflow_mappings_and_indirect_recursion() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    service = WorkflowService(
+        database,
+        WorkflowValidator([], ["test"]),
+        RecordingAgentValidator(),  # type: ignore[arg-type]
+        create_default_registry(),
+    )
+    try:
+        child_saved = await service.save(
+            CHILD_WORKFLOW_ID,
+            composable_draft(CHILD_WORKFLOW_ID),
+        )
+        child_version = await service.create_version(child_saved.id)
+        assert child_version is not None
+
+        invalid_id = UUID("67d174a8-b35e-4563-bd86-3bc6b5b5947f")
+        invalid_saved = await service.save(
+            invalid_id,
+            composable_draft(
+                invalid_id,
+                child_version_id=child_version.id,
+                include_required_input=False,
+            ),
+        )
+        with pytest.raises(ValueError, match="missing required fields: request"):
+            await service.create_version(invalid_saved.id)
+        assert await service.latest_version(invalid_id) is None
+
+        parent_saved = await service.save(WORKFLOW_ID, composable_draft(WORKFLOW_ID))
+        parent_v1 = await service.create_version(parent_saved.id)
+        assert parent_v1 is not None
+
+        child_saved = await service.save(
+            CHILD_WORKFLOW_ID,
+            composable_draft(
+                CHILD_WORKFLOW_ID,
+                child_version_id=parent_v1.id,
+                expected_revision=child_saved.revision,
+            ),
+        )
+        child_v2 = await service.create_version(child_saved.id)
+        assert child_v2 is not None
+
+        parent_saved = await service.save(
+            WORKFLOW_ID,
+            composable_draft(
+                WORKFLOW_ID,
+                child_version_id=child_v2.id,
+                expected_revision=parent_saved.revision,
+            ),
+        )
+        with pytest.raises(ValueError, match="dependency is recursive"):
+            await service.create_version(parent_saved.id)
+        assert (await service.latest_version(WORKFLOW_ID)).id == parent_v1.id  # type: ignore[union-attr]
     finally:
         await database.close()

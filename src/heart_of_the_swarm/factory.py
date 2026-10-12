@@ -1,8 +1,11 @@
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel
 
 from heart_of_the_swarm.observability import audit_event
 from heart_of_the_swarm.skills import SkillRegistry
@@ -44,21 +47,24 @@ class AgentFactory:
         spec: AgentSpec,
         model: BaseChatModel,
         system_prompt: str | None = None,
-        response_schema: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | type[BaseModel] | None = None,
+        tools: list[BaseTool] | None = None,
+        middleware: list[AgentMiddleware] | None = None,
     ):
-        tools = self.registry.resolve(spec.tools)
+        resolved_tools = self.registry.resolve(spec.tools) if tools is None else tools
         audit_event(
             "factory.started",
             agent_name=spec.name,
             provider=spec.model.provider,
             model=spec.model.model_id,
-            tools=spec.tools,
+            tools=[tool.name for tool in resolved_tools],
         )
         kwargs: dict[str, Any] = {
             "model": model,
-            "tools": tools,
+            "tools": resolved_tools,
             "system_prompt": system_prompt or render_system_prompt(spec, self.skills),
             "name": spec.name,
+            "middleware": middleware or [],
         }
         if response_schema is not None:
             kwargs["response_format"] = ToolStrategy(response_schema)

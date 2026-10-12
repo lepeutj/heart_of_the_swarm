@@ -5,18 +5,20 @@ from uuid import uuid4
 
 import pytest
 from langchain_core.tools import tool
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
+from heart_of_the_swarm import workflow_execution
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
+from heart_of_the_swarm.models import WorkflowRunRecord
 from heart_of_the_swarm.repositories import WorkflowRepository, WorkflowRunRepository
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflow_execution import WorkflowExecutor, WorkflowRunService
 from heart_of_the_swarm.workflows import (
+    ExecutionPolicy,
     WorkflowExecutionError,
     WorkflowGraphFactory,
-    WorkflowRuntimePolicy,
     WorkflowValidator,
     WorkflowVersionRunner,
 )
@@ -25,6 +27,7 @@ from heart_of_the_swarm.workflows.documents import (
     WorkflowVersionDetail,
 )
 from heart_of_the_swarm.workflows.execution import WorkflowExecutionEvent
+from heart_of_the_swarm.workflows.execution.checkpoints import DurableWorkflowCheckpoints
 from heart_of_the_swarm.workflows.spec import WorkflowSpec
 
 
@@ -39,6 +42,16 @@ async def slow_echo(value: str) -> dict[str, str]:
 async def changed_echo(message: str) -> dict[str, str]:
     """Represent an incompatible remote capability schema."""
     return {"result": message}
+
+
+recorded_values: list[str] = []
+
+
+@tool
+async def recording_echo(value: str) -> dict[str, str]:
+    """Record and return one value so resume tests can detect duplicate side effects."""
+    recorded_values.append(value)
+    return {"result": value}
 
 
 def workflow_draft(*, connector: bool = False) -> WorkflowDraftSave:
@@ -117,12 +130,71 @@ async def published_version(
     return version
 
 
+async def published_recording_version(database: Database, tools: ToolRegistry):
+    draft_data = workflow_draft(connector=True).model_dump(mode="json")
+    draft_data["spec"]["nodes"][1]["config"]["capability_id"] = "recording_echo"
+    draft = WorkflowDraftSave.model_validate(draft_data)
+    async with database.session() as session:
+        repository = WorkflowRepository(session)
+        saved = await repository.save(draft)
+        version = await repository.create_version(
+            str(saved.id),
+            [tools.contract("recording_echo")],
+            expected_revision=saved.revision,
+        )
+    assert version is not None
+    return version
+
+
 class RecordingEventSink:
     def __init__(self) -> None:
         self.events: list[WorkflowExecutionEvent] = []
 
     async def emit(self, event: WorkflowExecutionEvent) -> None:
         self.events.append(event)
+
+
+async def test_database_event_sink_serializes_parallel_event_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent branches must not race the durable per-run event sequence."""
+    active_writes = 0
+    max_active_writes = 0
+
+    class SessionContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class FakeDatabase:
+        def session(self) -> SessionContext:
+            return SessionContext()
+
+    class FakeRepository:
+        def __init__(self, _session: object) -> None:
+            pass
+
+        async def add_event(self, *_args: object) -> None:
+            nonlocal active_writes, max_active_writes
+            active_writes += 1
+            max_active_writes = max(max_active_writes, active_writes)
+            await asyncio.sleep(0)
+            active_writes -= 1
+
+    monkeypatch.setattr(workflow_execution, "WorkflowRunRepository", FakeRepository)
+    sink = workflow_execution._DatabaseWorkflowEventSink(  # noqa: SLF001
+        FakeDatabase(),  # type: ignore[arg-type]
+        "parallel-run",
+    )
+
+    await asyncio.gather(
+        sink.emit(WorkflowExecutionEvent(event_type="node.started", data={})),
+        sink.emit(WorkflowExecutionEvent(event_type="node.completed", data={})),
+    )
+
+    assert max_active_writes == 1
 
 
 def standalone_version() -> WorkflowVersionDetail:
@@ -151,7 +223,7 @@ async def test_version_runner_executes_loaded_version_without_persistence() -> N
     result = await runner.run(
         standalone_version(),
         {"request": "portable"},
-        WorkflowRuntimePolicy(timeout_seconds=1, recursion_limit=20),
+        ExecutionPolicy(timeout_seconds=1, recursion_limit=20),
         sink,
         execution_id="standalone-run",
     )
@@ -187,6 +259,72 @@ async def test_invalid_input_is_rejected_before_a_run_is_queued() -> None:
         await database.close()
 
 
+async def test_oversized_initial_state_is_rejected_before_run_persistence() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    tools = ToolRegistry()
+    validator = WorkflowValidator(lambda: tools.names, [])
+    try:
+        version = await published_version(database, tools)
+        service = WorkflowRunService(
+            database,
+            validator,
+            tools,
+            max_state_bytes=1_024,
+        )
+
+        with pytest.raises(WorkflowExecutionError) as caught:
+            await service.queue(
+                version.id,
+                {"request": "x" * 2_000},
+                "trace-oversized-state",
+            )
+
+        assert caught.value.issue.code == "workflow.execution.state_budget_exceeded"
+        assert caught.value.issue.node_id is None
+        async with database.session() as session:
+            run_count = await session.scalar(select(func.count()).select_from(WorkflowRunRecord))
+        assert run_count == 0
+    finally:
+        await database.close()
+
+
+async def test_tool_call_budget_survives_a_continuation_run() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    tools = ToolRegistry()
+    try:
+        version = await published_version(database, tools)
+        async with database.session() as session:
+            repository = WorkflowRunRepository(session)
+            initial = await repository.queue(version, "trace-initial", {"request": "value"})
+            assert initial.thread_id is not None
+            assert await repository.consume_tool_call(str(initial.thread_id), 2) == 1
+            await repository.interrupt(str(initial.run_id), "checkpoint-1", ("input",))
+
+        async with database.session() as session:
+            resumed = await WorkflowRunRepository(session).resume(
+                str(initial.run_id),
+                "checkpoint-1",
+                "trace-resumed",
+            )
+            assert resumed.thread_id == initial.thread_id
+
+        async with database.session() as session:
+            repository = WorkflowRunRepository(session)
+            assert await repository.consume_tool_call(str(resumed.thread_id), 2) == 2
+        async with database.session() as session:
+            assert (
+                await WorkflowRunRepository(session).consume_tool_call(
+                    str(resumed.thread_id),
+                    2,
+                )
+                is None
+            )
+    finally:
+        await database.close()
+
+
 async def test_queue_persists_run_before_its_foreign_keyed_event() -> None:
     database = Database("sqlite+aiosqlite:///:memory:")
     await database.create_schema()
@@ -205,7 +343,10 @@ async def test_queue_persists_run_before_its_foreign_keyed_event() -> None:
         async with database.session() as session:
             events = await WorkflowRunRepository(session).list_events(str(queued.run_id))
 
-        assert [event.event_type for event in events] == ["workflow.queued"]
+        assert [event.event_type for event in events] == [
+            "thread.created",
+            "workflow.queued",
+        ]
     finally:
         await database.close()
 
@@ -236,12 +377,16 @@ async def test_workflow_run_executes_version_and_persists_node_events() -> None:
 
         run = await service.get(queued.run_id)
         events = await service.events(queued.run_id)
+        events_after_cursor = await service.events(queued.run_id, after_sequence=8)
         assert run is not None
         assert run.status == "completed"
         assert run.output == "hello"
         assert events is not None
-        assert [event.sequence for event in events] == list(range(1, 10))
+        assert [event.sequence for event in events] == list(range(1, 11))
+        assert events_after_cursor is not None
+        assert [event.sequence for event in events_after_cursor] == [9, 10]
         assert [event.event_type for event in events] == [
+            "thread.created",
             "workflow.queued",
             "workflow.started",
             "node.started",
@@ -342,4 +487,114 @@ async def test_expired_workflow_run_fails_without_replaying_connector_nodes() ->
         assert events[-1].event_type == "workflow.failed"
         assert events[-1].data == {"reason": "worker_lease_expired"}
     finally:
+        await database.close()
+
+
+async def test_interrupted_workflow_resumes_in_new_run_without_replaying_connector() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    checkpoints = DurableWorkflowCheckpoints("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    await checkpoints.start()
+    recorded_values.clear()
+    tools = ToolRegistry([recording_echo])
+    validator = WorkflowValidator(lambda: tools.names, [])
+    settings = Settings(database_url="sqlite+aiosqlite:///:memory:")
+    try:
+        version = await published_recording_version(database, tools)
+        service = WorkflowRunService(database, validator, tools, checkpoints)
+        first = await service.queue(version.id, {"request": "once"}, "trace-first")
+        async with database.session() as session:
+            await WorkflowRunRepository(session).claim_next("worker-1", 60)
+
+        executor = WorkflowExecutor(
+            settings,
+            database,
+            validator,
+            tools,
+            agent_runner=None,  # type: ignore[arg-type]
+            telemetry=Telemetry(settings),
+            checkpoints=checkpoints,
+        )
+        await executor.execute(str(first.run_id), "worker-1", interrupt_after=("slow",))
+
+        interrupted = await service.get(first.run_id)
+        first_events = await service.events(first.run_id)
+        assert interrupted is not None
+        assert interrupted.status == "interrupted"
+        assert interrupted.resume_checkpoint_id is not None
+        assert first_events is not None
+        assert "checkpoint.created" in [event.event_type for event in first_events]
+        assert first_events[-1].event_type == "workflow.interrupted"
+        assert recorded_values == ["once"]
+
+        assert checkpoints.saver is not None
+        checkpoint_ids = [
+            item.config["configurable"]["checkpoint_id"]
+            async for item in checkpoints.saver.alist(
+                {"configurable": {"thread_id": str(interrupted.thread_id)}}
+            )
+        ]
+        stale_checkpoint_id = next(
+            checkpoint_id
+            for checkpoint_id in checkpoint_ids
+            if checkpoint_id != interrupted.resume_checkpoint_id
+        )
+        with pytest.raises(ValueError, match="only the latest checkpoint"):
+            await service.resume(first.run_id, stale_checkpoint_id, "trace-stale")
+
+        resumed = await service.resume(
+            first.run_id,
+            interrupted.resume_checkpoint_id,
+            "trace-resumed",
+        )
+        assert resumed.run_id != first.run_id
+        assert resumed.thread_id == first.thread_id
+        assert resumed.attempt_index == 2
+        assert resumed.resumed_from_run_id == first.run_id
+
+        async with database.session() as session:
+            claimed = await WorkflowRunRepository(session).claim_next("worker-2", 60)
+        assert claimed == str(resumed.run_id)
+        await executor.execute(str(resumed.run_id), "worker-2")
+
+        completed = await service.get(resumed.run_id)
+        resumed_events = await service.events(resumed.run_id)
+        assert completed is not None
+        assert completed.status == "completed"
+        assert completed.output == "once"
+        assert resumed_events is not None
+        assert resumed_events[0].event_type == "workflow.resumed"
+        assert resumed_events[-1].event_type == "workflow.completed"
+        assert recorded_values == ["once"]
+    finally:
+        await checkpoints.close()
+        await database.close()
+
+
+async def test_foreign_checkpoint_rejects_resume_without_creating_run() -> None:
+    database = Database("sqlite+aiosqlite:///:memory:")
+    checkpoints = DurableWorkflowCheckpoints("sqlite+aiosqlite:///:memory:")
+    await database.create_schema()
+    await checkpoints.start()
+    tools = ToolRegistry([recording_echo])
+    validator = WorkflowValidator(lambda: tools.names, [])
+    try:
+        version = await published_recording_version(database, tools)
+        service = WorkflowRunService(database, validator, tools, checkpoints)
+        first = await service.queue(version.id, {"request": "once"}, "trace-first")
+        async with database.session() as session:
+            before = (
+                await session.execute(select(func.count()).select_from(WorkflowRunRecord))
+            ).scalar_one()
+
+        with pytest.raises(ValueError, match="checkpoint not found"):
+            await service.resume(first.run_id, "foreign-checkpoint", "trace-rejected")
+
+        async with database.session() as session:
+            after = (
+                await session.execute(select(func.count()).select_from(WorkflowRunRecord))
+            ).scalar_one()
+        assert after == before
+    finally:
+        await checkpoints.close()
         await database.close()

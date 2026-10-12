@@ -1,13 +1,31 @@
+import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from io import BytesIO
 from types import SimpleNamespace
 from uuid import UUID
+from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.tools import tool
 
 from heart_of_the_swarm import __version__
-from heart_of_the_swarm.api import app, get_application
+from heart_of_the_swarm.api import (
+    RequestAuthorizer,
+    app,
+    authenticate_request,
+    get_application,
+    get_request_authorizer,
+)
+from heart_of_the_swarm.authentication import AuthenticatedUser, AuthenticationMethod
+from heart_of_the_swarm.authorization import (
+    AuthorizationAction,
+    AuthorizationService,
+    DevelopmentPolicySource,
+    Principal,
+    PrincipalKind,
+)
 from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.spec import AgentRunAccepted
 from heart_of_the_swarm.tools import RegisteredCapability, ToolRegistry
@@ -16,7 +34,16 @@ from heart_of_the_swarm.workflows import (
     WorkflowExecutionIssue,
     WorkflowValidator,
 )
-from heart_of_the_swarm.workflows.runs import WorkflowRunAccepted
+from heart_of_the_swarm.workflows.interruptions import (
+    WorkflowInterruptionDetail,
+    WorkflowInterruptionStatus,
+)
+from heart_of_the_swarm.workflows.runs import (
+    WorkflowRunAccepted,
+    WorkflowRunDetail,
+    WorkflowRunEvent,
+    WorkflowRunEventBatch,
+)
 
 
 @asynccontextmanager
@@ -25,10 +52,27 @@ async def isolated_lifespan(_app):
     yield
 
 
+class AllowRequestAuthorizer:
+    development_source = None
+    principal = Principal(kind=PrincipalKind.USER, id="test-user")
+
+    async def require(self, _action, _resource) -> None:
+        pass
+
+    def grant_created(self, _grant, _identifier) -> None:
+        pass
+
+
 @pytest.fixture(autouse=True)
 def isolate_application_lifespan():
     original = app.router.lifespan_context
     app.router.lifespan_context = isolated_lifespan
+    app.dependency_overrides[authenticate_request] = lambda: AuthenticatedUser(
+        subject="test-user",
+        issuer="tests",
+        method=AuthenticationMethod.DEVELOPMENT,
+    )
+    app.dependency_overrides[get_request_authorizer] = AllowRequestAuthorizer
     try:
         yield
     finally:
@@ -52,16 +96,23 @@ def test_health_response_has_trace_id_header() -> None:
 
 def test_ui_is_served() -> None:
     with TestClient(app) as client:
-        response = client.get("/")
+        response = client.get("/", follow_redirects=False)
 
-    assert response.status_code == 200
-    assert "Heart of the Swarm" in response.text
-    assert 'href="/workflow-editor/"' in response.text
+    assert response.status_code == 307
+    assert response.headers["location"] == "/workflow-editor/"
 
 
 def test_workflow_editor_build_is_served() -> None:
     with TestClient(app) as client:
         response = client.get("/workflow-editor/")
+
+    assert response.status_code == 200
+    assert '<div id="root"></div>' in response.text
+
+
+def test_agent_studio_build_is_served() -> None:
+    with TestClient(app) as client:
+        response = client.get("/agents/")
 
     assert response.status_code == 200
     assert '<div id="root"></div>' in response.text
@@ -89,6 +140,34 @@ def test_api_version_comes_from_the_package() -> None:
     assert app.version == __version__
 
 
+def test_authorization_denial_prevents_a_catalogue_read() -> None:
+    policies = DevelopmentPolicySource("test-user")
+    authorizer = RequestAuthorizer(policies.principal, AuthorizationService(policies), policies)
+    provider_calls = 0
+
+    class FakeProviders:
+        def statuses(self):
+            nonlocal provider_calls
+            provider_calls += 1
+            return []
+
+    app.dependency_overrides[get_request_authorizer] = lambda: authorizer
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(providers=FakeProviders())
+    try:
+        with TestClient(app) as client:
+            denied = client.get("/api/v1/providers")
+            assert provider_calls == 0
+            policies.grant_allow(AuthorizationAction.CAPABILITY_READ, "capability:catalog")
+            allowed = client.get("/api/v1/providers")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["message"] == "access denied"
+    assert provider_calls == 1
+    assert allowed.status_code == 200
+
+
 def test_readiness_reports_database_revision() -> None:
     class FakeDatabase:
         async def readiness(self) -> str:
@@ -107,17 +186,24 @@ def test_readiness_reports_database_revision() -> None:
 
 def test_start_run_returns_an_accepted_queue_record() -> None:
     class FakeRuns:
-        async def queue(self, agent_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
+        async def queue(self, version_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
             assert agent_input == "Research this"
+            assert version_id == "agent-version-2"
             return AgentRunAccepted(
                 run_id="run-1",
                 trace_id=trace_id,
-                agent_id=agent_id,
+                agent_id="agent-1",
                 agent_version=2,
                 status="queued",
             )
 
-    app.dependency_overrides[get_application] = lambda: SimpleNamespace(runs=FakeRuns())
+    class FakeAgents:
+        async def get_agent(self, agent_id):
+            return SimpleNamespace(id=agent_id, version_id="agent-version-2")
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        runs=FakeRuns(), agents=FakeAgents()
+    )
     try:
         with TestClient(app) as client:
             response = client.post("/api/v1/agents/agent-1/runs", json={"input": "Research this"})
@@ -129,8 +215,84 @@ def test_start_run_returns_an_accepted_queue_record() -> None:
     assert response.json()["trace_id"] == response.headers["X-Trace-ID"]
 
 
+def test_start_run_uses_the_explicit_immutable_agent_version() -> None:
+    class FakeRuns:
+        async def queue(self, version_id: str, agent_input: str, trace_id: str) -> AgentRunAccepted:
+            assert version_id == "historical-version"
+            assert agent_input == "Use the old behavior"
+            return AgentRunAccepted(
+                run_id="run-historical",
+                trace_id=trace_id,
+                agent_id="agent-1",
+                agent_version=1,
+                status="queued",
+            )
+
+    class FakeAgents:
+        async def get_version(self, version_id):
+            assert version_id == "historical-version"
+            return SimpleNamespace(
+                id="agent-1",
+                version_id="historical-version",
+                version=1,
+            )
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        runs=FakeRuns(), agents=FakeAgents()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/agent-versions/historical-version/runs",
+                json={"input": "Use the old behavior"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 202
+    assert response.json()["agent_version"] == 1
+
+
+def test_export_download_contains_only_the_exact_portable_agent_files() -> None:
+    version_id = "dc36aa94-3399-45d9-b285-e82787e8ca5d"
+
+    class FakeAgents:
+        async def get_version(self, received_version_id):
+            assert received_version_id == version_id
+            return SimpleNamespace(
+                id="47d174a8-b35e-4563-bd86-3bc6b5b5947f",
+                version_id=version_id,
+                version=3,
+                name="ResearchAgent",
+            )
+
+        async def export_version(self, received_version_id, directory):
+            assert str(received_version_id) == version_id
+            (directory / "manifest.json").write_text('{"format_version":"1"}', encoding="utf-8")
+            (directory / "agent.json").write_text('{"version":3}', encoding="utf-8")
+            return SimpleNamespace()
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(agents=FakeAgents())
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/api/v1/agent-versions/{version_id}/artifact")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert "researchagent-v3-artifact.zip" in response.headers["content-disposition"]
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert archive.namelist() == ["manifest.json", "agent.json"]
+        assert json.loads(archive.read("agent.json"))["version"] == 3
+
+
 def test_unknown_run_trajectory_returns_not_found() -> None:
     class FakeRuns:
+        async def get(self, run_id: str):
+            assert run_id == "missing-run"
+            return None
+
         async def trajectory(self, run_id: str):
             assert run_id == "missing-run"
             return None
@@ -144,6 +306,210 @@ def test_unknown_run_trajectory_returns_not_found() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "run not found"
+
+
+def interruption_detail(status: WorkflowInterruptionStatus) -> WorkflowInterruptionDetail:
+    return WorkflowInterruptionDetail(
+        id="94d6048e-6e4c-4a8a-9069-bd10148b90aa",
+        workflow_version_id="11850612-0402-418e-bee3-f4603a72d4eb",
+        thread_id="3f0f3f50-37c8-481b-bd78-c3c6757a1f11",
+        workflow_run_id="293ce849-ef4a-468b-ae41-21c92bcdd10e",
+        node_id="approve",
+        kind="approval",
+        prompt="Approve publication?",
+        response_schema={
+            "type": "object",
+            "properties": {"approved": {"type": "boolean"}},
+            "required": ["approved"],
+            "additionalProperties": False,
+        },
+        checkpoint_id="checkpoint-1",
+        status=status,
+        created_at=datetime(2026, 10, 6, tzinfo=UTC),
+    )
+
+
+def test_workflow_interruption_http_adapters_delegate_to_the_approval_service() -> None:
+    interruption = interruption_detail(WorkflowInterruptionStatus.PENDING)
+
+    class FakeApprovals:
+        async def list(self, status):
+            assert status == WorkflowInterruptionStatus.PENDING
+            return [interruption]
+
+        async def get(self, interruption_id):
+            assert interruption_id == interruption.id
+            return interruption
+
+        async def respond(self, interruption_id, response, trace_id, *, approved_by=None):
+            assert interruption_id == interruption.id
+            assert response == {"approved": True}
+            assert trace_id
+            assert approved_by == AllowRequestAuthorizer.principal
+            return WorkflowRunAccepted(
+                run_id="8f675d13-b826-407a-a82d-bcbe643756b4",
+                trace_id=trace_id,
+                workflow_id="cfdf2142-76c3-4bba-939c-b61a4cfd4932",
+                workflow_version_id=interruption.workflow_version_id,
+                workflow_version=2,
+                status="queued",
+                thread_id=interruption.thread_id,
+                attempt_index=2,
+                resumed_from_run_id=interruption.workflow_run_id,
+                resume_checkpoint_id=interruption.checkpoint_id,
+            )
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_approvals=FakeApprovals()
+    )
+    try:
+        with TestClient(app) as client:
+            listed = client.get("/api/v1/workflow-interruptions")
+            fetched = client.get(f"/api/v1/workflow-interruptions/{interruption.id}")
+            responded = client.post(
+                f"/api/v1/workflow-interruptions/{interruption.id}/response",
+                json={"approved": True},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["status"] == "pending"
+    assert fetched.status_code == 200
+    assert fetched.json()["prompt"] == "Approve publication?"
+    assert responded.status_code == 202
+    assert responded.json()["attempt_index"] == 2
+    assert responded.json()["trace_id"] == responded.headers["X-Trace-ID"]
+
+
+def test_workflow_interruption_http_errors_are_safe_and_structured() -> None:
+    resolved = interruption_detail(WorkflowInterruptionStatus.RESOLVED)
+
+    class FakeApprovals:
+        calls = 0
+
+        async def get(self, _interruption_id):
+            self.calls += 1
+            return None if self.calls == 1 else resolved
+
+        async def respond(self, _interruption_id, _response, _trace_id, *, approved_by=None):
+            assert approved_by == AllowRequestAuthorizer.principal
+            raise ValueError("workflow interruption is not pending")
+
+    interruption_id = "94d6048e-6e4c-4a8a-9069-bd10148b90aa"
+    approvals = FakeApprovals()
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_approvals=approvals
+    )
+    try:
+        with TestClient(app) as client:
+            missing = client.get(f"/api/v1/workflow-interruptions/{interruption_id}")
+            conflict = client.post(
+                f"/api/v1/workflow-interruptions/{interruption_id}/response",
+                json={"approved": False},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "workflow interruption not found"
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["message"] == "workflow interruption is not pending"
+
+
+def test_workflow_run_stream_resumes_after_durable_event_cursor() -> None:
+    run_id = UUID("293ce849-ef4a-468b-ae41-21c92bcdd10e")
+    thread_id = UUID("3f0f3f50-37c8-481b-bd78-c3c6757a1f11")
+    version_id = UUID("11850612-0402-418e-bee3-f4603a72d4eb")
+    workflow_id = UUID("cfdf2142-76c3-4bba-939c-b61a4cfd4932")
+    completed = WorkflowRunDetail(
+        run_id=run_id,
+        trace_id="trace-stream",
+        workflow_id=workflow_id,
+        workflow_version_id=version_id,
+        workflow_version=2,
+        status="completed",
+        thread_id=thread_id,
+        input={},
+        output={"result": "done"},
+        attempt=1,
+        queued_at=datetime(2026, 10, 7, tzinfo=UTC),
+        completed_at=datetime(2026, 10, 7, tzinfo=UTC),
+    )
+    final_event = WorkflowRunEvent(
+        id="c0306fd9-10be-412c-bca4-ac03f3a1fd1f",
+        workflow_run_id=run_id,
+        sequence=2,
+        event_type="workflow.completed",
+        data={"executed_nodes": ["output"]},
+        created_at=datetime(2026, 10, 7, tzinfo=UTC),
+    )
+
+    class FakeWorkflowRuns:
+        async def get(self, received_run_id):
+            assert received_run_id == run_id
+            return completed
+
+        async def event_batch(self, received_run_id, after_sequence=0):
+            assert received_run_id == run_id
+            assert after_sequence == 1
+            return WorkflowRunEventBatch(
+                status="completed",
+                thread_id=thread_id,
+                events=(final_event,),
+            )
+
+    class FakeWorkflows:
+        async def get_version(self, received_version_id):
+            assert received_version_id == version_id
+            return SimpleNamespace(id=version_id)
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_runs=FakeWorkflowRuns(), workflows=FakeWorkflows()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"/api/v1/workflow-runs/{run_id}/stream",
+                headers={"Last-Event-ID": "1"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "id: 2\nevent: workflow.event\n" in response.text
+    data_line = next(line for line in response.text.splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload == {
+        "event_id": str(final_event.id),
+        "run_id": str(run_id),
+        "thread_id": str(thread_id),
+        "sequence": 2,
+        "event_type": "workflow.completed",
+        "data": {"executed_nodes": ["output"]},
+        "created_at": "2026-10-07T00:00:00+00:00",
+    }
+
+
+def test_unknown_workflow_run_stream_returns_not_found_before_streaming() -> None:
+    class FakeWorkflowRuns:
+        async def get(self, _run_id):
+            return None
+
+    app.dependency_overrides[get_application] = lambda: SimpleNamespace(
+        workflow_runs=FakeWorkflowRuns()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/v1/workflow-runs/293ce849-ef4a-468b-ae41-21c92bcdd10e/stream"
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "workflow run not found"
 
 
 def test_invalid_workflow_input_is_rejected_synchronously() -> None:
@@ -163,8 +529,13 @@ def test_invalid_workflow_input_is_rejected_synchronously() -> None:
                 )
             )
 
+    class FakeWorkflows:
+        async def get_version(self, received_version_id):
+            assert received_version_id == version_id
+            return SimpleNamespace(id=version_id)
+
     app.dependency_overrides[get_application] = lambda: SimpleNamespace(
-        workflow_runs=FakeWorkflowRuns()
+        workflow_runs=FakeWorkflowRuns(), workflows=FakeWorkflows()
     )
     try:
         with TestClient(app) as client:
@@ -199,8 +570,16 @@ def test_webhook_endpoint_queues_the_external_json_event() -> None:
                 trigger_event_id=trigger_event_id,
             )
 
+    class FakeTriggers:
+        async def get(self, received_trigger_id):
+            assert received_trigger_id == trigger_id
+            return SimpleNamespace(
+                target_type="workflow",
+                target_version_id=UUID("c1a19ef5-eb93-4723-a720-c83371bef05f"),
+            )
+
     app.dependency_overrides[get_application] = lambda: SimpleNamespace(
-        webhook_triggers=FakeWebhooks()
+        webhook_triggers=FakeWebhooks(), triggers=FakeTriggers()
     )
     try:
         with TestClient(app) as client:
@@ -223,6 +602,7 @@ def test_workflow_capabilities_report_runtime_support() -> None:
     assert response.status_code == 200
     nodes = {node["type"]: node for node in response.json()["nodes"]}
     assert nodes["agent"]["available"] is True
+    assert nodes["supervisor"]["available"] is True
     assert "tool" not in nodes
     assert nodes["connector"]["available"] is True
     assert "properties" in nodes["agent"]["config_schema"]

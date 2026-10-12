@@ -1,11 +1,23 @@
 from typing import Literal
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
+from heart_of_the_swarm.authentication import create_authentication_provider
+from heart_of_the_swarm.authorization import (
+    AuthorizationService,
+    CompositePolicySource,
+    ConfiguredCapabilityPolicySource,
+    ConfiguredCredentialPolicySource,
+    DevelopmentPolicySource,
+)
+from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings, get_settings
+from heart_of_the_swarm.credentials import CredentialResolver, LocalSecretStore, RuntimeIdentity
 from heart_of_the_swarm.database import Database
+from heart_of_the_swarm.development_authorization import bootstrap_development_policies
 from heart_of_the_swarm.execution import AgentExecutor, RunService
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.mcp_service import MCPServerService
+from heart_of_the_swarm.network_policy import NetworkPolicyEnforcer
 from heart_of_the_swarm.observability import configure_audit_logging
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.service import AgentService
@@ -15,9 +27,11 @@ from heart_of_the_swarm.tools import MCPToolLoader, create_default_registry
 from heart_of_the_swarm.triggers.service import TriggerService
 from heart_of_the_swarm.triggers.webhook import WebhookTriggerService
 from heart_of_the_swarm.validator import AgentSpecValidator
+from heart_of_the_swarm.workflow_approvals import WorkflowApprovalService
 from heart_of_the_swarm.workflow_execution import WorkflowExecutor, WorkflowRunService
 from heart_of_the_swarm.workflow_service import WorkflowService
 from heart_of_the_swarm.workflows import WorkflowValidator
+from heart_of_the_swarm.workflows.execution.checkpoints import DurableWorkflowCheckpoints
 
 
 class Application:
@@ -25,6 +39,46 @@ class Application:
         self, settings: Settings | None = None, process: Literal["api", "worker"] = "api"
     ) -> None:
         self.settings = settings or get_settings()
+        self.authentication = (
+            create_authentication_provider(self.settings) if process == "api" else None
+        )
+        self.policy_source = (
+            DevelopmentPolicySource(self.settings.development_auth_user_id)
+            if process == "api"
+            and self.settings.auth_mode == "development"
+            and self.settings.development_auth_user_id
+            else None
+        )
+        self.capability_policy_source = ConfiguredCapabilityPolicySource(
+            self.settings.capability_policies,
+            self.settings.capability_approval_policies,
+        )
+        self.credential_policy_source = ConfiguredCredentialPolicySource(
+            self.settings.credential_policies
+        )
+        sources = (
+            (
+                self.policy_source,
+                self.capability_policy_source,
+                self.credential_policy_source,
+            )
+            if self.policy_source is not None
+            else (self.capability_policy_source, self.credential_policy_source)
+        )
+        self.authorization = AuthorizationService(CompositePolicySource(*sources))
+        self.capability_authorizer = CapabilityAuthorizer(self.authorization)
+        self.runtime_identity = (
+            RuntimeIdentity(id=self.settings.runtime_id) if process == "worker" else None
+        )
+        self.credential_resolver = (
+            CredentialResolver(
+                self.runtime_identity,
+                self.authorization,
+                LocalSecretStore(self.settings.local_secrets),
+            )
+            if self.runtime_identity is not None
+            else None
+        )
         log_file = self.settings.api_log_file if process == "api" else self.settings.worker_log_file
         configure_audit_logging(
             log_file,
@@ -33,15 +87,26 @@ class Application:
             self.settings.log_backup_count,
         )
         self.tools = create_default_registry(self.settings)
-        self.mcp_tools = MCPToolLoader(self.tools, {})
+        self.mcp_tools = MCPToolLoader(
+            self.tools,
+            {},
+            credential_resolver=self.credential_resolver,
+            network_policy=NetworkPolicyEnforcer(self.settings.outbound_network_policy()),
+        )
         self.skills = SkillRegistry(self.settings.skills_dir)
         self.providers = ProviderRegistry(self.settings)
         self.validator = AgentSpecValidator(self.tools, self.providers, self.skills)
         self.database = Database(self.settings.database_url)
+        self.workflow_checkpoints = DurableWorkflowCheckpoints(self.settings.database_url)
         self.mcp_servers = MCPServerService(self.database)
         self.telemetry = Telemetry(self.settings)
         self.factory = AgentFactory(self.tools, self.skills)
-        self.agent_runner = AgentRunner(self.providers, self.validator, self.factory)
+        self.agent_runner = AgentRunner(
+            self.providers,
+            self.validator,
+            self.factory,
+            self.capability_authorizer,
+        )
         self.workflow_validator = WorkflowValidator(
             lambda: self.tools.names, self.providers.names, lambda: self.skills.names
         )
@@ -63,6 +128,12 @@ class Application:
             self.database,
             self.workflow_validator,
             self.tools,
+            self.workflow_checkpoints,
+            self.settings.workflow_max_state_bytes,
+        )
+        self.workflow_approvals = WorkflowApprovalService(
+            self.database,
+            self.workflow_checkpoints,
         )
         self.webhook_triggers = WebhookTriggerService(self.triggers, self.workflow_runs)
         self.executor = AgentExecutor(
@@ -78,11 +149,19 @@ class Application:
             self.tools,
             self.agent_runner,
             self.telemetry,
+            self.workflow_checkpoints,
+            self.capability_authorizer,
         )
 
     async def initialize(self) -> None:
         await self.database.initialize()
-        await self.mcp_servers.seed(self.settings.mcp_servers)
+        if self.policy_source is not None:
+            await bootstrap_development_policies(self.policy_source, self.database)
+        await self.workflow_checkpoints.start()
+        await self.mcp_servers.seed(
+            self.settings.mcp_servers,
+            self.settings.mcp_bearer_credentials,
+        )
         await self.sync_mcp_tools()
 
     async def sync_mcp_tools(self) -> tuple[str, ...]:
@@ -91,4 +170,5 @@ class Application:
 
     async def close(self) -> None:
         await self.mcp_tools.close()
+        await self.workflow_checkpoints.close()
         await self.database.close()

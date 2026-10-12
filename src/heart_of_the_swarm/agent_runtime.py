@@ -1,14 +1,30 @@
+from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
+from heart_of_the_swarm.agent_capability_approval import AgentCapabilityApprovalMiddleware
+from heart_of_the_swarm.approval_grants import ApprovalGrantConsumer
+from heart_of_the_swarm.capability_authorization import (
+    CapabilityAuthorizer,
+    ExecutionSecurityContext,
+)
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.providers import ProviderRegistry
 from heart_of_the_swarm.spec import AgentSpec
+from heart_of_the_swarm.tools import (
+    approval_capable_tool_view,
+    authorized_tool_view,
+    budgeted_tool_view,
+)
 from heart_of_the_swarm.validator import AgentSpecValidator
+
+if TYPE_CHECKING:
+    from heart_of_the_swarm.workflows.execution.execution_budget import ExecutionBudget
 
 
 class AgentRunner:
@@ -19,10 +35,12 @@ class AgentRunner:
         providers: ProviderRegistry,
         validator: AgentSpecValidator,
         factory: AgentFactory,
+        capability_authorizer: CapabilityAuthorizer | None = None,
     ) -> None:
         self.providers = providers
         self.validator = validator
         self.factory = factory
+        self.capability_authorizer = capability_authorizer
 
     async def invoke(
         self,
@@ -32,17 +50,55 @@ class AgentRunner:
         system_prompt: str | None = None,
         callbacks: Sequence[BaseCallbackHandler] = (),
         metadata: Mapping[str, Any] | None = None,
-        response_schema: dict[str, Any] | None = None,
+        response_schema: dict[str, Any] | type[BaseModel] | None = None,
+        security: ExecutionSecurityContext | None = None,
+        approval_grants: ApprovalGrantConsumer | None = None,
+        execution_budget: ExecutionBudget | None = None,
     ) -> Any:
         """Execute one agent and return text or LangChain-validated structured output."""
         self.validator.validate_execution(spec)
+        if (self.capability_authorizer is None) != (security is None):
+            raise ValueError("capability authorization requires an execution security context")
+        if approval_grants is not None and self.capability_authorizer is None:
+            raise ValueError("capability approval requires runtime authorization")
+        middleware = None
+        if self.capability_authorizer is None:
+            tools = (
+                budgeted_tool_view(self.factory.registry, spec.tools, execution_budget)
+                if execution_budget is not None
+                else None
+            )
+        elif approval_grants is None:
+            tools = await authorized_tool_view(
+                self.factory.registry,
+                spec.tools,
+                self.capability_authorizer,
+                security,
+                execution_budget,
+            )
+        else:
+            tools = await approval_capable_tool_view(
+                self.factory.registry, spec.tools, self.capability_authorizer, security
+            )
+            middleware = [
+                AgentCapabilityApprovalMiddleware(
+                    tools,
+                    self.capability_authorizer,
+                    security,
+                    approval_grants,
+                    execution_budget,
+                )
+            ]
         model = self.providers.create_model(spec.model)
-        graph = self.factory.create(
-            spec,
-            model,
-            system_prompt=system_prompt,
-            response_schema=response_schema,
-        )
+        factory_options: dict[str, Any] = {
+            "system_prompt": system_prompt,
+            "response_schema": response_schema,
+        }
+        if tools is not None:
+            factory_options["tools"] = tools
+        if middleware is not None:
+            factory_options["middleware"] = middleware
+        graph = self.factory.create(spec, model, **factory_options)
         result = await graph.ainvoke(
             {"messages": [{"role": "user", "content": agent_input}]},
             config={"callbacks": list(callbacks), "metadata": dict(metadata or {})},

@@ -162,16 +162,27 @@ class RunRepository(RepositoryBase):
         self._add_event(run.id, RunStatus.CANCELLED.value, {"phase": "running"})
         await self.session.commit()
 
-    async def fail(self, run_id: str, error: BaseException) -> None:
+    async def fail(self, run_id: str, error: BaseException, *, timed_out: bool = False) -> None:
         run = await self._required(RunRecord, run_id)
-        run.status = RunStatus.FAILED
+        run.status = RunStatus.TIMED_OUT if timed_out else RunStatus.FAILED
         run.error = f"{type(error).__name__}: {error}"
         run.completed_at = datetime.now(UTC)
         run.lease_expires_at = None
+        event_data: dict[str, object] = {
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+        }
+        if timed_out:
+            event_data.update(
+                {
+                    "error_code": getattr(error, "code", "agent.execution_timeout"),
+                    "timeout_seconds": getattr(error, "timeout_seconds", None),
+                }
+            )
         self._add_event(
             run.id,
-            RunStatus.FAILED.value,
-            {"error_type": type(error).__name__, "error_message": str(error)},
+            RunStatus.TIMED_OUT.value if timed_out else RunStatus.FAILED.value,
+            event_data,
         )
         await self.session.commit()
 

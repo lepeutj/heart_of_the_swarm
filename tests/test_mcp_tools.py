@@ -8,8 +8,23 @@ from langchain.mcp import MCPAdapter
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tools import BaseTool, ToolException, tool
 
+from heart_of_the_swarm.authorization import (
+    AuthorizationService,
+    ConfiguredCredentialPolicySource,
+)
+from heart_of_the_swarm.credentials import (
+    CredentialRef,
+    CredentialResolver,
+    LocalSecretStore,
+    RuntimeIdentity,
+)
 from heart_of_the_swarm.spec import AgentSpec
-from heart_of_the_swarm.tools import MCPToolLoader, RegisteredCapability, ToolRegistry
+from heart_of_the_swarm.tools import (
+    MCPConnection,
+    MCPToolLoader,
+    RegisteredCapability,
+    ToolRegistry,
+)
 from heart_of_the_swarm.tools.models import CapabilityContract
 from heart_of_the_swarm.workflows import (
     WorkflowExecutionError,
@@ -81,6 +96,17 @@ class BlockingAdapter:
         self.entered.set()
         await self.release.wait()
         return [local_weather]
+
+
+def credential_resolver(runtime_id: str, allowed: list[str], secrets: dict[str, str]):
+    authorization = AuthorizationService(
+        ConfiguredCredentialPolicySource({f"runtime:{runtime_id}": allowed})
+    )
+    return CredentialResolver(
+        RuntimeIdentity(id=runtime_id),
+        authorization,
+        LocalSecretStore(secrets),
+    )
 
 
 class RecordingAgentRunner:
@@ -179,7 +205,7 @@ async def test_real_mcp_discovery_exposes_schema_and_structured_result() -> None
     loader = MCPToolLoader(
         registry,
         {"weather": "in-process"},
-        adapter_factory=lambda _: MCPAdapter(weather_server()),
+        adapter_factory=lambda _, __: MCPAdapter(weather_server()),
     )
 
     loaded = await loader.load()
@@ -201,7 +227,7 @@ async def test_real_mcp_text_result_remains_mappable() -> None:
     loader = MCPToolLoader(
         registry,
         {"weather": "in-process"},
-        adapter_factory=lambda _: MCPAdapter(weather_server()),
+        adapter_factory=lambda _, __: MCPAdapter(weather_server()),
     )
     await loader.load()
 
@@ -214,7 +240,7 @@ async def test_real_mcp_tool_executes_through_connector_agent_and_output() -> No
     loader = MCPToolLoader(
         registry,
         {"weather": "in-process"},
-        adapter_factory=lambda _: MCPAdapter(weather_server()),
+        adapter_factory=lambda _, __: MCPAdapter(weather_server()),
     )
     await loader.load()
     workflow = WorkflowValidator(lambda: registry.names, ["test"]).validate(
@@ -239,7 +265,7 @@ async def test_real_mcp_error_becomes_connector_failure() -> None:
     loader = MCPToolLoader(
         registry,
         {"weather": "in-process"},
-        adapter_factory=lambda _: MCPAdapter(weather_server()),
+        adapter_factory=lambda _, __: MCPAdapter(weather_server()),
     )
     await loader.load()
     workflow = connector_workflow("weather__fail_weather")
@@ -269,7 +295,7 @@ async def test_unavailable_mcp_server_does_not_hide_healthy_tools() -> None:
     loader = MCPToolLoader(
         registry,
         {"offline": "offline", "weather": "healthy"},
-        adapter_factory=lambda url: FailingAdapter() if url == "offline" else MCPAdapter(server),
+        adapter_factory=lambda url, _: FailingAdapter() if url == "offline" else MCPAdapter(server),
     )
 
     loaded = await loader.load()
@@ -288,7 +314,7 @@ async def test_failed_refresh_keeps_previous_server_catalogue() -> None:
     registry = ToolRegistry()
     fail_refresh = False
 
-    def adapter_factory(_: str):
+    def adapter_factory(_: str, __: Mapping[str, str] | None):
         return FailingAdapter() if fail_refresh else MCPAdapter(weather_server())
 
     loader = MCPToolLoader(registry, {"weather": "source"}, adapter_factory=adapter_factory)
@@ -308,7 +334,7 @@ async def test_refreshes_for_one_server_are_serialized() -> None:
     release = asyncio.Event()
     adapters_created = 0
 
-    def adapter_factory(_: str) -> BlockingAdapter:
+    def adapter_factory(_: str, __: Mapping[str, str] | None) -> BlockingAdapter:
         nonlocal adapters_created
         adapters_created += 1
         return BlockingAdapter(entered, release)
@@ -326,6 +352,123 @@ async def test_refreshes_for_one_server_are_serialized() -> None:
         ("weather__local_weather",),
     ]
     await loader.close()
+
+
+async def test_mcp_bearer_credential_is_resolved_only_for_the_adapter() -> None:
+    registry = ToolRegistry()
+    observed_headers: list[Mapping[str, str] | None] = []
+
+    def adapter_factory(_: str, headers: Mapping[str, str] | None):
+        observed_headers.append(headers)
+        return MCPAdapter(weather_server())
+
+    loader = MCPToolLoader(
+        registry,
+        {
+            "weather": MCPConnection(
+                url="https://weather.example.test/mcp",
+                bearer_credential_ref=CredentialRef(id="weather_token"),
+            )
+        },
+        adapter_factory=adapter_factory,
+        credential_resolver=credential_resolver(
+            "runtime-a",
+            ["weather_token"],
+            {"weather_token": "private-bearer-value"},
+        ),
+    )
+
+    await loader.load()
+
+    assert observed_headers == [{"Authorization": "Bearer private-bearer-value"}]
+    assert "weather__get_weather" in registry.names
+    assert "private-bearer-value" not in repr(registry.capabilities)
+    assert "private-bearer-value" not in repr(loader.statuses)
+    await loader.close()
+
+
+async def test_mcp_credential_denial_happens_before_adapter_creation() -> None:
+    adapters_created = 0
+
+    def adapter_factory(_: str, __: Mapping[str, str] | None):
+        nonlocal adapters_created
+        adapters_created += 1
+        return MCPAdapter(weather_server())
+
+    loader = MCPToolLoader(
+        ToolRegistry(),
+        {
+            "weather": MCPConnection(
+                url="https://weather.example.test/mcp",
+                bearer_credential_ref=CredentialRef(id="weather_token"),
+            )
+        },
+        adapter_factory=adapter_factory,
+        credential_resolver=credential_resolver(
+            "runtime-denied",
+            [],
+            {"weather_token": "private-bearer-value"},
+        ),
+    )
+
+    assert await loader.load() == ()
+    assert adapters_created == 0
+    assert loader.statuses[0].error == "MCP server discovery failed"
+
+
+async def test_mcp_missing_credential_returns_only_a_safe_discovery_error() -> None:
+    loader = MCPToolLoader(
+        ToolRegistry(),
+        {
+            "weather": MCPConnection(
+                url="https://weather.example.test/mcp",
+                bearer_credential_ref=CredentialRef(id="missing_token"),
+            )
+        },
+        credential_resolver=credential_resolver("runtime-a", ["missing_token"], {}),
+    )
+
+    assert await loader.load() == ()
+    assert loader.statuses[0].error == "MCP server discovery failed"
+    assert "missing_token" not in repr(loader.statuses)
+
+
+async def test_mcp_credential_policies_are_isolated_per_runtime() -> None:
+    source = MCPConnection(
+        url="https://weather.example.test/mcp",
+        bearer_credential_ref=CredentialRef(id="weather_token"),
+    )
+    allowed_headers: list[Mapping[str, str] | None] = []
+
+    def allowed_factory(_: str, headers: Mapping[str, str] | None):
+        allowed_headers.append(headers)
+        return MCPAdapter(weather_server())
+
+    allowed = MCPToolLoader(
+        ToolRegistry(),
+        {"weather": source},
+        adapter_factory=allowed_factory,
+        credential_resolver=credential_resolver(
+            "runtime-allowed",
+            ["weather_token"],
+            {"weather_token": "isolated-value"},
+        ),
+    )
+    denied = MCPToolLoader(
+        ToolRegistry(),
+        {"weather": source},
+        adapter_factory=lambda *_: pytest.fail("denied runtime created an adapter"),
+        credential_resolver=credential_resolver(
+            "runtime-denied",
+            [],
+            {"weather_token": "isolated-value"},
+        ),
+    )
+
+    assert await allowed.load()
+    assert await denied.load() == ()
+    assert allowed_headers == [{"Authorization": "Bearer isolated-value"}]
+    await allowed.close()
 
 
 def test_replace_source_is_atomic_when_refreshed_catalogue_collides() -> None:

@@ -3,22 +3,42 @@ from uuid import uuid4
 
 from heart_of_the_swarm.agent_runtime import AgentRunner
 from heart_of_the_swarm.artifacts import WorkflowArtifact, load_workflow_artifact
+from heart_of_the_swarm.authorization import (
+    AuthorizationService,
+    CompositePolicySource,
+    ConfiguredCapabilityPolicySource,
+    ConfiguredCredentialPolicySource,
+)
+from heart_of_the_swarm.capability_authorization import CapabilityAuthorizer
 from heart_of_the_swarm.config import Settings
+from heart_of_the_swarm.credentials import CredentialResolver, LocalSecretStore, RuntimeIdentity
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.observability import audit_event, trace_context
 from heart_of_the_swarm.providers import ProviderRegistry
+from heart_of_the_swarm.runtime.events import RuntimeEventCallbackHandler, RuntimeEventSink
 from heart_of_the_swarm.runtime.models import InvokeResponse, RuntimeMetadata
 from heart_of_the_swarm.skills import SkillRegistry
 from heart_of_the_swarm.telemetry import Telemetry
 from heart_of_the_swarm.tools import create_default_registry
 from heart_of_the_swarm.validator import AgentSpecValidator
 from heart_of_the_swarm.workflows import (
+    ExecutionPolicy,
     WorkflowGraphFactory,
-    WorkflowRuntimePolicy,
     WorkflowValidator,
     WorkflowVersionRunner,
 )
 from heart_of_the_swarm.workflows.documents import WorkflowVersionSnapshot
+from heart_of_the_swarm.workflows.execution.version_runner import WorkflowExecutionEvent
+
+
+class _WorkflowEventAdapter:
+    """Translate workflow events into the standalone runtime event contract."""
+
+    def __init__(self, sink: RuntimeEventSink) -> None:
+        self.sink = sink
+
+    async def emit(self, event: WorkflowExecutionEvent) -> None:
+        await self.sink.emit(event.event_type, event.data)
 
 
 class StandaloneWorkflowRuntime:
@@ -29,18 +49,38 @@ class StandaloneWorkflowRuntime:
         self.tools = create_default_registry(settings)
         self.skills = SkillRegistry(settings.skills_dir)
         self.providers = ProviderRegistry(settings)
+        authorization = AuthorizationService(
+            CompositePolicySource(
+                ConfiguredCapabilityPolicySource(
+                    settings.capability_policies,
+                ),
+                ConfiguredCredentialPolicySource(settings.credential_policies),
+            )
+        )
+        capability_authorizer = CapabilityAuthorizer(authorization)
+        self.runtime_identity = RuntimeIdentity(id=settings.runtime_id)
+        self.credential_resolver = CredentialResolver(
+            self.runtime_identity,
+            authorization,
+            LocalSecretStore(settings.local_secrets),
+        )
         agent_validator = AgentSpecValidator(self.tools, self.providers, self.skills)
         agent_runner = AgentRunner(
             self.providers,
             agent_validator,
             AgentFactory(self.tools, self.skills),
+            capability_authorizer,
         )
         workflow_validator = WorkflowValidator(
             lambda: self.tools.names,
             self.providers.names,
             lambda: self.skills.names,
         )
-        graphs = WorkflowGraphFactory(agent_runner=agent_runner, capabilities=self.tools)
+        graphs = WorkflowGraphFactory(
+            agent_runner=agent_runner,
+            capabilities=self.tools,
+            capability_authorizer=capability_authorizer,
+        )
         self.runner = WorkflowVersionRunner(workflow_validator, self.tools, graphs)
         self.telemetry = Telemetry(settings)
         self.artifact: WorkflowArtifact | None = None
@@ -64,6 +104,7 @@ class StandaloneWorkflowRuntime:
         artifact = self._artifact()
         return RuntimeMetadata(
             manifest=artifact.manifest,
+            runtime_id=self.runtime_identity.id,
             workflow={
                 "name": artifact.workflow.spec.name,
                 "description": artifact.workflow.spec.description,
@@ -79,12 +120,19 @@ class StandaloneWorkflowRuntime:
             },
         )
 
-    async def invoke(self, workflow_input: dict[str, Any]) -> InvokeResponse:
+    async def invoke(
+        self,
+        workflow_input: dict[str, Any],
+        *,
+        run_id: str | None = None,
+        trace_id: str | None = None,
+        event_sink: RuntimeEventSink | None = None,
+    ) -> InvokeResponse:
         if not isinstance(workflow_input, dict):
             raise ValueError("workflow input must be a JSON object")
         artifact = self._artifact()
-        run_id = str(uuid4())
-        trace_id = str(uuid4())
+        run_id = run_id or str(uuid4())
+        trace_id = trace_id or str(uuid4())
         mlflow_trace_id = None
         with (
             trace_context(trace_id),
@@ -101,15 +149,38 @@ class StandaloneWorkflowRuntime:
         ):
             mlflow_trace_id = self.telemetry.trace_id(span)
             self.telemetry.set_inputs(span, workflow_input)
-            result = await self.runner.run(
-                self._snapshot(artifact),
-                workflow_input,
-                WorkflowRuntimePolicy(
-                    timeout_seconds=self.settings.workflow_timeout_seconds,
-                    recursion_limit=self.settings.workflow_recursion_limit,
-                ),
-                execution_id=run_id,
+            if event_sink is not None:
+                await event_sink.emit("workflow.started")
+            live_callback = (
+                RuntimeEventCallbackHandler(event_sink) if event_sink is not None else None
             )
+            try:
+                result = await self.runner.run(
+                    self._snapshot(artifact),
+                    workflow_input,
+                    ExecutionPolicy(
+                        timeout_seconds=self.settings.workflow_timeout_seconds,
+                        recursion_limit=self.settings.workflow_recursion_limit,
+                        max_state_bytes=self.settings.workflow_max_state_bytes,
+                        max_model_calls=self.settings.workflow_max_model_calls,
+                        max_tool_calls=self.settings.workflow_max_tool_calls,
+                    ),
+                    event_sink=(
+                        _WorkflowEventAdapter(event_sink) if event_sink is not None else None
+                    ),
+                    agent_callbacks=([live_callback] if live_callback is not None else []),
+                    execution_id=run_id,
+                )
+            except Exception:
+                if live_callback is not None:
+                    await live_callback.flush()
+                if event_sink is not None:
+                    await event_sink.emit("workflow.failed")
+                raise
+            if live_callback is not None:
+                await live_callback.flush()
+            if event_sink is not None:
+                await event_sink.emit("workflow.completed")
             self.telemetry.set_outputs(span, {"output": result.output})
         return InvokeResponse(
             run_id=run_id,

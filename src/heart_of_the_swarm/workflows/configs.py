@@ -14,6 +14,10 @@ from pydantic import (
 from heart_of_the_swarm.spec import AgentSpec
 from heart_of_the_swarm.workflows.enums import NodeType
 from heart_of_the_swarm.workflows.state import StatePath, StateReference
+from heart_of_the_swarm.workflows.supervisors import (
+    SUPERVISOR_DECISION_SCHEMA,
+    SupervisorTargetId,
+)
 
 _STATE_PATH_ADAPTER = TypeAdapter(StatePath)
 DataFieldName = Annotated[
@@ -105,6 +109,35 @@ class AgentNodeConfig(AgentDataFlowConfig):
         return migrated
 
 
+class SupervisorTargetConfig(BaseModel):
+    """Bind a dynamic decision task to one target agent's structured input."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_field: DataFieldName = "task"
+
+
+class SupervisorNodeConfig(NodeConfig):
+    """Declare one bounded supervisor and the agent nodes it may select."""
+
+    source: InlineAgentSource | VersionedAgentSource
+    inputs: dict[DataFieldName, StateReference] = Field(min_length=1, max_length=50)
+    allowed_targets: dict[SupervisorTargetId, SupervisorTargetConfig] = Field(
+        min_length=1,
+        max_length=20,
+    )
+    finish_output: OutputBinding
+    decision_schema: str = Field(default=SUPERVISOR_DECISION_SCHEMA, max_length=64)
+    max_handoffs_ref: Literal["execution_policy.max_handoffs"] = "execution_policy.max_handoffs"
+
+
+class HumanApprovalNodeConfig(NodeConfig):
+    """Declare one boolean human decision and its business-state destination."""
+
+    prompt: str = Field(min_length=1, max_length=1_000)
+    output: OutputBinding
+
+
 class ConnectorNodeConfig(NodeConfig):
     capability_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]*$", max_length=100)
     inputs: dict[DataFieldName, Any] = Field(default_factory=dict, max_length=50)
@@ -112,6 +145,19 @@ class ConnectorNodeConfig(NodeConfig):
 
     @model_validator(mode="after")
     def valid_outputs(self) -> "ConnectorNodeConfig":
+        _validate_distinct_destinations([binding.to_state for binding in self.outputs.values()])
+        return self
+
+
+class SubworkflowNodeConfig(NodeConfig):
+    """Map isolated parent state through one immutable child workflow version."""
+
+    workflow_version_id: UUID
+    inputs: dict[DataFieldName, StateReference] = Field(default_factory=dict, max_length=50)
+    outputs: dict[DataFieldName, OutputBinding] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def valid_outputs(self) -> "SubworkflowNodeConfig":
         _validate_distinct_destinations([binding.to_state for binding in self.outputs.values()])
         return self
 
@@ -147,7 +193,10 @@ class OutputNodeConfig(NodeConfig):
 WorkflowNodeConfig = (
     InputNodeConfig
     | AgentNodeConfig
+    | SupervisorNodeConfig
+    | HumanApprovalNodeConfig
     | ConnectorNodeConfig
+    | SubworkflowNodeConfig
     | ConditionNodeConfig
     | TransformNodeConfig
     | OutputNodeConfig
@@ -156,8 +205,11 @@ WorkflowNodeConfig = (
 NODE_CONFIG_TYPES: dict[NodeType, type[NodeConfig]] = {
     NodeType.INPUT: InputNodeConfig,
     NodeType.AGENT: AgentNodeConfig,
+    NodeType.SUPERVISOR: SupervisorNodeConfig,
+    NodeType.HUMAN_APPROVAL: HumanApprovalNodeConfig,
     NodeType.LLM: AgentNodeConfig,
     NodeType.CONNECTOR: ConnectorNodeConfig,
+    NodeType.SUBWORKFLOW: SubworkflowNodeConfig,
     NodeType.CONDITION: ConditionNodeConfig,
     NodeType.TRANSFORM: TransformNodeConfig,
     NodeType.OUTPUT: OutputNodeConfig,

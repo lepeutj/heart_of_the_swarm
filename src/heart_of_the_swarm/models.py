@@ -70,12 +70,25 @@ class WorkflowVersionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ExecutionThreadRecord(Base):
+    __tablename__ = "execution_threads"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    model_calls: Mapped[int] = mapped_column(Integer, default=0)
+    tool_calls: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class MCPServerRecord(Base):
     __tablename__ = "mcp_servers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     url: Mapped[str] = mapped_column(String(2048))
+    bearer_credential_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -111,9 +124,18 @@ class TriggerRecord(Base):
 
 class WorkflowRunRecord(Base):
     __tablename__ = "workflow_runs"
+    __table_args__ = (UniqueConstraint("thread_id", "attempt_index"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
+    thread_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_threads.id"), nullable=True, index=True
+    )
+    attempt_index: Mapped[int] = mapped_column(Integer, default=1)
+    resumed_from_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_runs.id"), nullable=True
+    )
+    resume_checkpoint_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(64), index=True)
     trigger_id: Mapped[str | None] = mapped_column(
         ForeignKey("triggers.id"), nullable=True, index=True
@@ -134,6 +156,69 @@ class WorkflowRunRecord(Base):
         DateTime(timezone=True), nullable=True
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkflowInterruptionRecord(Base):
+    __tablename__ = "workflow_interruptions"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "node_id", "checkpoint_id"),
+        CheckConstraint(
+            "kind IN ('approval', 'capability_approval')",
+            name="ck_workflow_interruptions_kind",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'resolved', 'cancelled')",
+            name="ck_workflow_interruptions_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workflow_version_id: Mapped[str] = mapped_column(ForeignKey("workflow_versions.id"), index=True)
+    thread_id: Mapped[str] = mapped_column(ForeignKey("execution_threads.id"), index=True)
+    workflow_run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
+    node_id: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(20))
+    prompt: Mapped[str] = mapped_column(String(1000))
+    response_schema: Mapped[dict[str, Any]] = mapped_column(JSON)
+    request: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    checkpoint_id: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    response: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApprovalGrantRecord(Base):
+    __tablename__ = "approval_grants"
+    __table_args__ = (
+        UniqueConstraint("interruption_id"),
+        CheckConstraint(
+            "status IN ('active', 'consumed')",
+            name="ck_approval_grants_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    interruption_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow_interruptions.id"), index=True
+    )
+    source_run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
+    continuation_run_id: Mapped[str] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
+    node_id: Mapped[str] = mapped_column(String(64))
+    principal_kind: Mapped[str] = mapped_column(String(30))
+    principal_id: Mapped[str] = mapped_column(String(300))
+    action: Mapped[str] = mapped_column(String(50))
+    resource: Mapped[str] = mapped_column(String(320))
+    arguments_fingerprint: Mapped[str] = mapped_column(String(64))
+    approved_by_kind: Mapped[str] = mapped_column(String(30))
+    approved_by_id: Mapped[str] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_by_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_runs.id"), nullable=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class WorkflowRunEventRecord(Base):

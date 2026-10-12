@@ -1,3 +1,7 @@
+from pathlib import Path
+from uuid import UUID
+
+from heart_of_the_swarm.artifacts import AgentArtifact, AgentArtifactExporter
 from heart_of_the_swarm.builder import AgentBuilder, render_builder_prompt
 from heart_of_the_swarm.config import Settings
 from heart_of_the_swarm.database import Database
@@ -135,6 +139,25 @@ class AgentService:
     async def get_agent(self, agent_id: str) -> AgentDetail | None:
         async with self.database.session() as session:
             return await AgentRepository(session).get(agent_id)
+
+    async def list_versions(self, agent_id: str) -> list[AgentDetail]:
+        """List the immutable configurations available for exact execution."""
+        async with self.database.session() as session:
+            return await AgentRepository(session).list_versions(agent_id)
+
+    async def get_agent_version(self, agent_id: str, version: int) -> AgentDetail | None:
+        """Resolve the immutable version used by a persisted agent run."""
+        async with self.database.session() as session:
+            return await AgentRepository(session).get(agent_id, version)
+
+    async def get_version(self, version_id: str) -> AgentDetail | None:
+        """Load one immutable agent version by its stable public identifier."""
+        async with self.database.session() as session:
+            return await AgentRepository(session).get_version(version_id)
+
+    async def export_version(self, version_id: UUID, directory: Path) -> AgentArtifact | None:
+        """Export exactly one immutable version through the shared portable-artifact service."""
+        return await AgentArtifactExporter(self.database).export(version_id, directory)
 
     async def usage_summary(self) -> list[UsageSummary]:
         async with self.database.session() as session:

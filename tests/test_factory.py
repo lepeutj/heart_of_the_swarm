@@ -10,6 +10,7 @@ import heart_of_the_swarm.factory as factory_module
 from heart_of_the_swarm.factory import AgentFactory
 from heart_of_the_swarm.spec import AgentSpec
 from heart_of_the_swarm.tools import RegisteredCapability, ToolRegistry, create_default_registry
+from heart_of_the_swarm.workflows import SupervisorDecision
 
 
 @tool
@@ -136,3 +137,33 @@ def test_factory_delegates_json_schema_to_langchain_structured_output(
 
     assert isinstance(captured["response_format"], ToolStrategy)
     assert captured["response_format"].schema == schema
+
+
+def test_factory_preserves_pydantic_union_for_structured_output(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    spec = AgentSpec(
+        name="Supervisor",
+        goal="Route work",
+        tools=[],
+        instructions="Return one routing decision.",
+        model={"provider": "test", "model_id": "fake"},
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_create_agent(**kwargs: Any) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(factory_module, "create_agent", fake_create_agent)
+
+    AgentFactory(create_default_registry()).create(
+        spec,
+        ToolCapableFakeModel(responses=[AIMessage(content="unused")]),
+        response_schema=SupervisorDecision,
+    )
+
+    strategy = captured["response_format"]
+    assert isinstance(strategy, ToolStrategy)
+    assert strategy.schema is SupervisorDecision
+    assert len(strategy.schema_specs) == 1

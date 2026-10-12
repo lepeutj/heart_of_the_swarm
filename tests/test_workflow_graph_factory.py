@@ -2,13 +2,22 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
 
+from heart_of_the_swarm.tools import ToolRegistry
 from heart_of_the_swarm.workflows import (
     WorkflowExecutionError,
     WorkflowGraphFactory,
     WorkflowSpec,
     WorkflowValidator,
 )
+
+
+@tool
+def increment(value: int) -> dict[str, int]:
+    """Increment one integer for bounded-loop runtime tests."""
+    return {"value": value + 1}
 
 
 def workflow_data(*, with_condition: bool = False) -> dict[str, Any]:
@@ -94,6 +103,60 @@ def validate_workflow(data: dict[str, Any]):
     return WorkflowValidator(tool_names=[], provider_names=[]).validate(spec)
 
 
+def loop_workflow_data(*, exit_value: int = 3, max_iterations: int = 2) -> dict[str, Any]:
+    return {
+        "schema_version": "2",
+        "id": "7d84d5ca-d4f9-4f2f-afec-75bd46110f20",
+        "name": "Bounded loop",
+        "description": "Increment state until the condition exits.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+        },
+        "output_schema": {"type": "integer"},
+        "entrypoint": "input",
+        "nodes": [
+            {"id": "input", "type": "input", "name": "Input", "config": {}},
+            {
+                "id": "increment",
+                "type": "connector",
+                "name": "Increment",
+                "config": {
+                    "capability_id": "increment",
+                    "inputs": {"value": {"from_state": "$.value"}},
+                    "outputs": {"value": {"to_state": "$.value"}},
+                },
+            },
+            {"id": "route", "type": "condition", "name": "Done?", "config": {}},
+            {
+                "id": "output",
+                "type": "output",
+                "name": "Output",
+                "config": {"output_path": "$.value"},
+            },
+        ],
+        "edges": [
+            {"source": "input", "target": "increment"},
+            {"source": "increment", "target": "route"},
+            {
+                "source": "route",
+                "target": "output",
+                "condition": {
+                    "path": "$.value",
+                    "operator": "greater_than",
+                    "value": exit_value - 1,
+                },
+            },
+            {
+                "source": "route",
+                "target": "increment",
+                "loop": {"id": "increment", "max_iterations": max_iterations},
+            },
+        ],
+    }
+
+
 def test_factory_rejects_unvalidated_workflow() -> None:
     spec = WorkflowSpec.model_validate(workflow_data())
 
@@ -158,3 +221,77 @@ async def test_langgraph_preserves_structured_execution_failures() -> None:
 
     assert caught.value.issue.code == "workflow.execution.invalid_input"
     assert caught.value.issue.node_id == "input"
+
+
+async def test_langgraph_executes_a_bounded_conditional_loop() -> None:
+    tools = ToolRegistry([increment])
+    spec = WorkflowSpec.model_validate(loop_workflow_data())
+    workflow = WorkflowValidator(tool_names=tools.names, provider_names=[]).validate(spec)
+    events: list[tuple[str, str]] = []
+
+    async def record_event(event_type: str, node: Any, _payload: dict[str, Any]) -> None:
+        events.append((event_type, node.id))
+
+    graph = WorkflowGraphFactory(capabilities=tools).create(
+        workflow,
+        event_sink=record_event,
+    )
+
+    result = await graph.ainvoke({"value": 0}, recursion_limit=30)
+
+    assert result.output == 3
+    assert result.loop_iterations == {"increment": 2}
+    assert result.executed_nodes == (
+        "input",
+        "increment",
+        "route",
+        "increment",
+        "route",
+        "increment",
+        "route",
+        "output",
+    )
+    assert [node_id for event, node_id in events if event == "node.completed"] == list(
+        result.executed_nodes
+    )
+
+
+async def test_langgraph_rejects_a_loop_beyond_its_declared_limit() -> None:
+    tools = ToolRegistry([increment])
+    spec = WorkflowSpec.model_validate(loop_workflow_data(exit_value=100, max_iterations=2))
+    workflow = WorkflowValidator(tool_names=tools.names, provider_names=[]).validate(spec)
+    graph = WorkflowGraphFactory(capabilities=tools).create(workflow)
+
+    with pytest.raises(WorkflowExecutionError) as caught:
+        await graph.ainvoke({"value": 0}, recursion_limit=30)
+
+    assert caught.value.issue.code == "workflow.execution.iteration_limit"
+    assert caught.value.issue.node_id == "route"
+
+
+async def test_loop_counter_survives_checkpoint_resume() -> None:
+    tools = ToolRegistry([increment])
+    spec = WorkflowSpec.model_validate(loop_workflow_data())
+    workflow = WorkflowValidator(tool_names=tools.names, provider_names=[]).validate(spec)
+    saver = InMemorySaver()
+    graph = WorkflowGraphFactory(capabilities=tools).create(workflow, checkpointer=saver)
+
+    interrupted = await graph.ainvoke(
+        {"value": 0},
+        recursion_limit=30,
+        thread_id="loop-thread",
+        interrupt_after=("route",),
+    )
+    assert interrupted.interrupted is True
+    assert interrupted.checkpoint_id is not None
+    assert interrupted.loop_iterations == {"increment": 1}
+
+    resumed = await graph.ainvoke(
+        None,
+        recursion_limit=30,
+        thread_id="loop-thread",
+        checkpoint_id=interrupted.checkpoint_id,
+    )
+    assert resumed.interrupted is False
+    assert resumed.output == 3
+    assert resumed.loop_iterations == {"increment": 2}
